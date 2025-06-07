@@ -1,0 +1,38 @@
+name: golangci-lint
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  # Allow read access to pull requests for only-new-issues option
+  pull-requests: read
+
+jobs:
+  golangci:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          # Use latest version for best performance and features
+          version: latest
+          # Show only new issues in PRs
+          only-new-issues: true
+          # Custom timeout to match your current setup
+          args: --timeout=5m 
