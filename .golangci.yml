@@ -1,0 +1,73 @@
+version: "2"
+run:
+  modules-download-mode: readonly
+linters:
+  enable:
+    - bodyclose
+    - depguard
+    - dogsled
+    - exhaustive
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - goprintffuncname
+    - gosec
+    - misspell
+    - mnd
+    - nakedret
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - staticcheck
+    - unconvert
+    - unparam
+    - whitespace
+  settings:
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    gocyclo:
+      min-complexity: 15
+    govet:
+      enable:
+        - shadow
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - funlen
+          - goconst
+          - gocyclo
+          - mnd
+        path: _test\.go
+      - linters:
+          - funlen
+          - goconst
+          - gocyclo
+          - gosec
+          - mnd
+        path: e2e/
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
