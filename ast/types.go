@@ -225,6 +225,64 @@ type ExtensionTagCall struct {
 func (e *ExtensionTagCall) Position() Position { return e.Pos }
 func (e *ExtensionTagCall) isStatement()       {}
 
+// UseRepoRule represents a use_repo_rule() call.
+// Returns a proxy for directly invoking a repository rule.
+type UseRepoRule struct {
+	Pos          Position
+	RuleFile     string // The .bzl file containing the rule
+	RuleName     string // The repository rule name
+}
+
+func (u *UseRepoRule) Position() Position { return u.Pos }
+func (u *UseRepoRule) isStatement()       {}
+
+// RepoRuleCall represents an invocation of a repo rule proxy from use_repo_rule().
+// e.g., http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+//       http_archive(name = "foo", ...)
+type RepoRuleCall struct {
+	Pos        Position
+	RuleName   string         // The repo rule being invoked
+	RepoName   string         // The name attribute (required)
+	Attributes map[string]any // All other attributes
+	Raw        build.Expr
+}
+
+func (r *RepoRuleCall) Position() Position { return r.Pos }
+func (r *RepoRuleCall) isStatement()       {}
+
+// InjectRepo represents an inject_repo() call.
+// Adds new repos to an extension's scope.
+type InjectRepo struct {
+	Pos       Position
+	Extension string            // The extension proxy name
+	Repos     map[string]string // Map of apparent name to injected repo
+}
+
+func (i *InjectRepo) Position() Position { return i.Pos }
+func (i *InjectRepo) isStatement()       {}
+
+// OverrideRepo represents an override_repo() call.
+// Overrides repos defined by an extension with other repos.
+type OverrideRepo struct {
+	Pos       Position
+	Extension string            // The extension proxy name
+	Repos     map[string]string // Map of repo to override to replacement repo
+}
+
+func (o *OverrideRepo) Position() Position { return o.Pos }
+func (o *OverrideRepo) isStatement()       {}
+
+// FlagAlias represents a flag_alias() call (Bazel 8+).
+// Maps a command-line flag to a Starlark flag.
+type FlagAlias struct {
+	Pos          Position
+	Name         string // The flag name (without --)
+	StarlarkFlag string // The Starlark flag label
+}
+
+func (f *FlagAlias) Position() Position { return f.Pos }
+func (f *FlagAlias) isStatement()       {}
+
 // UnknownStatement represents an unrecognized statement for forward compatibility.
 type UnknownStatement struct {
 	Pos      Position

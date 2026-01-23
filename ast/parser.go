@@ -146,6 +146,14 @@ func (p *Parser) parseStatement(expr build.Expr) Statement {
 		return p.parseRegisterExecutionPlatforms(call, pos)
 	case "include":
 		return p.parseInclude(call, pos)
+	case "use_repo_rule":
+		return p.parseUseRepoRule(call, pos)
+	case "inject_repo":
+		return p.parseInjectRepo(call, pos)
+	case "override_repo":
+		return p.parseOverrideRepo(call, pos)
+	case "flag_alias":
+		return p.parseFlagAlias(call, pos)
 	default:
 		return &UnknownStatement{
 			Pos:      pos,
@@ -540,6 +548,102 @@ func (p *Parser) parseRegisterExecutionPlatforms(call *build.CallExpr, pos Posit
 
 	reg.DevDependency = p.getBool(call, "dev_dependency")
 	return reg
+}
+
+func (p *Parser) parseUseRepoRule(call *build.CallExpr, pos Position) *UseRepoRule {
+	rule := &UseRepoRule{Pos: pos}
+
+	// use_repo_rule takes two positional args: bzl_file and rule_name
+	if len(call.List) >= 1 {
+		if str, ok := call.List[0].(*build.StringExpr); ok {
+			rule.RuleFile = str.Value
+		}
+	}
+	if len(call.List) >= 2 {
+		if str, ok := call.List[1].(*build.StringExpr); ok {
+			rule.RuleName = str.Value
+		}
+	}
+
+	// Also check named parameters
+	if file := p.getString(call, "repo_rule_bzl_file"); file != "" {
+		rule.RuleFile = file
+	}
+	if name := p.getString(call, "repo_rule_name"); name != "" {
+		rule.RuleName = name
+	}
+
+	return rule
+}
+
+func (p *Parser) parseInjectRepo(call *build.CallExpr, pos Position) *InjectRepo {
+	inject := &InjectRepo{
+		Pos:   pos,
+		Repos: make(map[string]string),
+	}
+
+	// First arg is the extension proxy
+	if len(call.List) >= 1 {
+		if ident, ok := call.List[0].(*build.Ident); ok {
+			inject.Extension = ident.Name
+		}
+	}
+
+	// Named kwargs are the repo mappings
+	for _, arg := range call.List {
+		if assign, ok := arg.(*build.AssignExpr); ok {
+			if lhs, ok := assign.LHS.(*build.Ident); ok {
+				if str, ok := assign.RHS.(*build.StringExpr); ok {
+					inject.Repos[lhs.Name] = str.Value
+				}
+			}
+		}
+	}
+
+	return inject
+}
+
+func (p *Parser) parseOverrideRepo(call *build.CallExpr, pos Position) *OverrideRepo {
+	override := &OverrideRepo{
+		Pos:   pos,
+		Repos: make(map[string]string),
+	}
+
+	// First arg is the extension proxy
+	if len(call.List) >= 1 {
+		if ident, ok := call.List[0].(*build.Ident); ok {
+			override.Extension = ident.Name
+		}
+	}
+
+	// Named kwargs are the repo mappings
+	for _, arg := range call.List {
+		if assign, ok := arg.(*build.AssignExpr); ok {
+			if lhs, ok := assign.LHS.(*build.Ident); ok {
+				if str, ok := assign.RHS.(*build.StringExpr); ok {
+					override.Repos[lhs.Name] = str.Value
+				}
+			}
+		}
+	}
+
+	return override
+}
+
+func (p *Parser) parseFlagAlias(call *build.CallExpr, pos Position) *FlagAlias {
+	alias := &FlagAlias{Pos: pos}
+
+	alias.Name = p.getString(call, "name")
+	alias.StarlarkFlag = p.getString(call, "starlark_flag")
+
+	if alias.Name == "" {
+		p.addError(pos, "flag_alias: missing required 'name' attribute")
+	}
+	if alias.StarlarkFlag == "" {
+		p.addError(pos, "flag_alias: missing required 'starlark_flag' attribute")
+	}
+
+	return alias
 }
 
 // Helper methods for extracting attributes
