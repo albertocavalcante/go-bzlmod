@@ -117,6 +117,18 @@ func walkStatement(stmt Statement, handler Handler) error {
 
 // BaseHandler provides default no-op implementations of all Handler methods.
 // Embed this in your handler to only implement the methods you need.
+//
+// Example:
+//
+//	type MyHandler struct {
+//	    ast.BaseHandler
+//	    deps []string
+//	}
+//
+//	func (h *MyHandler) BazelDep(name label.Module, ...) error {
+//	    h.deps = append(h.deps, name.String())
+//	    return nil
+//	}
 type BaseHandler struct{}
 
 func (h *BaseHandler) Module(label.Module, label.Version, int, label.ApparentRepo) error { return nil }
@@ -171,6 +183,7 @@ func (c *DependencyCollector) BazelDep(name label.Module, version label.Version,
 }
 
 // OverrideCollector is a handler that collects all override declarations.
+// Use Walk(file, collector) to populate the slices with override information.
 type OverrideCollector struct {
 	BaseHandler
 	SingleVersionOverrides   []SingleVersionOverrideInfo
@@ -180,6 +193,7 @@ type OverrideCollector struct {
 	LocalPathOverrides       []LocalPathOverrideInfo
 }
 
+// SingleVersionOverrideInfo holds data from a single_version_override() call.
 type SingleVersionOverrideInfo struct {
 	ModuleName label.Module
 	Version    label.Version
@@ -189,12 +203,14 @@ type SingleVersionOverrideInfo struct {
 	PatchStrip int
 }
 
+// MultipleVersionOverrideInfo holds data from a multiple_version_override() call.
 type MultipleVersionOverrideInfo struct {
 	ModuleName label.Module
 	Versions   []label.Version
 	Registry   string
 }
 
+// GitOverrideInfo holds data from a git_override() call.
 type GitOverrideInfo struct {
 	ModuleName     label.Module
 	Remote         string
@@ -208,6 +224,7 @@ type GitOverrideInfo struct {
 	StripPrefix    string
 }
 
+// ArchiveOverrideInfo holds data from an archive_override() call.
 type ArchiveOverrideInfo struct {
 	ModuleName  label.Module
 	URLs        []string
@@ -218,6 +235,7 @@ type ArchiveOverrideInfo struct {
 	PatchStrip  int
 }
 
+// LocalPathOverrideInfo holds data from a local_path_override() call.
 type LocalPathOverrideInfo struct {
 	ModuleName label.Module
 	Path       string

@@ -10,19 +10,34 @@ import (
 	"time"
 )
 
-// RegistryClient provides fast access to Bazel module registry with caching and connection pooling.
+// RegistryClient fetches Bazel module metadata from a registry (typically BCR).
+//
+// The client is optimized for high-throughput concurrent access with:
+//   - Connection pooling (up to 50 idle connections, 20 per host)
+//   - Thread-safe in-memory caching (module files are cached by name@version)
+//   - Configurable timeouts (15 second default)
+//
+// The cache is unbounded and lives for the lifetime of the client. For long-running
+// processes, consider creating a new client periodically to clear the cache.
 type RegistryClient struct {
 	baseURL string
 	client  *http.Client
-	cache   sync.Map
+	cache   sync.Map // map[string]*ModuleInfo keyed by "name@version"
 }
 
-// BaseURL returns the registry base URL.
+// BaseURL returns the base URL of the registry (e.g., "https://bcr.bazel.build").
 func (r *RegistryClient) BaseURL() string {
 	return r.baseURL
 }
 
-// NewRegistryClient creates a new registry client with optimized HTTP settings
+// NewRegistryClient creates a client for the given registry URL.
+//
+// The URL should be the base of a Bazel registry implementing the standard
+// layout where module files are at /modules/{name}/{version}/MODULE.bazel.
+//
+// Example:
+//
+//	client := NewRegistryClient("https://bcr.bazel.build")
 func NewRegistryClient(baseURL string) *RegistryClient {
 	transport := &http.Transport{
 		MaxIdleConns:        50,
@@ -40,7 +55,10 @@ func NewRegistryClient(baseURL string) *RegistryClient {
 	}
 }
 
-// GetModuleFile fetches and parses a MODULE.bazel file from the registry
+// GetModuleFile fetches and parses a MODULE.bazel file from the registry.
+// Results are cached, so repeated calls for the same module@version are fast.
+//
+// Returns an error if the module doesn't exist, the network fails, or parsing fails.
 func (r *RegistryClient) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
 	cacheKey := moduleName + "@" + version
 	if cached, ok := r.cache.Load(cacheKey); ok {

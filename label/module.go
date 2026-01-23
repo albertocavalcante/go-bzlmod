@@ -1,5 +1,24 @@
-// Package label provides strongly-typed label components for Bazel modules.
-// All types validate their values at construction time.
+// Package label provides strongly-typed, validated label components for Bazel modules.
+//
+// All types in this package are immutable and validate their values at construction time.
+// Zero values are generally invalid - use the constructor functions (NewModule, NewVersion, etc.)
+// to create valid instances.
+//
+// # Types
+//
+// The main types are:
+//   - [Module]: A validated module name (e.g., "rules_go")
+//   - [Version]: A semantic version with Bazel extensions (e.g., "0.50.1", "1.0.0-rc1")
+//   - [ApparentRepo]: A repository name as it appears in labels
+//   - [CanonicalRepo]: A fully-qualified repo name (module+version)
+//   - [ApparentLabel]: A Bazel label (e.g., "@rules_go//go:def.bzl")
+//   - [StarlarkIdentifier]: A valid Starlark identifier
+//
+// # Validation Patterns
+//
+// Module names must match: [a-z]([a-z0-9._-]*[a-z0-9])?
+// Repository names must match: [a-zA-Z][a-zA-Z0-9._-]*
+// Starlark identifiers must match: [a-zA-Z_][a-zA-Z0-9_]*
 package label
 
 import (

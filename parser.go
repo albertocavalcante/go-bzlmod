@@ -3,12 +3,16 @@ package gobzlmod
 import (
 	"fmt"
 	"os"
-	"strconv"
 
+	"github.com/albertocavalcante/go-bzlmod/internal/buildutil"
 	"github.com/bazelbuild/buildtools/build"
 )
 
 // ParseModuleFile reads and parses a MODULE.bazel file from disk.
+// This is a convenience wrapper around ParseModuleContent.
+//
+// For more advanced parsing with error diagnostics and position information,
+// use the ast package instead.
 func ParseModuleFile(filename string) (*ModuleInfo, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -39,23 +43,18 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 			continue
 		}
 
-		ident, ok := call.X.(*build.Ident)
-		if !ok {
-			continue
-		}
-
-		switch ident.Name {
+		switch buildutil.FuncName(call) {
 		case "module":
-			info.Name = getStringAttr(call, "name")
-			info.Version = getStringAttr(call, "version")
-			info.CompatibilityLevel = getIntAttr(call, "compatibility_level")
+			info.Name = buildutil.String(call, "name")
+			info.Version = buildutil.String(call, "version")
+			info.CompatibilityLevel = buildutil.Int(call, "compatibility_level")
 
 		case "bazel_dep":
 			dep := Dependency{
-				Name:          getStringAttr(call, "name"),
-				Version:       getStringAttr(call, "version"),
-				RepoName:      getStringAttr(call, "repo_name"),
-				DevDependency: getBoolAttr(call, "dev_dependency"),
+				Name:          buildutil.String(call, "name"),
+				Version:       buildutil.String(call, "version"),
+				RepoName:      buildutil.String(call, "repo_name"),
+				DevDependency: buildutil.Bool(call, "dev_dependency"),
 			}
 			if dep.Name != "" && dep.Version != "" {
 				info.Dependencies = append(info.Dependencies, dep)
@@ -64,9 +63,9 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 		case "single_version_override":
 			override := Override{
 				Type:       "single_version",
-				ModuleName: getStringAttr(call, "module_name"),
-				Version:    getStringAttr(call, "version"),
-				Registry:   getStringAttr(call, "registry"),
+				ModuleName: buildutil.String(call, "module_name"),
+				Version:    buildutil.String(call, "version"),
+				Registry:   buildutil.String(call, "registry"),
 			}
 			if override.ModuleName != "" {
 				info.Overrides = append(info.Overrides, override)
@@ -75,7 +74,7 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 		case "git_override":
 			override := Override{
 				Type:       "git",
-				ModuleName: getStringAttr(call, "module_name"),
+				ModuleName: buildutil.String(call, "module_name"),
 			}
 			if override.ModuleName != "" {
 				info.Overrides = append(info.Overrides, override)
@@ -84,7 +83,7 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 		case "local_path_override":
 			override := Override{
 				Type:       "local_path",
-				ModuleName: getStringAttr(call, "module_name"),
+				ModuleName: buildutil.String(call, "module_name"),
 			}
 			if override.ModuleName != "" {
 				info.Overrides = append(info.Overrides, override)
@@ -93,7 +92,7 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 		case "archive_override":
 			override := Override{
 				Type:       "archive",
-				ModuleName: getStringAttr(call, "module_name"),
+				ModuleName: buildutil.String(call, "module_name"),
 			}
 			if override.ModuleName != "" {
 				info.Overrides = append(info.Overrides, override)
@@ -102,55 +101,4 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 	}
 
 	return info
-}
-
-// getStringAttr extracts a string attribute from a function call
-func getStringAttr(call *build.CallExpr, name string) string {
-	if name == "" && len(call.List) > 0 {
-		if str, ok := call.List[0].(*build.StringExpr); ok {
-			return str.Value
-		}
-		return ""
-	}
-
-	for _, arg := range call.List {
-		if assign, ok := arg.(*build.AssignExpr); ok {
-			if lhs, ok := assign.LHS.(*build.Ident); ok && lhs.Name == name {
-				if str, ok := assign.RHS.(*build.StringExpr); ok {
-					return str.Value
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// getIntAttr extracts an integer attribute from a function call
-func getIntAttr(call *build.CallExpr, name string) int {
-	for _, arg := range call.List {
-		if assign, ok := arg.(*build.AssignExpr); ok {
-			if lhs, ok := assign.LHS.(*build.Ident); ok && lhs.Name == name {
-				if num, ok := assign.RHS.(*build.LiteralExpr); ok {
-					if val, err := strconv.Atoi(num.Token); err == nil {
-						return val
-					}
-				}
-			}
-		}
-	}
-	return 0
-}
-
-// getBoolAttr extracts a boolean attribute from a function call
-func getBoolAttr(call *build.CallExpr, name string) bool {
-	for _, arg := range call.List {
-		if assign, ok := arg.(*build.AssignExpr); ok {
-			if lhs, ok := assign.LHS.(*build.Ident); ok && lhs.Name == name {
-				if ident, ok := assign.RHS.(*build.Ident); ok {
-					return ident.Name == "True"
-				}
-			}
-		}
-	}
-	return false
 }

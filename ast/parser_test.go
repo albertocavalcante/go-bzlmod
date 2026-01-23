@@ -329,6 +329,453 @@ func TestParseContent_SyntaxError(t *testing.T) {
 	}
 }
 
+func TestParseContent_MultipleVersionOverride(t *testing.T) {
+	content := `multiple_version_override(
+    module_name = "protobuf",
+    versions = ["3.19.0", "3.21.0", "4.0.0"],
+    registry = "https://bcr.bazel.build",
+)
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	if result.HasErrors() {
+		for _, e := range result.Errors {
+			t.Errorf("Parse error: %s", e.Error())
+		}
+		return
+	}
+
+	var mvo *MultipleVersionOverride
+	for _, stmt := range result.File.Statements {
+		if o, ok := stmt.(*MultipleVersionOverride); ok {
+			mvo = o
+			break
+		}
+	}
+
+	if mvo == nil {
+		t.Fatal("No multiple_version_override found")
+	}
+	if mvo.Module.String() != "protobuf" {
+		t.Errorf("mvo.Module = %q, want 'protobuf'", mvo.Module.String())
+	}
+	if len(mvo.Versions) != 3 {
+		t.Fatalf("mvo.Versions length = %d, want 3", len(mvo.Versions))
+	}
+	want := []string{"3.19.0", "3.21.0", "4.0.0"}
+	for i, v := range mvo.Versions {
+		if v.String() != want[i] {
+			t.Errorf("mvo.Versions[%d] = %q, want %q", i, v.String(), want[i])
+		}
+	}
+	if mvo.Registry != "https://bcr.bazel.build" {
+		t.Errorf("mvo.Registry = %q", mvo.Registry)
+	}
+}
+
+func TestParseContent_Include(t *testing.T) {
+	content := `include("//third_party:extensions.MODULE.bazel")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	if result.HasErrors() {
+		for _, e := range result.Errors {
+			t.Errorf("Parse error: %s", e.Error())
+		}
+		return
+	}
+
+	var inc *Include
+	for _, stmt := range result.File.Statements {
+		if i, ok := stmt.(*Include); ok {
+			inc = i
+			break
+		}
+	}
+
+	if inc == nil {
+		t.Fatal("No include found")
+	}
+	if inc.Label != "//third_party:extensions.MODULE.bazel" {
+		t.Errorf("inc.Label = %q", inc.Label)
+	}
+}
+
+func TestParseContent_Include_MissingLabel(t *testing.T) {
+	content := `include()
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	if !result.HasErrors() {
+		t.Error("Expected error for include() without label")
+	}
+}
+
+func TestParseContent_UseRepo(t *testing.T) {
+	content := `go = use_extension("@rules_go//go:extensions.bzl", "go")
+use_repo(go, "go_sdk", "go_toolchains")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var useRepo *UseRepo
+	for _, stmt := range result.File.Statements {
+		if r, ok := stmt.(*UseRepo); ok {
+			useRepo = r
+			break
+		}
+	}
+
+	if useRepo == nil {
+		t.Fatal("No use_repo found")
+	}
+	if len(useRepo.Repos) != 2 {
+		t.Fatalf("useRepo.Repos length = %d, want 2", len(useRepo.Repos))
+	}
+	if useRepo.Repos[0] != "go_sdk" {
+		t.Errorf("useRepo.Repos[0] = %q, want 'go_sdk'", useRepo.Repos[0])
+	}
+	if useRepo.Repos[1] != "go_toolchains" {
+		t.Errorf("useRepo.Repos[1] = %q, want 'go_toolchains'", useRepo.Repos[1])
+	}
+}
+
+func TestParseContent_UseRepoRule(t *testing.T) {
+	content := `http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var rule *UseRepoRule
+	for _, stmt := range result.File.Statements {
+		if r, ok := stmt.(*UseRepoRule); ok {
+			rule = r
+			break
+		}
+	}
+
+	if rule == nil {
+		t.Fatal("No use_repo_rule found")
+	}
+	if rule.RuleFile != "@bazel_tools//tools/build_defs/repo:http.bzl" {
+		t.Errorf("rule.RuleFile = %q", rule.RuleFile)
+	}
+	if rule.RuleName != "http_archive" {
+		t.Errorf("rule.RuleName = %q, want 'http_archive'", rule.RuleName)
+	}
+}
+
+func TestParseContent_InjectRepo(t *testing.T) {
+	content := `go = use_extension("@rules_go//go:extensions.bzl", "go")
+inject_repo(go, my_custom_go_sdk = "@my_go_sdk")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var inject *InjectRepo
+	for _, stmt := range result.File.Statements {
+		if i, ok := stmt.(*InjectRepo); ok {
+			inject = i
+			break
+		}
+	}
+
+	if inject == nil {
+		t.Fatal("No inject_repo found")
+	}
+	if inject.Extension != "go" {
+		t.Errorf("inject.Extension = %q, want 'go'", inject.Extension)
+	}
+	if val, ok := inject.Repos["my_custom_go_sdk"]; !ok || val != "@my_go_sdk" {
+		t.Errorf("inject.Repos = %v", inject.Repos)
+	}
+}
+
+func TestParseContent_OverrideRepo(t *testing.T) {
+	content := `go = use_extension("@rules_go//go:extensions.bzl", "go")
+override_repo(go, go_sdk = "@my_patched_go_sdk")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var override *OverrideRepo
+	for _, stmt := range result.File.Statements {
+		if o, ok := stmt.(*OverrideRepo); ok {
+			override = o
+			break
+		}
+	}
+
+	if override == nil {
+		t.Fatal("No override_repo found")
+	}
+	if override.Extension != "go" {
+		t.Errorf("override.Extension = %q, want 'go'", override.Extension)
+	}
+	if val, ok := override.Repos["go_sdk"]; !ok || val != "@my_patched_go_sdk" {
+		t.Errorf("override.Repos = %v", override.Repos)
+	}
+}
+
+func TestParseContent_FlagAlias(t *testing.T) {
+	content := `flag_alias(
+    name = "my_flag",
+    starlark_flag = "@my_project//flags:my_flag",
+)
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	if result.HasErrors() {
+		for _, e := range result.Errors {
+			t.Errorf("Parse error: %s", e.Error())
+		}
+		return
+	}
+
+	var alias *FlagAlias
+	for _, stmt := range result.File.Statements {
+		if a, ok := stmt.(*FlagAlias); ok {
+			alias = a
+			break
+		}
+	}
+
+	if alias == nil {
+		t.Fatal("No flag_alias found")
+	}
+	if alias.Name != "my_flag" {
+		t.Errorf("alias.Name = %q, want 'my_flag'", alias.Name)
+	}
+	if alias.StarlarkFlag != "@my_project//flags:my_flag" {
+		t.Errorf("alias.StarlarkFlag = %q", alias.StarlarkFlag)
+	}
+}
+
+func TestParseContent_FlagAlias_MissingAttrs(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "missing name",
+			content: `flag_alias(starlark_flag = "@foo//bar:baz")`,
+		},
+		{
+			name:    "missing starlark_flag",
+			content: `flag_alias(name = "my_flag")`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseContent("MODULE.bazel", []byte(tt.content))
+			if err != nil {
+				t.Fatalf("ParseContent error: %v", err)
+			}
+			if !result.HasErrors() {
+				t.Error("Expected error for missing attribute")
+			}
+		})
+	}
+}
+
+func TestParseContent_ExtensionTagCall(t *testing.T) {
+	content := `go = use_extension("@rules_go//go:extensions.bzl", "go")
+go.sdk(name = "go_sdk", version = "1.21.0")
+go.download(name = "another_sdk", version = "1.22.0")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var tags []*ExtensionTagCall
+	for _, stmt := range result.File.Statements {
+		if t, ok := stmt.(*ExtensionTagCall); ok {
+			tags = append(tags, t)
+		}
+	}
+
+	if len(tags) != 2 {
+		t.Fatalf("Expected 2 extension tag calls, got %d", len(tags))
+	}
+
+	// First tag: go.sdk(...)
+	if tags[0].Extension != "go" {
+		t.Errorf("tags[0].Extension = %q, want 'go'", tags[0].Extension)
+	}
+	if tags[0].TagName != "sdk" {
+		t.Errorf("tags[0].TagName = %q, want 'sdk'", tags[0].TagName)
+	}
+	if name, ok := tags[0].Attributes["name"].(string); !ok || name != "go_sdk" {
+		t.Errorf("tags[0].Attributes['name'] = %v", tags[0].Attributes["name"])
+	}
+	if version, ok := tags[0].Attributes["version"].(string); !ok || version != "1.21.0" {
+		t.Errorf("tags[0].Attributes['version'] = %v", tags[0].Attributes["version"])
+	}
+
+	// Second tag: go.download(...)
+	if tags[1].TagName != "download" {
+		t.Errorf("tags[1].TagName = %q, want 'download'", tags[1].TagName)
+	}
+}
+
+func TestParseContent_RegisterExecutionPlatforms(t *testing.T) {
+	content := `register_execution_platforms(
+    "//platforms:linux_x86_64",
+    "//platforms:macos_arm64",
+    dev_dependency = True,
+)
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var reg *RegisterExecutionPlatforms
+	for _, stmt := range result.File.Statements {
+		if r, ok := stmt.(*RegisterExecutionPlatforms); ok {
+			reg = r
+			break
+		}
+	}
+
+	if reg == nil {
+		t.Fatal("No register_execution_platforms found")
+	}
+	if len(reg.Patterns) != 2 {
+		t.Fatalf("reg.Patterns length = %d, want 2", len(reg.Patterns))
+	}
+	if reg.Patterns[0] != "//platforms:linux_x86_64" {
+		t.Errorf("reg.Patterns[0] = %q", reg.Patterns[0])
+	}
+	if reg.Patterns[1] != "//platforms:macos_arm64" {
+		t.Errorf("reg.Patterns[1] = %q", reg.Patterns[1])
+	}
+	if !reg.DevDependency {
+		t.Error("reg.DevDependency should be true")
+	}
+}
+
+func TestParseContent_UnknownStatement(t *testing.T) {
+	content := `unknown_func(some_arg = "value")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var unknown *UnknownStatement
+	for _, stmt := range result.File.Statements {
+		if u, ok := stmt.(*UnknownStatement); ok {
+			unknown = u
+			break
+		}
+	}
+
+	if unknown == nil {
+		t.Fatal("No UnknownStatement found")
+	}
+	if unknown.FuncName != "unknown_func" {
+		t.Errorf("unknown.FuncName = %q, want 'unknown_func'", unknown.FuncName)
+	}
+}
+
+func TestParseContent_GitOverride_AllFields(t *testing.T) {
+	content := `git_override(
+    module_name = "mylib",
+    remote = "https://github.com/example/mylib.git",
+    commit = "abc123def",
+    tag = "v1.0.0",
+    branch = "main",
+    patches = ["fix.patch"],
+    patch_cmds = ["echo patched"],
+    patch_strip = 1,
+    init_submodules = True,
+    strip_prefix = "src",
+)
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	var gitO *GitOverride
+	for _, stmt := range result.File.Statements {
+		if g, ok := stmt.(*GitOverride); ok {
+			gitO = g
+			break
+		}
+	}
+
+	if gitO == nil {
+		t.Fatal("No git_override found")
+	}
+	if gitO.Module.String() != "mylib" {
+		t.Errorf("gitO.Module = %q", gitO.Module.String())
+	}
+	if gitO.Remote != "https://github.com/example/mylib.git" {
+		t.Errorf("gitO.Remote = %q", gitO.Remote)
+	}
+	if gitO.Commit != "abc123def" {
+		t.Errorf("gitO.Commit = %q", gitO.Commit)
+	}
+	if gitO.Tag != "v1.0.0" {
+		t.Errorf("gitO.Tag = %q", gitO.Tag)
+	}
+	if gitO.Branch != "main" {
+		t.Errorf("gitO.Branch = %q", gitO.Branch)
+	}
+	if len(gitO.Patches) != 1 || gitO.Patches[0] != "fix.patch" {
+		t.Errorf("gitO.Patches = %v", gitO.Patches)
+	}
+	if len(gitO.PatchCmds) != 1 || gitO.PatchCmds[0] != "echo patched" {
+		t.Errorf("gitO.PatchCmds = %v", gitO.PatchCmds)
+	}
+	if gitO.PatchStrip != 1 {
+		t.Errorf("gitO.PatchStrip = %d", gitO.PatchStrip)
+	}
+	if !gitO.InitSubmodules {
+		t.Error("gitO.InitSubmodules should be true")
+	}
+	if gitO.StripPrefix != "src" {
+		t.Errorf("gitO.StripPrefix = %q", gitO.StripPrefix)
+	}
+}
+
+func TestParseContent_LocalPathOverride_MissingPath(t *testing.T) {
+	content := `local_path_override(module_name = "mylib")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseContent error: %v", err)
+	}
+
+	if !result.HasErrors() {
+		t.Error("Expected error for local_path_override without path")
+	}
+}
+
 func TestParseContent_ComplexModule(t *testing.T) {
 	content := `module(
     name = "my_project",

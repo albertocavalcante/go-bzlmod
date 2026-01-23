@@ -530,7 +530,7 @@ func TestBuildDependencyGraph_DevDependencies(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
-			err := resolver.buildDependencyGraph(ctx, tt.rootModule, depGraph, visiting, true, []string{"<root>"})
+			err := resolver.buildDependencyGraph(ctx, tt.rootModule, depGraph, visiting, []string{"<root>"})
 			if err != nil {
 				t.Fatalf("buildDependencyGraph() error = %v", err)
 			}

@@ -1,9 +1,48 @@
 // Package gobzlmod provides a Go library for Bazel module dependency resolution
 // using Minimal Version Selection (MVS).
 //
-// This library implements pure MVS as described in Russ Cox's research, which differs
-// from Bazel's more complex algorithm that includes automatic version upgrades and
-// compatibility mappings.
+// This library implements pure MVS as described in Russ Cox's research
+// (https://research.swtch.com/vgo-mvs), which selects the minimum version that
+// satisfies all requirements in the dependency graph.
+//
+// # Overview
+//
+// The package provides three main components:
+//
+//   - Parser: Parses MODULE.bazel files to extract module information
+//   - Registry: Fetches module metadata from Bazel Central Registry (BCR)
+//   - Resolver: Resolves transitive dependencies using MVS
+//
+// # Quick Start
+//
+// The simplest way to resolve dependencies is using the high-level API:
+//
+//	result, err := gobzlmod.ResolveDependenciesFromFile(
+//	    "MODULE.bazel",
+//	    "https://bcr.bazel.build",
+//	    false, // include dev dependencies
+//	)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	for _, mod := range result.Modules {
+//	    fmt.Printf("%s@%s\n", mod.Name, mod.Version)
+//	}
+//
+// # Differences from Bazel's Algorithm
+//
+// Bazel's actual resolution algorithm includes additional features not implemented here:
+//   - Compatibility level checking and automatic upgrades
+//   - Yanked version handling
+//   - Multiple version override support
+//   - Module extension resolution
+//
+// For production use requiring full Bazel compatibility, see the selection package
+// which implements Bazel's complete algorithm.
+//
+// # Thread Safety
+//
+// All public types in this package are safe for concurrent use.
 package gobzlmod
 
 import (
