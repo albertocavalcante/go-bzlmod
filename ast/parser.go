@@ -115,12 +115,12 @@ func (p *Parser) parseStatement(expr build.Expr) Statement {
 	pos := p.position(call)
 
 	// Handle method calls like go_sdk.from_file(...) - extension tag calls
-	if dotExpr, ok := call.X.(*build.DotExpr); ok {
+	if dotExpr, isDot := call.X.(*build.DotExpr); isDot {
 		return p.parseExtensionTagCall(call, dotExpr, pos)
 	}
 
-	ident, ok := call.X.(*build.Ident)
-	if !ok {
+	ident, isIdent := call.X.(*build.Ident)
+	if !isIdent {
 		return nil
 	}
 
@@ -177,12 +177,12 @@ func (p *Parser) parseInclude(call *build.CallExpr, pos Position) *Include {
 	}
 
 	// Also check for named "label" parameter
-	if label := buildutil.String(call, "label"); label != "" {
-		inc.Label = label
+	if labelStr := buildutil.String(call, "label"); labelStr != "" {
+		inc.Label = labelStr
 	}
 
 	if inc.Label == "" {
-		p.addError(pos, "include: missing required label argument")
+		p.addErrorf(pos, "include: missing required label argument")
 	}
 
 	return inc
@@ -221,7 +221,7 @@ func (p *Parser) parseModule(call *build.CallExpr, pos Position) *ModuleDecl {
 	if name := buildutil.String(call, "name"); name != "" {
 		m, err := label.NewModule(name)
 		if err != nil {
-			p.addError(pos, "invalid module name: %v", err)
+			p.addErrorf(pos, "invalid module name: %v", err)
 		} else {
 			decl.Name = m
 		}
@@ -230,7 +230,7 @@ func (p *Parser) parseModule(call *build.CallExpr, pos Position) *ModuleDecl {
 	if version := buildutil.String(call, "version"); version != "" {
 		v, err := label.NewVersion(version)
 		if err != nil {
-			p.addError(pos, "invalid module version: %v", err)
+			p.addErrorf(pos, "invalid module version: %v", err)
 		} else {
 			decl.Version = v
 		}
@@ -241,7 +241,7 @@ func (p *Parser) parseModule(call *build.CallExpr, pos Position) *ModuleDecl {
 	if repoName := buildutil.String(call, "repo_name"); repoName != "" {
 		r, err := label.NewApparentRepo(repoName)
 		if err != nil {
-			p.addError(pos, "invalid repo_name: %v", err)
+			p.addErrorf(pos, "invalid repo_name: %v", err)
 		} else {
 			decl.RepoName = r
 		}
@@ -257,13 +257,13 @@ func (p *Parser) parseBazelDep(call *build.CallExpr, pos Position) *BazelDep {
 
 	name := buildutil.String(call, "name")
 	if name == "" {
-		p.addError(pos, "bazel_dep: missing required 'name' attribute")
+		p.addErrorf(pos, "bazel_dep: missing required 'name' attribute")
 		return nil
 	}
 
 	m, err := label.NewModule(name)
 	if err != nil {
-		p.addError(pos, "bazel_dep: invalid name: %v", err)
+		p.addErrorf(pos, "bazel_dep: invalid name: %v", err)
 		return nil
 	}
 	dep.Name = m
@@ -271,11 +271,11 @@ func (p *Parser) parseBazelDep(call *build.CallExpr, pos Position) *BazelDep {
 	version := buildutil.String(call, "version")
 	if version == "" {
 		// Missing version is valid when using local_path_override or other overrides
-		p.addWarning(pos, "bazel_dep: missing 'version' attribute for %s (valid if using override)", name)
+		p.addWarningf(pos, "bazel_dep: missing 'version' attribute for %s (valid if using override)", name)
 	} else {
 		v, err := label.NewVersion(version)
 		if err != nil {
-			p.addError(pos, "bazel_dep: invalid version for %s: %v", name, err)
+			p.addErrorf(pos, "bazel_dep: invalid version for %s: %v", name, err)
 			return nil
 		}
 		dep.Version = v
@@ -287,7 +287,7 @@ func (p *Parser) parseBazelDep(call *build.CallExpr, pos Position) *BazelDep {
 	if repoName := buildutil.String(call, "repo_name"); repoName != "" {
 		r, err := label.NewApparentRepo(repoName)
 		if err != nil {
-			p.addError(pos, "bazel_dep: invalid repo_name for %s: %v", name, err)
+			p.addErrorf(pos, "bazel_dep: invalid repo_name for %s: %v", name, err)
 		} else {
 			dep.RepoName = r
 		}
@@ -304,7 +304,7 @@ func (p *Parser) parseUseExtension(call *build.CallExpr, pos Position) *UseExten
 		if str, ok := call.List[0].(*build.StringExpr); ok {
 			lbl, err := label.ParseApparentLabel(str.Value)
 			if err != nil {
-				p.addError(pos, "use_extension: invalid extension file: %v", err)
+				p.addErrorf(pos, "use_extension: invalid extension file: %v", err)
 			} else {
 				ext.ExtensionFile = lbl
 			}
@@ -316,7 +316,7 @@ func (p *Parser) parseUseExtension(call *build.CallExpr, pos Position) *UseExten
 		if str, ok := call.List[1].(*build.StringExpr); ok {
 			id, err := label.NewStarlarkIdentifier(str.Value)
 			if err != nil {
-				p.addError(pos, "use_extension: invalid extension name: %v", err)
+				p.addErrorf(pos, "use_extension: invalid extension name: %v", err)
 			} else {
 				ext.ExtensionName = id
 			}
@@ -356,7 +356,7 @@ func (p *Parser) parseSingleVersionOverride(call *build.CallExpr, pos Position) 
 	if version := buildutil.String(call, "version"); version != "" {
 		v, err := label.NewVersion(version)
 		if err != nil {
-			p.addError(pos, "single_version_override: invalid version: %v", err)
+			p.addErrorf(pos, "single_version_override: invalid version: %v", err)
 		} else {
 			override.Version = v
 		}
@@ -381,7 +381,7 @@ func (p *Parser) parseMultipleVersionOverride(call *build.CallExpr, pos Position
 	for _, vs := range buildutil.StringList(call, "versions") {
 		v, err := label.NewVersion(vs)
 		if err != nil {
-			p.addError(pos, "multiple_version_override: invalid version %q: %v", vs, err)
+			p.addErrorf(pos, "multiple_version_override: invalid version %q: %v", vs, err)
 		} else {
 			override.Versions = append(override.Versions, v)
 		}
@@ -439,7 +439,7 @@ func (p *Parser) parseLocalPathOverride(call *build.CallExpr, pos Position) *Loc
 
 	path := buildutil.String(call, "path")
 	if path == "" {
-		p.addError(pos, "local_path_override: missing required 'path'")
+		p.addErrorf(pos, "local_path_override: missing required 'path'")
 	}
 
 	return &LocalPathOverride{
@@ -564,10 +564,10 @@ func (p *Parser) parseFlagAlias(call *build.CallExpr, pos Position) *FlagAlias {
 	alias.StarlarkFlag = buildutil.String(call, "starlark_flag")
 
 	if alias.Name == "" {
-		p.addError(pos, "flag_alias: missing required 'name' attribute")
+		p.addErrorf(pos, "flag_alias: missing required 'name' attribute")
 	}
 	if alias.StarlarkFlag == "" {
-		p.addError(pos, "flag_alias: missing required 'starlark_flag' attribute")
+		p.addErrorf(pos, "flag_alias: missing required 'starlark_flag' attribute")
 	}
 
 	return alias
@@ -584,14 +584,14 @@ func (p *Parser) position(expr build.Expr) Position {
 	}
 }
 
-func (p *Parser) addError(pos Position, format string, args ...any) {
+func (p *Parser) addErrorf(pos Position, format string, args ...any) {
 	p.errors = append(p.errors, &ParseError{
 		Pos:     pos,
 		Message: fmt.Sprintf(format, args...),
 	})
 }
 
-func (p *Parser) addWarning(pos Position, format string, args ...any) {
+func (p *Parser) addWarningf(pos Position, format string, args ...any) {
 	p.warnings = append(p.warnings, &ParseError{
 		Pos:     pos,
 		Message: fmt.Sprintf(format, args...),
@@ -604,13 +604,13 @@ func (p *Parser) addWarning(pos Position, format string, args ...any) {
 func (p *Parser) parseRequiredModuleName(call *build.CallExpr, pos Position, funcName string) (label.Module, bool) {
 	moduleName := buildutil.String(call, "module_name")
 	if moduleName == "" {
-		p.addError(pos, "%s: missing required 'module_name'", funcName)
+		p.addErrorf(pos, "%s: missing required 'module_name'", funcName)
 		return label.Module{}, false
 	}
 
 	m, err := label.NewModule(moduleName)
 	if err != nil {
-		p.addError(pos, "%s: invalid module_name: %v", funcName, err)
+		p.addErrorf(pos, "%s: invalid module_name: %v", funcName, err)
 		return label.Module{}, false
 	}
 	return m, true

@@ -119,7 +119,7 @@ func TestApplyMVS(t *testing.T) {
 				},
 			},
 			want: map[string]*DepRequest{
-				"module_a": &DepRequest{
+				"module_a": {
 					Version:    "1.0.0",
 					RequiredBy: []string{"<root>"},
 				},
@@ -144,7 +144,7 @@ func TestApplyMVS(t *testing.T) {
 				},
 			},
 			want: map[string]*DepRequest{
-				"module_a": &DepRequest{
+				"module_a": {
 					Version:    "1.2.0",
 					RequiredBy: []string{"dependency_c"},
 				},
@@ -171,11 +171,11 @@ func TestApplyMVS(t *testing.T) {
 				},
 			},
 			want: map[string]*DepRequest{
-				"module_a": &DepRequest{
+				"module_a": {
 					Version:    "1.0.0",
 					RequiredBy: []string{"<root>"},
 				},
-				"module_b": &DepRequest{
+				"module_b": {
 					Version:    "2.1.0",
 					RequiredBy: []string{"module_a"},
 				},
@@ -343,17 +343,17 @@ func TestBuildResolutionList(t *testing.T) {
 	}
 
 	selectedVersions := map[string]*DepRequest{
-		"module_a": &DepRequest{
+		"module_a": {
 			Version:       "1.0.0",
 			DevDependency: false,
 			RequiredBy:    []string{"<root>"},
 		},
-		"module_b": &DepRequest{
+		"module_b": {
 			Version:       "2.1.0",
 			DevDependency: true,
 			RequiredBy:    []string{"module_a"},
 		},
-		"custom_module": &DepRequest{
+		"custom_module": {
 			Version:       "1.5.0",
 			DevDependency: false,
 			RequiredBy:    []string{"<override>"},

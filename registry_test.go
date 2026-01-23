@@ -267,7 +267,7 @@ func TestGetModuleFile_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Simulate slow response
 		time.Sleep(100 * time.Millisecond)
-		fmt.Fprint(w, `module(name = "cancelled_module", version = "1.0.0")`)
+		fmt.Fprint(w, `module(name = "canceled_module", version = "1.0.0")`)
 	}))
 	defer server.Close()
 
@@ -277,7 +277,7 @@ func TestGetModuleFile_ContextCancellation(t *testing.T) {
 	// Cancel context immediately
 	cancel()
 
-	info, err := client.GetModuleFile(ctx, "cancelled_module", "1.0.0")
+	info, err := client.GetModuleFile(ctx, "canceled_module", "1.0.0")
 
 	if err == nil {
 		t.Error("Expected cancellation error")

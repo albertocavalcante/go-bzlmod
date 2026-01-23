@@ -10,6 +10,14 @@ import (
 	"time"
 )
 
+// HTTP client configuration constants.
+const (
+	defaultMaxIdleConns        = 50
+	defaultMaxIdleConnsPerHost = 20
+	defaultIdleConnTimeout     = 90 * time.Second
+	defaultRequestTimeout      = 15 * time.Second
+)
+
 // RegistryClient fetches Bazel module metadata from a registry (typically BCR).
 //
 // The client is optimized for high-throughput concurrent access with:
@@ -40,16 +48,16 @@ func (r *RegistryClient) BaseURL() string {
 //	client := NewRegistryClient("https://bcr.bazel.build")
 func NewRegistryClient(baseURL string) *RegistryClient {
 	transport := &http.Transport{
-		MaxIdleConns:        50,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        defaultMaxIdleConns,
+		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
+		IdleConnTimeout:     defaultIdleConnTimeout,
 		DisableCompression:  false,
 	}
 
 	return &RegistryClient{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		client: &http.Client{
-			Timeout:   15 * time.Second,
+			Timeout:   defaultRequestTimeout,
 			Transport: transport,
 		},
 	}
@@ -66,7 +74,7 @@ func (r *RegistryClient) GetModuleFile(ctx context.Context, moduleName, version 
 	}
 
 	url := fmt.Sprintf("%s/modules/%s/%s/MODULE.bazel", r.baseURL, moduleName, version)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +83,7 @@ func (r *RegistryClient) GetModuleFile(ctx context.Context, moduleName, version 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("registry returned status %d for module %s@%s", resp.StatusCode, moduleName, version)

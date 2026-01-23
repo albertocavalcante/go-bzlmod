@@ -111,7 +111,7 @@ func (r *DependencyResolver) buildDependencyGraphInternal(ctx context.Context, m
 					return
 				}
 
-				newPath := append(depPath, depName+"@"+depVersion)
+				newPath := append(depPath[:len(depPath):len(depPath)], depName+"@"+depVersion)
 				_ = r.buildDependencyGraphInternal(ctx, transitiveDep, depGraph, visiting, newPath, mu)
 			}(dep.Name, dep.Version, path)
 		}
@@ -141,7 +141,7 @@ func (r *DependencyResolver) applyOverrides(depGraph map[string]map[string]*DepR
 				} else {
 					// Create entry for nonexistent module
 					depGraph[override.ModuleName] = map[string]*DepRequest{
-						override.Version: &DepRequest{
+						override.Version: {
 							Version:       override.Version,
 							DevDependency: false,
 							RequiredBy:    []string{"<override>"},

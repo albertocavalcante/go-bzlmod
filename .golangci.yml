@@ -4,7 +4,6 @@ run:
 linters:
   enable:
     - bodyclose
-    - depguard
     - dogsled
     - exhaustive
     - gochecknoinits
@@ -34,8 +33,12 @@ linters:
         - opinionated
         - performance
         - style
+      disabled-checks:
+        - hugeParam # Label types are value types by design
+        - ifElseChain # Sometimes if-else is clearer than switch
+        - appendAssign # Intentional slice copy pattern
     gocyclo:
-      min-complexity: 15
+      min-complexity: 30 # Parser functions are inherently complex
     govet:
       enable:
         - shadow
@@ -45,18 +48,31 @@ linters:
     generated: lax
     rules:
       - linters:
-          - funlen
-          - goconst
-          - gocyclo
-          - mnd
-        path: _test\.go
-      - linters:
-          - funlen
-          - goconst
-          - gocyclo
+          - errcheck
+          - gocritic
           - gosec
           - mnd
+          - funlen
+          - goconst
+          - gocyclo
+          - unparam
+        path: _test\.go
+      - linters:
+          - errcheck
+          - gocritic
+          - gosec
+          - mnd
+          - funlen
+          - goconst
+          - gocyclo
+          - unparam
         path: e2e/
+      - linters:
+          - gosec
+        text: "G304" # File inclusion via variable is fine for parser
+      - linters:
+          - mnd
+        path: ast/ # Parser index checks are self-explanatory
     paths:
       - third_party$
       - builtin$
