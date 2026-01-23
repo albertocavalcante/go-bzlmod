@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/albertocavalcante/go-bzlmod.svg)](https://pkg.go.dev/github.com/albertocavalcante/go-bzlmod)
 [![Go Report Card](https://goreportcard.com/badge/github.com/albertocavalcante/go-bzlmod)](https://goreportcard.com/report/github.com/albertocavalcante/go-bzlmod)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
 A Go library for Bazel module dependency resolution using Minimal Version Selection (MVS). Parses `MODULE.bazel` files, resolves transitive dependencies, and applies MVS algorithm to determine the minimal set of module versions.
 
@@ -268,4 +268,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing guidelines
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) file.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT) at your option.
