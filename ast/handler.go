@@ -120,17 +120,29 @@ func walkStatement(stmt Statement, handler Handler) error {
 type BaseHandler struct{}
 
 func (h *BaseHandler) Module(label.Module, label.Version, int, label.ApparentRepo) error { return nil }
-func (h *BaseHandler) BazelDep(label.Module, label.Version, int, label.ApparentRepo, bool) error { return nil }
-func (h *BaseHandler) UseExtension(label.ApparentLabel, label.StarlarkIdentifier, bool, bool) (ExtensionProxy, error) { return nil, nil }
+func (h *BaseHandler) BazelDep(label.Module, label.Version, int, label.ApparentRepo, bool) error {
+	return nil
+}
+func (h *BaseHandler) UseExtension(label.ApparentLabel, label.StarlarkIdentifier, bool, bool) (ExtensionProxy, error) {
+	return nil, nil
+}
 func (h *BaseHandler) UseRepo([]string, bool) error { return nil }
-func (h *BaseHandler) SingleVersionOverride(label.Module, label.Version, string, []string, []string, int) error { return nil }
-func (h *BaseHandler) MultipleVersionOverride(label.Module, []label.Version, string) error { return nil }
-func (h *BaseHandler) GitOverride(label.Module, string, string, string, string, []string, []string, int, bool, string) error { return nil }
-func (h *BaseHandler) ArchiveOverride(label.Module, []string, string, string, []string, []string, int) error { return nil }
-func (h *BaseHandler) LocalPathOverride(label.Module, string) error { return nil }
-func (h *BaseHandler) RegisterToolchains([]string, bool) error { return nil }
+func (h *BaseHandler) SingleVersionOverride(label.Module, label.Version, string, []string, []string, int) error {
+	return nil
+}
+func (h *BaseHandler) MultipleVersionOverride(label.Module, []label.Version, string) error {
+	return nil
+}
+func (h *BaseHandler) GitOverride(label.Module, string, string, string, string, []string, []string, int, bool, string) error {
+	return nil
+}
+func (h *BaseHandler) ArchiveOverride(label.Module, []string, string, string, []string, []string, int) error {
+	return nil
+}
+func (h *BaseHandler) LocalPathOverride(label.Module, string) error    { return nil }
+func (h *BaseHandler) RegisterToolchains([]string, bool) error         { return nil }
 func (h *BaseHandler) RegisterExecutionPlatforms([]string, bool) error { return nil }
-func (h *BaseHandler) UnknownStatement(string, Position) error { return nil }
+func (h *BaseHandler) UnknownStatement(string, Position) error         { return nil }
 
 // DependencyCollector is a handler that collects all bazel_dep declarations.
 type DependencyCollector struct {

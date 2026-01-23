@@ -28,9 +28,9 @@ func (e *ParseError) Unwrap() error {
 
 // ParseResult contains the parsed file and any diagnostics.
 type ParseResult struct {
-	File        *ModuleFile
-	Errors      []*ParseError
-	Warnings    []*ParseError
+	File     *ModuleFile
+	Errors   []*ParseError
+	Warnings []*ParseError
 }
 
 // HasErrors returns true if there were parse errors.

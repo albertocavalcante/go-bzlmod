@@ -131,10 +131,10 @@ func (i StarlarkIdentifier) String() string {
 // ApparentLabel represents a label in the current context.
 // Format: @repo//package:target or //package:target or :target
 type ApparentLabel struct {
-	repo    ApparentRepo
-	pkg     string
-	target  string
-	raw     string
+	repo   ApparentRepo
+	pkg    string
+	target string
+	raw    string
 }
 
 // ParseApparentLabel parses a label string.

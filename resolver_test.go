@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -524,11 +525,12 @@ func TestBuildDependencyGraph_DevDependencies(t *testing.T) {
 			resolver := NewDependencyResolver(registry, tt.includeDevDeps)
 
 			depGraph := make(map[string]map[string]*DepRequest)
+			visiting := &sync.Map{}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
-			err := resolver.buildDependencyGraph(ctx, tt.rootModule, depGraph, true, []string{"<root>"})
+			err := resolver.buildDependencyGraph(ctx, tt.rootModule, depGraph, visiting, true, []string{"<root>"})
 			if err != nil {
 				t.Fatalf("buildDependencyGraph() error = %v", err)
 			}

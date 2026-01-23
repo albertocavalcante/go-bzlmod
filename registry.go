@@ -10,11 +10,16 @@ import (
 	"time"
 )
 
-// RegistryClient provides fast access to Bazel module registry with caching and connection pooling
+// RegistryClient provides fast access to Bazel module registry with caching and connection pooling.
 type RegistryClient struct {
 	baseURL string
 	client  *http.Client
 	cache   sync.Map
+}
+
+// BaseURL returns the registry base URL.
+func (r *RegistryClient) BaseURL() string {
+	return r.baseURL
 }
 
 // NewRegistryClient creates a new registry client with optimized HTTP settings

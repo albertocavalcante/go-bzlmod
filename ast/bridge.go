@@ -24,16 +24,16 @@ type LegacyDependency struct {
 
 // LegacyOverride represents various override types.
 type LegacyOverride struct {
-	Type       string   `json:"type"`
-	ModuleName string   `json:"module_name"`
-	Version    string   `json:"version,omitempty"`
-	Registry   string   `json:"registry,omitempty"`
+	Type       string `json:"type"`
+	ModuleName string `json:"module_name"`
+	Version    string `json:"version,omitempty"`
+	Registry   string `json:"registry,omitempty"`
 	// Git override fields
-	Remote         string   `json:"remote,omitempty"`
-	Commit         string   `json:"commit,omitempty"`
-	Tag            string   `json:"tag,omitempty"`
-	Branch         string   `json:"branch,omitempty"`
-	InitSubmodules bool     `json:"init_submodules,omitempty"`
+	Remote         string `json:"remote,omitempty"`
+	Commit         string `json:"commit,omitempty"`
+	Tag            string `json:"tag,omitempty"`
+	Branch         string `json:"branch,omitempty"`
+	InitSubmodules bool   `json:"init_submodules,omitempty"`
 	// Archive override fields
 	URLs      []string `json:"urls,omitempty"`
 	Integrity string   `json:"integrity,omitempty"`

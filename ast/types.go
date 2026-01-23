@@ -106,19 +106,19 @@ type Override interface {
 
 // SingleVersionOverride represents single_version_override().
 type SingleVersionOverride struct {
-	Pos          Position
-	Module       label.Module
-	Version      label.Version
-	Registry     string
-	Patches      []string
-	PatchCmds    []string
-	PatchStrip   int
+	Pos        Position
+	Module     label.Module
+	Version    label.Version
+	Registry   string
+	Patches    []string
+	PatchCmds  []string
+	PatchStrip int
 }
 
-func (o *SingleVersionOverride) Position() Position     { return o.Pos }
+func (o *SingleVersionOverride) Position() Position       { return o.Pos }
 func (o *SingleVersionOverride) ModuleName() label.Module { return o.Module }
-func (o *SingleVersionOverride) isStatement()           {}
-func (o *SingleVersionOverride) isOverride()            {}
+func (o *SingleVersionOverride) isStatement()             {}
+func (o *SingleVersionOverride) isOverride()              {}
 
 // MultipleVersionOverride represents multiple_version_override().
 type MultipleVersionOverride struct {
@@ -128,30 +128,30 @@ type MultipleVersionOverride struct {
 	Registry string
 }
 
-func (o *MultipleVersionOverride) Position() Position     { return o.Pos }
+func (o *MultipleVersionOverride) Position() Position       { return o.Pos }
 func (o *MultipleVersionOverride) ModuleName() label.Module { return o.Module }
-func (o *MultipleVersionOverride) isStatement()           {}
-func (o *MultipleVersionOverride) isOverride()            {}
+func (o *MultipleVersionOverride) isStatement()             {}
+func (o *MultipleVersionOverride) isOverride()              {}
 
 // GitOverride represents git_override().
 type GitOverride struct {
-	Pos        Position
-	Module     label.Module
-	Remote     string
-	Commit     string
-	Tag        string
-	Branch     string
-	Patches    []string
-	PatchCmds  []string
-	PatchStrip int
+	Pos            Position
+	Module         label.Module
+	Remote         string
+	Commit         string
+	Tag            string
+	Branch         string
+	Patches        []string
+	PatchCmds      []string
+	PatchStrip     int
 	InitSubmodules bool
 	StripPrefix    string
 }
 
-func (o *GitOverride) Position() Position     { return o.Pos }
+func (o *GitOverride) Position() Position       { return o.Pos }
 func (o *GitOverride) ModuleName() label.Module { return o.Module }
-func (o *GitOverride) isStatement()           {}
-func (o *GitOverride) isOverride()            {}
+func (o *GitOverride) isStatement()             {}
+func (o *GitOverride) isOverride()              {}
 
 // ArchiveOverride represents archive_override().
 type ArchiveOverride struct {
@@ -165,10 +165,10 @@ type ArchiveOverride struct {
 	PatchStrip  int
 }
 
-func (o *ArchiveOverride) Position() Position     { return o.Pos }
+func (o *ArchiveOverride) Position() Position       { return o.Pos }
 func (o *ArchiveOverride) ModuleName() label.Module { return o.Module }
-func (o *ArchiveOverride) isStatement()           {}
-func (o *ArchiveOverride) isOverride()            {}
+func (o *ArchiveOverride) isStatement()             {}
+func (o *ArchiveOverride) isOverride()              {}
 
 // LocalPathOverride represents local_path_override().
 type LocalPathOverride struct {
@@ -177,10 +177,10 @@ type LocalPathOverride struct {
 	Path   string
 }
 
-func (o *LocalPathOverride) Position() Position     { return o.Pos }
+func (o *LocalPathOverride) Position() Position       { return o.Pos }
 func (o *LocalPathOverride) ModuleName() label.Module { return o.Module }
-func (o *LocalPathOverride) isStatement()           {}
-func (o *LocalPathOverride) isOverride()            {}
+func (o *LocalPathOverride) isStatement()             {}
+func (o *LocalPathOverride) isOverride()              {}
 
 // RegisterToolchains represents register_toolchains().
 type RegisterToolchains struct {
@@ -216,10 +216,10 @@ func (i *Include) isStatement()       {}
 // e.g., go_sdk.from_file(name = "...", go_mod = "...")
 type ExtensionTagCall struct {
 	Pos        Position
-	Extension  string            // The extension variable name (e.g., "go_sdk")
-	TagName    string            // The method/tag name (e.g., "from_file")
-	Attributes map[string]any    // Named attributes
-	Raw        build.Expr        // Original expression for advanced parsing
+	Extension  string         // The extension variable name (e.g., "go_sdk")
+	TagName    string         // The method/tag name (e.g., "from_file")
+	Attributes map[string]any // Named attributes
+	Raw        build.Expr     // Original expression for advanced parsing
 }
 
 func (e *ExtensionTagCall) Position() Position { return e.Pos }
@@ -228,9 +228,9 @@ func (e *ExtensionTagCall) isStatement()       {}
 // UseRepoRule represents a use_repo_rule() call.
 // Returns a proxy for directly invoking a repository rule.
 type UseRepoRule struct {
-	Pos          Position
-	RuleFile     string // The .bzl file containing the rule
-	RuleName     string // The repository rule name
+	Pos      Position
+	RuleFile string // The .bzl file containing the rule
+	RuleName string // The repository rule name
 }
 
 func (u *UseRepoRule) Position() Position { return u.Pos }
@@ -238,7 +238,8 @@ func (u *UseRepoRule) isStatement()       {}
 
 // RepoRuleCall represents an invocation of a repo rule proxy from use_repo_rule().
 // e.g., http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-//       http_archive(name = "foo", ...)
+//
+//	http_archive(name = "foo", ...)
 type RepoRuleCall struct {
 	Pos        Position
 	RuleName   string         // The repo rule being invoked

@@ -8,23 +8,21 @@ import (
 	"github.com/bazelbuild/buildtools/build"
 )
 
-// ParseModuleFile reads and parses a MODULE.bazel file from disk
+// ParseModuleFile reads and parses a MODULE.bazel file from disk.
 func ParseModuleFile(filename string) (*ModuleInfo, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read module file: %v", err)
+		return nil, fmt.Errorf("read module file: %w", err)
 	}
-
 	return ParseModuleContent(string(data))
 }
 
-// ParseModuleContent parses the content of a MODULE.bazel file
+// ParseModuleContent parses the content of a MODULE.bazel file.
 func ParseModuleContent(content string) (*ModuleInfo, error) {
 	f, err := build.ParseModule("MODULE.bazel", []byte(content))
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse MODULE.bazel: %v", err)
+		return nil, fmt.Errorf("parse MODULE.bazel: %w", err)
 	}
-
 	return extractModuleInfo(f), nil
 }
 

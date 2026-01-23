@@ -24,12 +24,12 @@ func TestNewVersion(t *testing.T) {
 		{"1.0.0-beta+build", false, 1, 0, 0, "beta", "build"},
 		{"", false, 0, 0, 0, "", ""}, // Empty is valid
 		// Bazel-specific version formats
-		{"1.0", false, 1, 0, 0, "", ""},   // Two-part version
-		{"1", false, 1, 0, 0, "", ""},     // Single-part version
-		{"29.0", false, 29, 0, 0, "", ""}, // protobuf style
+		{"1.0", false, 1, 0, 0, "", ""},                                      // Two-part version
+		{"1", false, 1, 0, 0, "", ""},                                        // Single-part version
+		{"29.0", false, 29, 0, 0, "", ""},                                    // protobuf style
 		{"0.0.0-20241220-5e258e33", false, 0, 0, 0, "20241220-5e258e33", ""}, // Date-based prerelease
-		{"8.2.1.1", false, 8, 2, 1, "", ""},   // Four-part version (buildifier style)
-		{"1.2.3.4", false, 1, 2, 3, "", ""},   // Four-part version
+		{"8.2.1.1", false, 8, 2, 1, "", ""},                                  // Four-part version (buildifier style)
+		{"1.2.3.4", false, 1, 2, 3, "", ""},                                  // Four-part version
 		// BCR-style versions
 		{"1.3.1.bcr.7", false, 1, 3, 1, "", ""},   // BCR suffix
 		{"8.2.bcr.3", false, 8, 2, 0, "", ""},     // BCR suffix without patch
@@ -107,8 +107,8 @@ func TestVersionCompare(t *testing.T) {
 		// BCR-style suffix versions
 		{"1.3.1.bcr.1", "1.3.1.bcr.2", -1},
 		{"1.3.1.bcr.7", "1.3.1.bcr.7", 0},
-		{"1.3.1", "1.3.1.bcr.1", -1},  // No suffix < with suffix
-		{"1.3.1.bcr.1", "1.3.1", 1},   // With suffix > no suffix
+		{"1.3.1", "1.3.1.bcr.1", -1}, // No suffix < with suffix
+		{"1.3.1.bcr.1", "1.3.1", 1},  // With suffix > no suffix
 	}
 
 	for _, tt := range tests {
