@@ -5,6 +5,7 @@
 **Prerequisites:** Go 1.23.0+, Git, Bazel/Bazelisk (optional for e2e tests)
 
 **Setup:**
+
 ```bash
 git clone https://github.com/your-username/go-bzlmod.git
 cd go-bzlmod
@@ -15,6 +16,7 @@ go test ./...
 ## Testing
 
 **Unit tests:**
+
 ```bash
 go test ./...
 go test -race ./...
@@ -22,6 +24,7 @@ go test -coverprofile=coverage.out ./...
 ```
 
 **E2E tests:**
+
 ```bash
 go test ./e2e -v
 go test ./e2e -run="TestDiagnostic" -v
@@ -32,12 +35,14 @@ Aim for >90% test coverage.
 ## Code Quality
 
 **Linting:**
+
 ```bash
 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 golangci-lint run
 ```
 
 **Formatting:**
+
 ```bash
 go fmt ./...
 goimports -w .
@@ -60,6 +65,7 @@ Describe the use case, provide API examples, consider alternatives, discuss brea
 Create an issue first for significant changes. Write tests. Update documentation. Run CI locally.
 
 **Checklist:**
+
 ```
 Tests pass: go test ./...
 Linting passes: golangci-lint run
@@ -68,6 +74,7 @@ Commits signed off: git commit -s
 ```
 
 **Commit format:**
+
 ```
 type(scope): description
 
@@ -90,4 +97,4 @@ Pure MVS implementation, thread-safe operations, context support, detailed error
 
 ## License
 
-MIT License applies to all contributions. 
+MIT License applies to all contributions.

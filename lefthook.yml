@@ -23,6 +23,10 @@ pre-commit:
         go mod tidy
         git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum not tidy" && exit 1)
 
+    dprint:
+      glob: "*.{md,json,toml,yml,yaml}"
+      run: dprint check
+
 commit-msg:
   commands:
     semantic-commit:

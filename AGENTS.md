@@ -18,31 +18,31 @@ This project follows [Semantic Commit Messages](https://www.conventionalcommits.
 
 ### Types
 
-| Type       | Description                                      |
-| ---------- | ------------------------------------------------ |
-| `feat`     | New feature                                      |
-| `fix`      | Bug fix                                          |
-| `docs`     | Documentation changes                            |
-| `chore`    | Maintenance, dependencies, tooling               |
-| `refactor` | Code restructuring without behavior change       |
-| `test`     | Adding or updating tests                         |
-| `ci`       | CI/CD changes                                    |
-| `perf`     | Performance improvements                         |
-| `style`    | Code style (formatting, whitespace)              |
-| `build`    | Build system changes                             |
+| Type       | Description                                |
+| ---------- | ------------------------------------------ |
+| `feat`     | New feature                                |
+| `fix`      | Bug fix                                    |
+| `docs`     | Documentation changes                      |
+| `chore`    | Maintenance, dependencies, tooling         |
+| `refactor` | Code restructuring without behavior change |
+| `test`     | Adding or updating tests                   |
+| `ci`       | CI/CD changes                              |
+| `perf`     | Performance improvements                   |
+| `style`    | Code style (formatting, whitespace)        |
+| `build`    | Build system changes                       |
 
 ### Scopes
 
 Common scopes for this project:
 
-| Scope      | Description                                      |
-| ---------- | ------------------------------------------------ |
-| `parser`   | MODULE.bazel parsing                             |
-| `resolver` | MVS dependency resolution                        |
-| `registry` | BCR registry client                              |
-| `api`      | Public API changes                               |
-| `types`    | Core data types                                  |
-| `e2e`      | End-to-end tests                                 |
+| Scope      | Description               |
+| ---------- | ------------------------- |
+| `parser`   | MODULE.bazel parsing      |
+| `resolver` | MVS dependency resolution |
+| `registry` | BCR registry client       |
+| `api`      | Public API changes        |
+| `types`    | Core data types           |
+| `e2e`      | End-to-end tests          |
 
 ### Examples
 
@@ -95,13 +95,13 @@ Aim for >90% test coverage on core logic.
 
 ### Core Components
 
-| File          | Purpose                                          |
-| ------------- | ------------------------------------------------ |
-| `api.go`      | Public API entry points                          |
-| `types.go`    | Core data structures                             |
-| `parser.go`   | MODULE.bazel parsing using buildtools            |
-| `registry.go` | BCR registry HTTP client with caching            |
-| `resolver.go` | MVS dependency resolution algorithm              |
+| File          | Purpose                               |
+| ------------- | ------------------------------------- |
+| `api.go`      | Public API entry points               |
+| `types.go`    | Core data structures                  |
+| `parser.go`   | MODULE.bazel parsing using buildtools |
+| `registry.go` | BCR registry HTTP client with caching |
+| `resolver.go` | MVS dependency resolution algorithm   |
 
 ### Design Principles
 
