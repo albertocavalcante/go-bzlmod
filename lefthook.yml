@@ -27,6 +27,14 @@ pre-commit:
       glob: "*.{md,json,toml,yml,yaml}"
       run: dprint check
 
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck scripts/*.sh
+
+    shfmt:
+      glob: "*.sh"
+      run: shfmt -d -i 2 -ci scripts/*.sh
+
 commit-msg:
   commands:
     semantic-commit:
