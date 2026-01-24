@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bcr.bazel.build/metadata.schema.json",
+  "title": "Bazel Module Metadata",
+  "description": "Schema for metadata.json files in Bazel Central Registry",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema reference"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL to the project's homepage"
+    },
+    "maintainers": {
+      "type": "array",
+      "description": "List of module maintainers",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "github": {
+            "type": "string",
+            "description": "GitHub username",
+            "pattern": "^[-a-zA-Z0-9]*$"
+          },
+          "github_user_id": {
+            "type": "integer",
+            "description": "GitHub user ID for identity verification"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Maintainer's email address"
+          },
+          "name": {
+            "type": "string",
+            "description": "Maintainer's display name"
+          },
+          "do_not_notify": {
+            "type": "boolean",
+            "description": "Skip @-mentions in PRs while keeping approval rights"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "repository": {
+      "type": "array",
+      "description": "Allowlist of source URLs (github:org/repo or URL prefix)",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "versions": {
+      "type": "array",
+      "description": "List of available versions",
+      "items": {
+        "type": "string"
+      }
+    },
+    "yanked_versions": {
+      "type": "object",
+      "description": "Map of version to yank reason",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "deprecated": {
+      "type": "string",
+      "description": "Deprecation reason if module should not be used"
+    }
+  },
+  "required": ["homepage", "maintainers", "repository", "versions"],
+  "additionalProperties": false
+}

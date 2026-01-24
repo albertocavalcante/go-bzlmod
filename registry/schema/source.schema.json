@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bcr.bazel.build/source.schema.json",
+  "title": "Bazel Module Source",
+  "description": "Schema for source.json files in Bazel Central Registry",
+  "type": "object",
+  "if": {
+    "properties": {
+      "type": { "const": "git_repository" }
+    },
+    "required": ["type"]
+  },
+  "then": {
+    "$ref": "#/$defs/git_repository"
+  },
+  "else": {
+    "$ref": "#/$defs/archive"
+  },
+  "$defs": {
+    "archive": {
+      "title": "Archive Source",
+      "description": "HTTP archive source",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": ["archive"]
+        },
+        "url": {
+          "type": "string",
+          "description": "Download URL for the archive"
+        },
+        "integrity": {
+          "type": "string",
+          "description": "SRI hash (sha256-base64)"
+        },
+        "strip_prefix": {
+          "type": "string",
+          "description": "Directory prefix to strip from archive"
+        },
+        "patches": {
+          "type": "object",
+          "description": "Map of patch file to integrity hash",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "patch_strip": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of path components to strip from patches"
+        },
+        "overlay": {
+          "type": "object",
+          "description": "Map of destination to source overlay files",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "docs_url": {
+          "type": "string",
+          "description": "URL to module documentation"
+        }
+      },
+      "required": ["url", "integrity"],
+      "additionalProperties": false
+    },
+    "git_repository": {
+      "title": "Git Repository Source",
+      "description": "Git repository source",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "git_repository"
+        },
+        "remote": {
+          "type": "string",
+          "description": "Git repository URL"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git commit SHA"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Git tag to checkout"
+        },
+        "shallow_since": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Date for shallow clone (YYYY-MM-DD)"
+        },
+        "init_submodules": {
+          "type": "boolean",
+          "description": "Initialize submodules recursively"
+        },
+        "verbose_version": {
+          "type": "boolean",
+          "description": "Enable verbose version output"
+        },
+        "strip_prefix": {
+          "type": "string",
+          "description": "Directory prefix to strip"
+        },
+        "patches": {
+          "type": "object",
+          "description": "Map of patch file to integrity hash",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "patch_strip": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of path components to strip from patches"
+        },
+        "docs_url": {
+          "type": "string",
+          "description": "URL to module documentation"
+        }
+      },
+      "required": ["type", "remote"],
+      "anyOf": [
+        { "required": ["commit"] },
+        { "required": ["tag"] }
+      ],
+      "additionalProperties": false
+    }
+  }
+}
