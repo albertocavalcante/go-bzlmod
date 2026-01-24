@@ -73,7 +73,7 @@ func TestMultiRegistry_BasicResolution(t *testing.T) {
 		IncludeDevDeps: false,
 		Registries:     []string{reg1.URL, reg2.URL},
 	}
-	resolver := NewDependencyResolverWithOptions(nil, opts)
+	resolver := newDependencyResolverWithOptions(nil, opts)
 
 	rootModule := &ModuleInfo{
 		Name:    "my_project",
@@ -157,7 +157,7 @@ func TestMultiRegistry_ModuleStickiness(t *testing.T) {
 	opts := ResolutionOptions{
 		Registries: []string{registry1.URL, registry2.URL},
 	}
-	resolver := NewDependencyResolverWithOptions(nil, opts)
+	resolver := newDependencyResolverWithOptions(nil, opts)
 
 	rootModule := &ModuleInfo{
 		Name:    "test",
@@ -191,7 +191,7 @@ func TestMultiRegistry_SingleRegistryBackwardsCompatibility(t *testing.T) {
 	opts := ResolutionOptions{
 		Registries: []string{reg1.URL},
 	}
-	resolver := NewDependencyResolverWithOptions(nil, opts)
+	resolver := newDependencyResolverWithOptions(nil, opts)
 
 	rootModule := &ModuleInfo{
 		Name:    "test",
@@ -240,7 +240,7 @@ func TestMultiRegistry_SingleRegistryBackwardsCompatibility(t *testing.T) {
 	opts2 := ResolutionOptions{
 		Registries: []string{reg1.URL, reg2.URL},
 	}
-	resolver2 := NewDependencyResolverWithOptions(nil, opts2)
+	resolver2 := newDependencyResolverWithOptions(nil, opts2)
 
 	result2, err := resolver2.ResolveDependencies(ctx, rootModule)
 	if err != nil {
@@ -277,8 +277,8 @@ func TestMultiRegistry_NoRegistriesConfigured(t *testing.T) {
 	defer registry.Close()
 
 	// Use traditional constructor with explicit client
-	client := NewRegistryClient(registry.URL)
-	resolver := NewDependencyResolver(client, false)
+	client := newRegistryClient(registry.URL)
+	resolver := newDependencyResolver(client, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -324,7 +324,7 @@ func TestMultiRegistry_RegistryOverride(t *testing.T) {
 	opts := ResolutionOptions{
 		Registries: []string{reg1.URL, reg2.URL},
 	}
-	resolver := NewDependencyResolverWithOptions(nil, opts)
+	resolver := newDependencyResolverWithOptions(nil, opts)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -391,7 +391,7 @@ bazel_dep(name = "mvs_test", version = "2.0.0")`)
 	opts := ResolutionOptions{
 		Registries: []string{registry.URL},
 	}
-	resolver := NewDependencyResolverWithOptions(nil, opts)
+	resolver := newDependencyResolverWithOptions(nil, opts)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",

@@ -90,24 +90,19 @@ type graphBuildContext struct {
 	mu sync.Mutex
 }
 
-// NewDependencyResolver creates a new resolver with the given registry.
+// newDependencyResolver creates a new resolver with the given registry.
 // If includeDevDeps is false, dev_dependency=True modules are excluded from resolution.
-//
-// The registry can be created with Registry() for sensible defaults:
-//
-//	resolver := NewDependencyResolver(Registry(), false)
-func NewDependencyResolver(registry registryInterface, includeDevDeps bool) *dependencyResolver {
+func newDependencyResolver(registry registryInterface, includeDevDeps bool) *dependencyResolver {
 	return &dependencyResolver{
 		registry: registry,
 		options:  ResolutionOptions{IncludeDevDeps: includeDevDeps},
 	}
 }
 
-// NewDependencyResolverWithOptions creates a resolver with full configuration control.
-//
+// newDependencyResolverWithOptions creates a resolver with full configuration control.
 // The registry can be nil if opts.Registries is set, otherwise it's required.
 // When opts.Registries is set, it takes precedence over the registry parameter.
-func NewDependencyResolverWithOptions(registry registryInterface, opts ResolutionOptions) *dependencyResolver {
+func newDependencyResolverWithOptions(registry registryInterface, opts ResolutionOptions) *dependencyResolver {
 	reg := registry
 
 	// Registries in options takes precedence

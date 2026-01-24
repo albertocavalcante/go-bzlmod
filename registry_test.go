@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestNewRegistryClient(t *testing.T) {
+func Test_newRegistryClient(t *testing.T) {
 	tests := []struct {
 		name        string
 		registryURL string
@@ -35,10 +35,10 @@ func TestNewRegistryClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := NewRegistryClient(tt.registryURL)
+			client := newRegistryClient(tt.registryURL)
 
 			if client == nil {
-				t.Fatal("NewRegistryClient() returned nil")
+				t.Fatal("newRegistryClient() returned nil")
 			}
 
 			if client.baseURL != tt.wantURL {
@@ -89,7 +89,7 @@ func TestGetModuleFile_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewRegistryClient(server.URL)
+	client := newRegistryClient(server.URL)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -180,7 +180,7 @@ func TestGetModuleFile_HTTPErrors(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := NewRegistryClient(server.URL)
+			client := newRegistryClient(server.URL)
 			ctx := context.Background()
 
 			info, err := client.GetModuleFile(ctx, "test_module", "1.0.0")
@@ -208,7 +208,7 @@ func TestGetModuleFile_Caching(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewRegistryClient(server.URL)
+	client := newRegistryClient(server.URL)
 	ctx := context.Background()
 
 	// First request
@@ -242,7 +242,7 @@ func TestGetModuleFile_ContextTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewRegistryClient(server.URL)
+	client := newRegistryClient(server.URL)
 
 	// Create context with very short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -271,7 +271,7 @@ func TestGetModuleFile_ContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewRegistryClient(server.URL)
+	client := newRegistryClient(server.URL)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Cancel context immediately
@@ -294,7 +294,7 @@ func TestGetModuleFile_ContextCancellation(t *testing.T) {
 
 func TestGetModuleFile_NetworkError(t *testing.T) {
 	// Use an invalid URL to simulate network error
-	client := NewRegistryClient("http://invalid-registry-that-does-not-exist.com")
+	client := newRegistryClient("http://invalid-registry-that-does-not-exist.com")
 	ctx := context.Background()
 
 	info, err := client.GetModuleFile(ctx, "test_module", "1.0.0")
@@ -356,7 +356,7 @@ func TestURLConstruction(t *testing.T) {
 			defer server.Close()
 			serverURL = server.URL
 
-			client := NewRegistryClient(server.URL)
+			client := newRegistryClient(server.URL)
 			ctx := context.Background()
 
 			_, err := client.GetModuleFile(ctx, tt.moduleName, tt.version)
@@ -407,7 +407,7 @@ func BenchmarkGetModuleFile_Cached(b *testing.B) {
 	}))
 	defer server.Close()
 
-	client := NewRegistryClient(server.URL)
+	client := newRegistryClient(server.URL)
 	ctx := context.Background()
 
 	// Warm up the cache
@@ -431,7 +431,7 @@ func BenchmarkGetModuleFile_Uncached(b *testing.B) {
 	}))
 	defer server.Close()
 
-	client := NewRegistryClient(server.URL)
+	client := newRegistryClient(server.URL)
 	ctx := context.Background()
 
 	b.ResetTimer()

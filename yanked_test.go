@@ -208,7 +208,7 @@ func TestRegistryClient_GetModuleMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewRegistryClient(server.URL)
+	client := newRegistryClient(server.URL)
 
 	t.Run("fetch metadata successfully", func(t *testing.T) {
 		metadata, err := client.GetModuleMetadata(context.Background(), "rules_go")

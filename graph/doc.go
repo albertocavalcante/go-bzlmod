@@ -11,11 +11,10 @@
 //
 // # Building a Graph
 //
-// A Graph is typically built from resolution results:
+// A Graph is automatically built during resolution:
 //
-//	resolver := bzlmod.NewDependencyResolver(registry, opts)
-//	result, _ := resolver.Resolve(ctx, moduleInfo)
-//	graph := graph.BuildFromResolution(result)
+//	result, _ := bzlmod.Resolve(ctx, moduleContent, opts)
+//	graph := result.Graph // already populated
 //
 // # Querying the Graph
 //

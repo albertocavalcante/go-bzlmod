@@ -309,7 +309,7 @@ func TestResolveFromContent_WithOverrideModules(t *testing.T) {
 	}
 
 	reg := Registry(server.URL)
-	resolver := NewDependencyResolver(reg, false)
+	resolver := newDependencyResolver(reg, false)
 	for moduleName, moduleContent := range overrideModules {
 		if err := resolver.AddOverrideModuleContent(moduleName, moduleContent); err != nil {
 			t.Fatalf("AddOverrideModuleContent() error = %v", err)

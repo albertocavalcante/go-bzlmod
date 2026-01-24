@@ -49,7 +49,7 @@ func TestCheckModuleMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
+	registry := newRegistryClient(server.URL)
 
 	t.Run("marks yanked module correctly", func(t *testing.T) {
 		list := &ResolutionList{

@@ -10,13 +10,13 @@ import (
 )
 
 // resolveWithSelection is a test helper that mimics the old resolveWithSelection API.
-func resolveWithSelection(ctx context.Context, moduleContent string, opts ResolutionOptions) (*SelectionResult, error) {
+func resolveWithSelection(ctx context.Context, moduleContent string, opts ResolutionOptions) (*selectionResult, error) {
 	moduleInfo, err := ParseModuleContent(moduleContent)
 	if err != nil {
 		return nil, fmt.Errorf("parse module content: %w", err)
 	}
 	reg := registryFromOptions(opts)
-	resolver := NewSelectionResolver(reg, opts)
+	resolver := newSelectionResolver(reg, opts)
 	return resolver.Resolve(ctx, moduleInfo)
 }
 
@@ -321,8 +321,8 @@ bazel_dep(name = "a", version = "2.0.0")`
 }
 
 func TestSelectionResolver_NilModule(t *testing.T) {
-	client := NewRegistryClient("https://example.com")
-	resolver := NewSelectionResolver(client, ResolutionOptions{})
+	client := newRegistryClient("https://example.com")
+	resolver := newSelectionResolver(client, ResolutionOptions{})
 
 	_, err := resolver.Resolve(context.Background(), nil)
 	if err == nil {

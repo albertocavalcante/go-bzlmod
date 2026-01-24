@@ -29,11 +29,10 @@ type selectionResolver struct {
 	options  ResolutionOptions
 }
 
-// NewSelectionResolver creates a resolver using Bazel's full selection algorithm.
-//
+// newSelectionResolver creates a resolver using Bazel's full selection algorithm.
 // The registry can be nil if opts.Registries is set, otherwise it's required.
 // When opts.Registries is set, it takes precedence over the registry parameter.
-func NewSelectionResolver(registry registryInterface, opts ResolutionOptions) *selectionResolver {
+func newSelectionResolver(registry registryInterface, opts ResolutionOptions) *selectionResolver {
 	reg := registry
 
 	// Registries in options takes precedence
@@ -53,7 +52,7 @@ func NewSelectionResolver(registry registryInterface, opts ResolutionOptions) *s
 // Resolve performs dependency resolution using Bazel's selection algorithm.
 // It returns a ResolutionList with the resolved modules and optionally an
 // unpruned view for debugging.
-func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo) (*SelectionResult, error) {
+func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo) (*selectionResult, error) {
 	if rootModule == nil {
 		return nil, fmt.Errorf("root module is nil")
 	}
@@ -77,8 +76,8 @@ func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo)
 	return r.buildResult(ctx, result, rootModule)
 }
 
-// SelectionResult extends ResolutionList with additional debug information.
-type SelectionResult struct {
+// selectionResult extends ResolutionList with additional debug information.
+type selectionResult struct {
 	// Resolved contains the final resolved modules (pruned).
 	Resolved *ResolutionList
 
@@ -289,8 +288,8 @@ func convertOverrides(overrides []Override) map[string]selection.Override {
 	return result
 }
 
-// buildResult converts selection.Result to SelectionResult.
-func (r *selectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo) (*SelectionResult, error) {
+// buildResult converts selection.Result to selectionResult.
+func (r *selectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo) (*selectionResult, error) {
 	defaultRegistry := r.registry.BaseURL()
 
 	// Build set of root's direct dev dependencies for tracking
@@ -430,7 +429,7 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		bfsOrder = append(bfsOrder, key.String())
 	}
 
-	return &SelectionResult{
+	return &selectionResult{
 		Resolved: resolved,
 		Unpruned: unpruned,
 		BFSOrder: bfsOrder,

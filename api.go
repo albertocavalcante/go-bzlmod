@@ -69,7 +69,7 @@ func Resolve(ctx context.Context, moduleContent string, opts ResolutionOptions) 
 	}
 
 	reg := registryFromOptions(opts)
-	resolver := NewDependencyResolverWithOptions(reg, opts)
+	resolver := newDependencyResolverWithOptions(reg, opts)
 	return resolver.ResolveDependencies(ctx, moduleInfo)
 }
 
@@ -83,7 +83,7 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 	}
 
 	reg := registryFromOptions(opts)
-	resolver := NewDependencyResolverWithOptions(reg, opts)
+	resolver := newDependencyResolverWithOptions(reg, opts)
 	return resolver.ResolveDependencies(ctx, moduleInfo)
 }
 

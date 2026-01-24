@@ -65,8 +65,8 @@ func createMockRegistryServer() *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-func TestNewDependencyResolver(t *testing.T) {
-	registry := NewRegistryClient("https://bcr.bazel.build")
+func Test_newDependencyResolver(t *testing.T) {
+	registry := newRegistryClient("https://bcr.bazel.build")
 
 	tests := []struct {
 		name           string
@@ -84,10 +84,10 @@ func TestNewDependencyResolver(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolver := NewDependencyResolver(registry, tt.includeDevDeps)
+			resolver := newDependencyResolver(registry, tt.includeDevDeps)
 
 			if resolver == nil {
-				t.Fatal("NewDependencyResolver() returned nil")
+				t.Fatal("newDependencyResolver() returned nil")
 			}
 
 			if resolver.registry != registry {
@@ -102,8 +102,8 @@ func TestNewDependencyResolver(t *testing.T) {
 }
 
 func TestApplyMVS(t *testing.T) {
-	registry := NewRegistryClient("https://bcr.bazel.build")
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient("https://bcr.bazel.build")
+	resolver := newDependencyResolver(registry, false)
 
 	tests := []struct {
 		name     string
@@ -223,8 +223,8 @@ func TestApplyMVS(t *testing.T) {
 }
 
 func TestApplyOverrides(t *testing.T) {
-	registry := NewRegistryClient("https://bcr.bazel.build")
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient("https://bcr.bazel.build")
+	resolver := newDependencyResolver(registry, false)
 
 	tests := []struct {
 		name      string
@@ -361,8 +361,8 @@ func TestApplyOverrides(t *testing.T) {
 }
 
 func TestBuildResolutionList(t *testing.T) {
-	registry := NewRegistryClient("https://bcr.bazel.build")
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient("https://bcr.bazel.build")
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "test_project",
@@ -451,8 +451,8 @@ func TestResolveDependencies_Integration(t *testing.T) {
 	defer server.Close()
 
 	// Create registry and resolver
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	// Create root module
 	rootModule := &ModuleInfo{
@@ -558,8 +558,8 @@ func TestResolveDependencies_DevDependencies(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := NewRegistryClient(server.URL)
-			resolver := NewDependencyResolverWithOptions(registry, ResolutionOptions{
+			registry := newRegistryClient(server.URL)
+			resolver := newDependencyResolverWithOptions(registry, ResolutionOptions{
 				IncludeDevDeps: tt.includeDevDeps,
 			})
 
@@ -598,8 +598,8 @@ func TestResolveDependencies_SingleVersionOverrideHydratesTransitiveDeps(t *test
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -641,8 +641,8 @@ func TestResolveDependencies_GitOverrideKeepsModuleWithoutRegistryFetch(t *testi
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -697,8 +697,8 @@ func TestResolveDependencies_GitOverrideHydratesProvidedModule(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	overrideContent := `module(name = "local_mod", version = "1.0.0")
 	bazel_dep(name = "dep", version = "1.0.0")`
@@ -746,12 +746,12 @@ func TestResolveDependencies_GitOverrideHydratesProvidedModule(t *testing.T) {
 
 // TestDirectDepsMode_Warn tests that DirectDepsWarn adds warnings for mismatches.
 func TestDirectDepsMode_Warn(t *testing.T) {
-	registry := NewRegistryClient("https://bcr.bazel.build")
+	registry := newRegistryClient("https://bcr.bazel.build")
 	opts := ResolutionOptions{
 		IncludeDevDeps: false,
 		DirectDepsMode: DirectDepsWarn,
 	}
-	resolver := NewDependencyResolverWithOptions(registry, opts)
+	resolver := newDependencyResolverWithOptions(registry, opts)
 
 	// Root declares dep_a@1.0.0, but transitive deps will bump it higher
 	rootModule := &ModuleInfo{
@@ -786,12 +786,12 @@ func TestDirectDepsMode_Warn(t *testing.T) {
 
 // TestDirectDepsMode_NoMismatch tests that matching versions produce no warnings.
 func TestDirectDepsMode_NoMismatch(t *testing.T) {
-	registry := NewRegistryClient("https://bcr.bazel.build")
+	registry := newRegistryClient("https://bcr.bazel.build")
 	opts := ResolutionOptions{
 		IncludeDevDeps: false,
 		DirectDepsMode: DirectDepsWarn,
 	}
-	resolver := NewDependencyResolverWithOptions(registry, opts)
+	resolver := newDependencyResolverWithOptions(registry, opts)
 
 	rootModule := &ModuleInfo{
 		Name:    "test",
@@ -835,8 +835,8 @@ func TestBuildDependencyGraph_MutualDependency(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -890,8 +890,8 @@ func TestBuildDependencyGraph_DiamondDependency(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -952,8 +952,8 @@ func TestBuildDependencyGraph_DeepChain(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -1001,8 +1001,8 @@ func TestBuildDependencyGraph_MaxDepthExceeded(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -1051,8 +1051,8 @@ func TestBuildDependencyGraph_SelfReference(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -1106,8 +1106,8 @@ func TestBuildDependencyGraph_LongerMutualDependency(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistryClient(server.URL)
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
 
 	rootModule := &ModuleInfo{
 		Name:    "root",
@@ -1144,8 +1144,8 @@ func TestBuildDependencyGraph_LongerMutualDependency(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkApplyMVS(b *testing.B) {
-	registry := NewRegistryClient("https://bcr.bazel.build")
-	resolver := NewDependencyResolver(registry, false)
+	registry := newRegistryClient("https://bcr.bazel.build")
+	resolver := newDependencyResolver(registry, false)
 
 	// Create a large dependency graph for benchmarking
 	depGraph := make(map[string]map[string]*depRequest)

@@ -32,31 +32,6 @@ var DefaultRegistries = []string{
 	DefaultRegistryMirror,
 }
 
-// RegistryWithFallback creates a registry chain with your registries plus BCR fallback.
-// This is a convenience function for private registry setups.
-//
-// Panics if no valid registries could be created. This should never happen since
-// the default registries are always valid.
-//
-// Example:
-//
-//	// Private registry with full BCR resilience (BCR + GitHub mirror)
-//	reg := RegistryWithFallback("https://registry.example.com")
-//
-//	// Multiple private registries with BCR fallback
-//	reg := RegistryWithFallback("https://primary.example.com", "https://secondary.example.com")
-func RegistryWithFallback(privateRegistries ...string) registryInterface {
-	urls := make([]string, 0, len(privateRegistries)+len(DefaultRegistries))
-	urls = append(urls, privateRegistries...)
-	urls = append(urls, DefaultRegistries...)
-	chain, err := newRegistryChain(urls)
-	if err != nil {
-		// This should never happen since DefaultRegistries are always valid
-		panic(fmt.Sprintf("failed to create registry chain with fallback: %v", err))
-	}
-	return chain
-}
-
 // HTTP client configuration constants.
 const (
 	defaultMaxIdleConns        = 50
@@ -173,18 +148,7 @@ func registryWithTimeout(timeout time.Duration, urls ...string) registryInterfac
 	return chain
 }
 
-// NewRegistryClient creates a client for the given registry URL.
-//
-// Deprecated: Use Registry() instead, which provides sensible defaults
-// and supports multiple registries.
-//
-// The URL should be the base of a Bazel registry implementing the standard
-// layout where module files are at /modules/{name}/{version}/MODULE.bazel.
-func NewRegistryClient(baseURL string) *registryClient {
-	return newRegistryClient(baseURL)
-}
-
-// newRegistryClient is the internal constructor for registryClient.
+// newRegistryClient creates a registryClient for the given registry URL.
 func newRegistryClient(baseURL string) *registryClient {
 	return newRegistryClientWithTimeout(baseURL, 0)
 }
