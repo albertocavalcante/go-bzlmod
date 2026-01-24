@@ -241,10 +241,9 @@ func TestRegistryChain_MixedLocalAndRemote(t *testing.T) {
 
 	// Create a chain with local first, then BCR
 	fileURL := "file://" + tmpDir
-	chain := NewRegistryChain([]string{fileURL, DefaultRegistry})
-
-	if chain == nil {
-		t.Fatal("NewRegistryChain returned nil")
+	chain, err := NewRegistryChain([]string{fileURL, DefaultRegistry})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
 	}
 
 	if len(chain.clients) != 2 {

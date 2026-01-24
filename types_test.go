@@ -227,3 +227,197 @@ func TestDepRequest_Creation(t *testing.T) {
 		t.Errorf("RequiredBy length mismatch: got %d, want %d", len(req.RequiredBy), 2)
 	}
 }
+
+// TestYankedVersionsError_SingleModule tests the error message format for a single yanked module.
+func TestYankedVersionsError_SingleModule(t *testing.T) {
+	err := &YankedVersionsError{
+		Modules: []ModuleToResolve{
+			{
+				Name:       "example_module",
+				Version:    "1.2.3",
+				YankReason: "security vulnerability CVE-2024-1234",
+			},
+		},
+	}
+
+	expected := "selected yanked version example_module@1.2.3: security vulnerability CVE-2024-1234"
+	got := err.Error()
+
+	if got != expected {
+		t.Errorf("Error message mismatch:\ngot:  %s\nwant: %s", got, expected)
+	}
+}
+
+// TestYankedVersionsError_MultipleModules tests the error message format for multiple yanked modules.
+func TestYankedVersionsError_MultipleModules(t *testing.T) {
+	err := &YankedVersionsError{
+		Modules: []ModuleToResolve{
+			{
+				Name:       "module_a",
+				Version:    "1.0.0",
+				YankReason: "deprecated API",
+			},
+			{
+				Name:       "module_b",
+				Version:    "2.1.0",
+				YankReason: "critical bug in v2.1.0",
+			},
+			{
+				Name:       "module_c",
+				Version:    "3.0.0",
+				YankReason: "use 3.0.1 instead",
+			},
+		},
+	}
+
+	expected := `selected 3 yanked versions:
+  - module_a@1.0.0: deprecated API
+  - module_b@2.1.0: critical bug in v2.1.0
+  - module_c@3.0.0: use 3.0.1 instead`
+	got := err.Error()
+
+	if got != expected {
+		t.Errorf("Error message mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+}
+
+// TestDirectDepsMismatchError_SingleMismatch tests the error message format for a single mismatch.
+func TestDirectDepsMismatchError_SingleMismatch(t *testing.T) {
+	err := &DirectDepsMismatchError{
+		Mismatches: []DirectDepMismatch{
+			{
+				Name:            "example_dep",
+				DeclaredVersion: "1.0.0",
+				ResolvedVersion: "1.2.0",
+			},
+		},
+	}
+
+	expected := "direct dependency example_dep declared as 1.0.0 but resolved to 1.2.0"
+	got := err.Error()
+
+	if got != expected {
+		t.Errorf("Error message mismatch:\ngot:  %s\nwant: %s", got, expected)
+	}
+}
+
+// TestDirectDepsMismatchError_MultipleMismatches tests the error message format for multiple mismatches.
+func TestDirectDepsMismatchError_MultipleMismatches(t *testing.T) {
+	err := &DirectDepsMismatchError{
+		Mismatches: []DirectDepMismatch{
+			{
+				Name:            "dep_a",
+				DeclaredVersion: "1.0.0",
+				ResolvedVersion: "1.5.0",
+			},
+			{
+				Name:            "dep_b",
+				DeclaredVersion: "2.0.0",
+				ResolvedVersion: "2.1.0",
+			},
+			{
+				Name:            "dep_c",
+				DeclaredVersion: "3.1.0",
+				ResolvedVersion: "3.2.5",
+			},
+		},
+	}
+
+	expected := `3 direct dependencies don't match resolved versions:
+  - dep_a: declared 1.0.0, resolved 1.5.0
+  - dep_b: declared 2.0.0, resolved 2.1.0
+  - dep_c: declared 3.1.0, resolved 3.2.5`
+	got := err.Error()
+
+	if got != expected {
+		t.Errorf("Error message mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+}
+
+// BenchmarkYankedVersionsError_Small benchmarks error generation for a small number of yanked modules.
+func BenchmarkYankedVersionsError_Small(b *testing.B) {
+	err := &YankedVersionsError{
+		Modules: []ModuleToResolve{
+			{
+				Name:       "module_a",
+				Version:    "1.0.0",
+				YankReason: "deprecated API",
+			},
+			{
+				Name:       "module_b",
+				Version:    "2.1.0",
+				YankReason: "critical bug in v2.1.0",
+			},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = err.Error()
+	}
+}
+
+// BenchmarkYankedVersionsError_Large benchmarks error generation for a large number of yanked modules.
+func BenchmarkYankedVersionsError_Large(b *testing.B) {
+	modules := make([]ModuleToResolve, 100)
+	for i := 0; i < 100; i++ {
+		modules[i] = ModuleToResolve{
+			Name:       "module_" + string(rune('a'+i%26)),
+			Version:    "1.0.0",
+			YankReason: "yanked for testing purposes with a reasonably long reason string",
+		}
+	}
+
+	err := &YankedVersionsError{
+		Modules: modules,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = err.Error()
+	}
+}
+
+// BenchmarkDirectDepsMismatchError_Small benchmarks error generation for a small number of mismatches.
+func BenchmarkDirectDepsMismatchError_Small(b *testing.B) {
+	err := &DirectDepsMismatchError{
+		Mismatches: []DirectDepMismatch{
+			{
+				Name:            "dep_a",
+				DeclaredVersion: "1.0.0",
+				ResolvedVersion: "1.5.0",
+			},
+			{
+				Name:            "dep_b",
+				DeclaredVersion: "2.0.0",
+				ResolvedVersion: "2.1.0",
+			},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = err.Error()
+	}
+}
+
+// BenchmarkDirectDepsMismatchError_Large benchmarks error generation for a large number of mismatches.
+func BenchmarkDirectDepsMismatchError_Large(b *testing.B) {
+	mismatches := make([]DirectDepMismatch, 100)
+	for i := 0; i < 100; i++ {
+		mismatches[i] = DirectDepMismatch{
+			Name:            "dependency_module_" + string(rune('a'+i%26)),
+			DeclaredVersion: "1.0.0",
+			ResolvedVersion: "2.0.0",
+		}
+	}
+
+	err := &DirectDepsMismatchError{
+		Mismatches: mismatches,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = err.Error()
+	}
+}

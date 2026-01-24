@@ -35,6 +35,9 @@ var DefaultRegistries = []string{
 // RegistryWithFallback creates a registry chain with your registries plus BCR fallback.
 // This is a convenience function for private registry setups.
 //
+// Panics if no valid registries could be created. This should never happen since
+// the default registries are always valid.
+//
 // Example:
 //
 //	// Private registry with full BCR resilience (BCR + GitHub mirror)
@@ -46,7 +49,12 @@ func RegistryWithFallback(privateRegistries ...string) RegistryInterface {
 	urls := make([]string, 0, len(privateRegistries)+len(DefaultRegistries))
 	urls = append(urls, privateRegistries...)
 	urls = append(urls, DefaultRegistries...)
-	return NewRegistryChain(urls)
+	chain, err := NewRegistryChain(urls)
+	if err != nil {
+		// This should never happen since DefaultRegistries are always valid
+		panic(fmt.Sprintf("failed to create registry chain with fallback: %v", err))
+	}
+	return chain
 }
 
 // HTTP client configuration constants.
@@ -113,6 +121,10 @@ func (r *RegistryClient) BaseURL() string {
 // The default configuration provides resilience against BCR outages.
 // See: https://github.com/bazelbuild/bazel/issues/28101
 //
+// Panics if no valid registries could be created from the provided URLs.
+// This should only happen with invalid URLs; the default registries are
+// guaranteed to be valid.
+//
 // Examples:
 //
 //	// Use BCR with GitHub mirror fallback (recommended)
@@ -130,19 +142,35 @@ func (r *RegistryClient) BaseURL() string {
 //	// Mixed: local first, then remote fallback
 //	reg := Registry("file:///opt/local-modules", DefaultRegistry)
 func Registry(urls ...string) RegistryInterface {
+	return registryWithTimeout(0, urls...)
+}
+
+// registryWithTimeout creates a registry with a custom timeout.
+// If timeout is zero or negative, uses the default timeout.
+func registryWithTimeout(timeout time.Duration, urls ...string) RegistryInterface {
 	if len(urls) == 0 {
 		// Use BCR + GitHub mirror for resilience
-		return NewRegistryChain(DefaultRegistries)
+		chain, err := NewRegistryChainWithTimeout(DefaultRegistries, timeout)
+		if err != nil {
+			// This should never happen with DefaultRegistries
+			panic(fmt.Sprintf("failed to create default registry chain: %v", err))
+		}
+		return chain
 	}
 	if len(urls) == 1 {
-		reg, err := createRegistryClient(urls[0])
+		reg, err := createRegistryClientWithTimeout(urls[0], timeout)
 		if err != nil {
 			// Fall back to treating it as a remote URL if parsing fails
-			return newRegistryClient(urls[0])
+			return newRegistryClientWithTimeout(urls[0], timeout)
 		}
 		return reg
 	}
-	return NewRegistryChain(urls)
+	chain, err := NewRegistryChainWithTimeout(urls, timeout)
+	if err != nil {
+		// Panic on invalid URLs - caller should validate URLs before calling
+		panic(fmt.Sprintf("failed to create registry chain: %v", err))
+	}
+	return chain
 }
 
 // NewRegistryClient creates a client for the given registry URL.
@@ -158,6 +186,12 @@ func NewRegistryClient(baseURL string) *RegistryClient {
 
 // newRegistryClient is the internal constructor for RegistryClient.
 func newRegistryClient(baseURL string) *RegistryClient {
+	return newRegistryClientWithTimeout(baseURL, 0)
+}
+
+// newRegistryClientWithTimeout creates a RegistryClient with a custom timeout.
+// If timeout is zero or negative, uses defaultRequestTimeout (15 seconds).
+func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *RegistryClient {
 	transport := &http.Transport{
 		MaxIdleConns:        defaultMaxIdleConns,
 		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
@@ -165,10 +199,15 @@ func newRegistryClient(baseURL string) *RegistryClient {
 		DisableCompression:  false,
 	}
 
+	actualTimeout := defaultRequestTimeout
+	if timeout > 0 {
+		actualTimeout = timeout
+	}
+
 	return &RegistryClient{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		client: &http.Client{
-			Timeout:   defaultRequestTimeout,
+			Timeout:   actualTimeout,
 			Transport: transport,
 		},
 	}

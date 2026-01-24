@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/albertocavalcante/go-bzlmod/registry"
 )
@@ -194,6 +195,12 @@ func isFileURL(url string) bool {
 // createRegistryClient creates the appropriate registry client for a URL.
 // Handles file:// URLs for local registries and http(s):// for remote.
 func createRegistryClient(url string) (RegistryInterface, error) {
+	return createRegistryClientWithTimeout(url, 0)
+}
+
+// createRegistryClientWithTimeout creates a registry client with a custom timeout.
+// If timeout is zero or negative, uses the default timeout.
+func createRegistryClientWithTimeout(url string, timeout time.Duration) (RegistryInterface, error) {
 	if isFileURL(url) {
 		path, err := parseFileURL(url)
 		if err != nil {
@@ -210,5 +217,5 @@ func createRegistryClient(url string) (RegistryInterface, error) {
 	}
 
 	// Remote registry
-	return newRegistryClient(url), nil
+	return newRegistryClientWithTimeout(url, timeout), nil
 }

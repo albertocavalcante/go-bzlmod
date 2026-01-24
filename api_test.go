@@ -1075,8 +1075,15 @@ func TestRegistryFromOptions_MixedURLs(t *testing.T) {
 	}
 }
 
-// TestResolve_CircularDependency tests handling of circular dependencies
-func TestResolve_CircularDependency(t *testing.T) {
+// TestResolve_MutualDependency tests that mutual dependencies work correctly.
+// Mutual dependency: A -> B -> A (common in Bazel ecosystem, e.g., rules_go <-> gazelle).
+// Following Bazel's behavior, this should succeed - when B tries to add A, A is already
+// in the visited set, so it's skipped silently. No error, no infinite loop.
+//
+// Bazel source reference:
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+// See DepGraphWalker.walk() which uses Set<ModuleKey> known to track visited modules.
+func TestResolve_MutualDependency(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/modules/cycle_a/1.0.0/MODULE.bazel":
@@ -1095,23 +1102,29 @@ bazel_dep(name = "cycle_a", version = "1.0.0")`)
 	content := `module(name = "test", version = "1.0.0")
 bazel_dep(name = "cycle_a", version = "1.0.0")`
 
-	// Should not infinite loop or crash
-	result, err := Resolve(ctx, content, ResolutionOptions{
+	// Should not infinite loop or crash - mutual dependencies are allowed
+	list, err := Resolve(ctx, content, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 
-	// Resolution should succeed - cycles are handled by tracking visited modules
 	if err != nil {
-		t.Fatalf("Unexpected error with circular deps: %v", err)
+		t.Fatalf("Mutual dependency should succeed (matching Bazel behavior), got error: %v", err)
 	}
 
-	if result == nil {
-		t.Fatal("Expected non-nil result")
+	// Should have both modules resolved
+	if len(list.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(list.Modules))
 	}
 
-	// Should have both modules
-	if len(result.Modules) != 2 {
-		t.Errorf("Expected 2 modules in cycle, got %d", len(result.Modules))
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"cycle_a", "cycle_b"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
 	}
 }
 

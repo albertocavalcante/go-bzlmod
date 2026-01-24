@@ -13,11 +13,34 @@ import (
 )
 
 const (
+	// defaultMaxConcurrency limits concurrent module fetches from the registry.
+	// Set to 5 to balance parallelism with resource usage and avoid overwhelming
+	// the registry with too many simultaneous requests. This matches common HTTP
+	// client concurrency limits and provides good performance without excessive
+	// memory or connection overhead.
 	defaultMaxConcurrency = 5
-	// taskBufferMultiplier scales the buffer size based on dependency count.
+
+	// taskBufferMultiplier scales the task channel buffer size relative to dependency count.
+	// Set to 2x to prevent deadlocks when dependencies spawn additional dependencies during
+	// concurrent processing. For example, if a module has 10 deps, each of which might spawn
+	// more tasks before being consumed, a 2x buffer (20) ensures the channel doesn't block
+	// while workers are busy processing earlier tasks. This is especially important when
+	// combined with MODULE.tools injection which can add many dependencies at once.
 	taskBufferMultiplier = 2
-	// minTaskBufferSize ensures a minimum buffer size for the task channel.
+
+	// minTaskBufferSize sets a minimum buffer size for the task channel.
+	// Set to 100 to handle MODULE.tools dependency injection, which can add 8-14 implicit
+	// dependencies depending on Bazel version (e.g., Bazel 6.6.0 adds 8 deps, Bazel 9.0.0
+	// adds 14 deps). A minimum buffer ensures smooth concurrent processing even when the
+	// root module has few explicit dependencies. Without this, MODULE.tools injection could
+	// cause blocking if taskBufferMultiplier * small_dep_count < tools_dep_count.
 	minTaskBufferSize = 100
+
+	// maxDependencyDepth is the maximum allowed depth for dependency traversal.
+	// This prevents stack overflow and resource exhaustion from extremely deep or
+	// circular dependency chains. Set to 1000 to accommodate very deep but valid
+	// dependency graphs while protecting against pathological cases.
+	maxDependencyDepth = 1000
 )
 
 // DependencyResolver resolves Bazel module dependencies using Minimal Version Selection (MVS).
@@ -65,10 +88,10 @@ func NewDependencyResolverWithOptions(registry RegistryInterface, opts Resolutio
 
 	// Registries in options takes precedence
 	if len(opts.Registries) > 0 {
-		reg = Registry(opts.Registries...)
+		reg = registryWithTimeout(opts.Timeout, opts.Registries...)
 	} else if reg == nil {
 		// No registry provided and no Registries in options, use BCR default
-		reg = Registry()
+		reg = registryWithTimeout(opts.Timeout)
 	}
 
 	return &DependencyResolver{
@@ -202,7 +225,7 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 	}
 
 	// Use a larger buffer to prevent deadlocks when many deps are added at once
-	// (e.g., MODULE.tools injection can add 10+ dependencies)
+	// (e.g., MODULE.tools injection can add 8-14 dependencies depending on Bazel version)
 	bufferSize := len(module.Dependencies) * taskBufferMultiplier
 	if bufferSize < minTaskBufferSize {
 		bufferSize = minTaskBufferSize
@@ -211,14 +234,41 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 	var tasksWG sync.WaitGroup
 	var workersWG sync.WaitGroup
 
+	// checkDepth ensures we don't exceed maximum dependency depth.
+	// This protects against pathologically deep dependency chains.
+	checkDepth := func(depPath []string) error {
+		if len(depPath) > maxDependencyDepth {
+			return &MaxDepthExceededError{
+				Depth:    len(depPath),
+				MaxDepth: maxDependencyDepth,
+				Path:     depPath,
+			}
+		}
+		return nil
+	}
+
 	enqueue := func(depName, depVersion string, depPath []string) {
 		if ctx.Err() != nil {
 			return
 		}
 		depKey := depName + "@" + depVersion
+
+		// Check if already visited globally. This is the key mechanism that prevents
+		// infinite loops in mutual dependencies (like rules_go <-> gazelle).
+		// Following Bazel's approach: if a module is already visited, skip it silently.
+		// This allows A -> B -> A patterns because when B tries to add A, A is already
+		// in the visited set, so we just skip it - no reprocessing, no infinite loop.
+		// See: Selection.java DepGraphWalker.walk() in Bazel source.
 		if _, visited := visiting.LoadOrStore(depKey, struct{}{}); visited {
 			return
 		}
+
+		// Check depth limit
+		if err := checkDepth(depPath); err != nil {
+			setErr(err)
+			return
+		}
+
 		tasksWG.Add(1)
 		select {
 		case tasks <- depTask{name: depName, version: depVersion, path: depPath}:
@@ -227,8 +277,8 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 		}
 	}
 
-	var processDeps func(module *ModuleInfo, path []string)
-	processDeps = func(module *ModuleInfo, path []string) {
+	var processDeps func(module *ModuleInfo, path []string) error
+	processDeps = func(module *ModuleInfo, path []string) error {
 		for _, dep := range module.Dependencies {
 			if dep.DevDependency && !r.options.IncludeDevDeps {
 				continue
@@ -269,9 +319,20 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 			if skipFetch {
 				if overrideModule, ok := overrideModules[dep.Name]; ok {
 					depKey := dep.Name + "@" + effectiveVersion
+					depPath := append(path[:len(path):len(path)], dep.Name+"@"+effectiveVersion)
+
+					// Check depth limit
+					if err := checkDepth(depPath); err != nil {
+						return err
+					}
+
+					// Try to mark as visited and process if this is the first visit.
+					// This prevents infinite loops in mutual dependencies (like rules_go <-> gazelle).
+					// Following Bazel's approach: if already visited, skip silently - no error.
 					if _, visited := visiting.LoadOrStore(depKey, struct{}{}); !visited {
-						depPath := append(path[:len(path):len(path)], dep.Name+"@"+effectiveVersion)
-						processDeps(overrideModule, depPath)
+						if err := processDeps(overrideModule, depPath); err != nil {
+							return err
+						}
 					}
 				}
 				continue
@@ -280,6 +341,7 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 			depPath := append(path[:len(path):len(path)], dep.Name+"@"+effectiveVersion)
 			enqueue(dep.Name, effectiveVersion, depPath)
 		}
+		return nil
 	}
 
 	worker := func() {
@@ -293,8 +355,8 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 			// Check if there's a registry override for this module
 			registryToUse := r.registry
 			if override, ok := overrides[task.name]; ok && override.Registry != "" {
-				// Use the overridden registry for this specific module
-				registryToUse = NewRegistryClient(override.Registry)
+				// Use the overridden registry for this specific module with the configured timeout
+				registryToUse = newRegistryClientWithTimeout(override.Registry, r.options.Timeout)
 			}
 
 			transitiveDep, err := registryToUse.GetModuleFile(ctx, task.name, task.version)
@@ -311,7 +373,9 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 				continue
 			}
 
-			processDeps(transitiveDep, task.path)
+			if err := processDeps(transitiveDep, task.path); err != nil {
+				setErr(err)
+			}
 			tasksWG.Done()
 		}
 	}
@@ -321,7 +385,9 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 		go worker()
 	}
 
-	processDeps(module, path)
+	if err := processDeps(module, path); err != nil {
+		setErr(err)
+	}
 
 	go func() {
 		tasksWG.Wait()
@@ -458,7 +524,7 @@ func (r *DependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 
 	// Check for yanked/deprecated versions if enabled
 	if r.options.CheckYanked || r.options.WarnDeprecated {
-		r.checkModuleMetadata(ctx, list)
+		checkModuleMetadata(ctx, r.registry, r.options, list)
 	}
 
 	// Compute summary statistics
@@ -523,88 +589,6 @@ func (r *DependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 	return list, nil
 }
 
-// checkModuleMetadata fetches metadata for all modules and marks yanked/deprecated status.
-// Follows Bazel's fail-open pattern: if metadata.json fetch fails, resolution continues.
-func (r *DependencyResolver) checkModuleMetadata(ctx context.Context, list *ResolutionList) {
-	// Build allowed yanked versions set for quick lookup
-	allowedYanked := buildAllowedYankedSet(r.options.AllowYankedVersions)
-
-	type result struct {
-		idx               int
-		yanked            bool
-		yankReason        string
-		deprecated        bool
-		deprecationReason string
-	}
-
-	results := make(chan result, len(list.Modules))
-	var wg sync.WaitGroup
-
-	for i := range list.Modules {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-
-			module := &list.Modules[idx]
-			metadata, err := r.registry.GetModuleMetadata(ctx, module.Name)
-			if err != nil {
-				// Bazel's fail-open pattern: metadata fetch failures don't block resolution.
-				// This matches YankedVersionsFunction.java behavior (lines 47-62).
-				return
-			}
-
-			res := result{idx: idx}
-
-			// Check yanked status
-			if metadata.IsYanked(module.Version) {
-				res.yanked = true
-				res.yankReason = metadata.YankReason(module.Version)
-			}
-
-			// Check deprecated status
-			if metadata.IsDeprecated() {
-				res.deprecated = true
-				res.deprecationReason = metadata.Deprecated
-			}
-
-			if res.yanked || res.deprecated {
-				results <- res
-			}
-		}(i)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for res := range results {
-		if res.yanked {
-			// Check if this specific module@version is allowed
-			moduleKey := list.Modules[res.idx].Name + "@" + list.Modules[res.idx].Version
-			if !allowedYanked["all"] && !allowedYanked[moduleKey] {
-				list.Modules[res.idx].Yanked = true
-				list.Modules[res.idx].YankReason = res.yankReason
-			}
-		}
-		if res.deprecated {
-			list.Modules[res.idx].IsDeprecated = true
-			list.Modules[res.idx].DeprecationReason = res.deprecationReason
-		}
-	}
-}
-
-// buildAllowedYankedSet creates a set from AllowYankedVersions for O(1) lookup.
-func buildAllowedYankedSet(allowed []string) map[string]bool {
-	if len(allowed) == 0 {
-		return nil
-	}
-	set := make(map[string]bool, len(allowed))
-	for _, v := range allowed {
-		set[v] = true
-	}
-	return set
-}
 
 func isNotFound(err error) bool {
 	var regErr *RegistryError

@@ -2,6 +2,7 @@ package gobzlmod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -808,6 +809,336 @@ func TestDirectDepsMode_NoMismatch(t *testing.T) {
 	mismatches := resolver.checkDirectDeps(rootModule, selectedVersions)
 	if len(mismatches) != 0 {
 		t.Errorf("Expected no mismatches, got %d", len(mismatches))
+	}
+}
+
+// TestBuildDependencyGraph_MutualDependency tests that mutual dependencies work correctly.
+// Mutual dependency: A -> B -> A (common in Bazel ecosystem, e.g., rules_go <-> gazelle).
+// Following Bazel's behavior, this should succeed - when B tries to add A, A is already
+// in the visited set, so it's skipped silently. No error, no infinite loop.
+//
+// Bazel source reference:
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+// See DepGraphWalker.walk() which uses Set<ModuleKey> known to track visited modules.
+func TestBuildDependencyGraph_MutualDependency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_b", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")
+			bazel_dep(name = "module_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("Mutual dependency should succeed (matching Bazel behavior), got error: %v", err)
+	}
+
+	// Should have both modules resolved
+	if len(list.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(list.Modules))
+	}
+
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"module_a", "module_b"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
+	}
+}
+
+// TestBuildDependencyGraph_DiamondDependency tests that diamond dependencies work correctly.
+// Diamond: root -> A, root -> B, A -> C, B -> C (not a cycle)
+func TestBuildDependencyGraph_DiamondDependency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_c", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")
+			bazel_dep(name = "module_c", version = "1.0.0")`)
+		case "/modules/module_c/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_c", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+			{Name: "module_b", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("Diamond dependency should not be an error, got: %v", err)
+	}
+
+	// Should have all 3 modules resolved
+	if len(list.Modules) != 3 {
+		t.Errorf("Expected 3 modules in diamond pattern, got %d", len(list.Modules))
+	}
+
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"module_a", "module_b", "module_c"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
+	}
+}
+
+// TestBuildDependencyGraph_DeepChain tests that deep but valid chains work.
+func TestBuildDependencyGraph_DeepChain(t *testing.T) {
+	const chainDepth = 50
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Create a chain: module_0 -> module_1 -> ... -> module_49
+		for i := 0; i < chainDepth; i++ {
+			moduleName := fmt.Sprintf("module_%d", i)
+			path := fmt.Sprintf("/modules/%s/1.0.0/MODULE.bazel", moduleName)
+			if r.URL.Path == path {
+				if i < chainDepth-1 {
+					nextModule := fmt.Sprintf("module_%d", i+1)
+					fmt.Fprintf(w, `module(name = "%s", version = "1.0.0")
+					bazel_dep(name = "%s", version = "1.0.0")`, moduleName, nextModule)
+				} else {
+					// Last module has no dependencies
+					fmt.Fprintf(w, `module(name = "%s", version = "1.0.0")`, moduleName)
+				}
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_0", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("Deep chain should not be an error, got: %v", err)
+	}
+
+	// Should have all modules in the chain
+	if len(list.Modules) != chainDepth {
+		t.Errorf("Expected %d modules in chain, got %d", chainDepth, len(list.Modules))
+	}
+}
+
+// TestBuildDependencyGraph_MaxDepthExceeded tests that very deep chains are rejected.
+func TestBuildDependencyGraph_MaxDepthExceeded(t *testing.T) {
+	const chainDepth = 1100 // Exceeds maxDependencyDepth (1000)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Create a very deep chain
+		for i := 0; i < chainDepth; i++ {
+			moduleName := fmt.Sprintf("module_%d", i)
+			path := fmt.Sprintf("/modules/%s/1.0.0/MODULE.bazel", moduleName)
+			if r.URL.Path == path {
+				if i < chainDepth-1 {
+					nextModule := fmt.Sprintf("module_%d", i+1)
+					fmt.Fprintf(w, `module(name = "%s", version = "1.0.0")
+					bazel_dep(name = "%s", version = "1.0.0")`, moduleName, nextModule)
+				} else {
+					fmt.Fprintf(w, `module(name = "%s", version = "1.0.0")`, moduleName)
+				}
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_0", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err == nil {
+		t.Fatal("Expected max depth error, got nil")
+	}
+
+	var depthErr *MaxDepthExceededError
+	if !errors.As(err, &depthErr) {
+		t.Fatalf("Expected MaxDepthExceededError, got %T: %v", err, err)
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "maximum dependency depth") {
+		t.Errorf("Error message should contain 'maximum dependency depth', got: %s", errMsg)
+	}
+}
+
+// TestBuildDependencyGraph_SelfReference tests module depending on itself.
+// Following Bazel's behavior, this should succeed - when module_a tries to add
+// module_a@1.0.0 as a dependency, it's already in the visited set, so it's skipped.
+//
+// Bazel source reference:
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+// See DepGraphWalker.walk() which uses Set<ModuleKey> known to track visited modules.
+func TestBuildDependencyGraph_SelfReference(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			// Module depends on itself
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("Self-reference should succeed (matching Bazel behavior), got error: %v", err)
+	}
+
+	// Should have module_a resolved exactly once
+	if len(list.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(list.Modules))
+	}
+
+	if list.Modules[0].Name != "module_a" {
+		t.Errorf("Expected module_a, got %s", list.Modules[0].Name)
+	}
+}
+
+// TestBuildDependencyGraph_LongerMutualDependency tests a longer mutual dependency chain: A -> B -> C -> A
+// Following Bazel's behavior, this should succeed. Bazel uses a BFS with a global "visited" set
+// (called "known" in Selection.java). When C tries to add A as a dependency, A is already in
+// the visited set from the initial traversal, so it's skipped silently.
+//
+// Bazel source reference:
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+// See DepGraphWalker.walk() which uses Set<ModuleKey> known to track visited modules.
+func TestBuildDependencyGraph_LongerMutualDependency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_b", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")
+			bazel_dep(name = "module_c", version = "1.0.0")`)
+		case "/modules/module_c/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_c", version = "1.0.0")
+			bazel_dep(name = "module_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("Mutual dependency chain should succeed (matching Bazel behavior), got error: %v", err)
+	}
+
+	// Should have all 3 modules resolved
+	if len(list.Modules) != 3 {
+		t.Errorf("Expected 3 modules, got %d", len(list.Modules))
+	}
+
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"module_a", "module_b", "module_c"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
 	}
 }
 

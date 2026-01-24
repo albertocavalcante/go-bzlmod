@@ -50,6 +50,19 @@ func WithHTTPClient(client *http.Client) ClientOption {
 	}
 }
 
+// WithTimeout sets a custom HTTP request timeout.
+// Zero or negative values fall back to the default timeout (15 seconds).
+// This option is useful for slow networks or testing scenarios.
+func WithTimeout(timeout time.Duration) ClientOption {
+	return func(c *Client) {
+		if timeout > 0 {
+			c.client.Timeout = timeout
+		} else {
+			c.client.Timeout = DefaultRequestTimeout
+		}
+	}
+}
+
 // NewClient creates a client for the given registry URL.
 //
 // By default, responses are validated against BCR JSON schemas.

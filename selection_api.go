@@ -351,7 +351,7 @@ func (r *SelectionResolver) buildResult(ctx context.Context, result *selection.R
 
 	// Check yanked/deprecated versions if enabled
 	if r.options.CheckYanked || r.options.WarnDeprecated {
-		r.checkModuleMetadata(ctx, resolved)
+		checkModuleMetadata(ctx, r.registry, r.options, resolved)
 	}
 
 	// Compute summary
@@ -437,70 +437,3 @@ func (r *SelectionResolver) buildResult(ctx context.Context, result *selection.R
 	}, nil
 }
 
-// checkModuleMetadata fetches metadata for all modules and marks yanked/deprecated status.
-// Follows Bazel's fail-open pattern: if metadata.json fetch fails, resolution continues.
-func (r *SelectionResolver) checkModuleMetadata(ctx context.Context, list *ResolutionList) {
-	// Build allowed yanked versions set for quick lookup
-	allowedYanked := buildAllowedYankedSet(r.options.AllowYankedVersions)
-
-	type result struct {
-		idx               int
-		yanked            bool
-		yankReason        string
-		deprecated        bool
-		deprecationReason string
-	}
-
-	results := make(chan result, len(list.Modules))
-	var wg sync.WaitGroup
-
-	for i := range list.Modules {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-
-			module := &list.Modules[idx]
-			metadata, err := r.registry.GetModuleMetadata(ctx, module.Name)
-			if err != nil {
-				// Bazel's fail-open pattern: metadata fetch failures don't block resolution.
-				return
-			}
-
-			res := result{idx: idx}
-
-			if metadata.IsYanked(module.Version) {
-				res.yanked = true
-				res.yankReason = metadata.YankReason(module.Version)
-			}
-
-			if metadata.IsDeprecated() {
-				res.deprecated = true
-				res.deprecationReason = metadata.Deprecated
-			}
-
-			if res.yanked || res.deprecated {
-				results <- res
-			}
-		}(i)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for res := range results {
-		if res.yanked {
-			// Check if this specific module@version is allowed
-			moduleKey := list.Modules[res.idx].Name + "@" + list.Modules[res.idx].Version
-			if !allowedYanked["all"] && !allowedYanked[moduleKey] {
-				list.Modules[res.idx].Yanked = true
-				list.Modules[res.idx].YankReason = res.yankReason
-			}
-		}
-		if res.deprecated {
-			list.Modules[res.idx].IsDeprecated = true
-			list.Modules[res.idx].DeprecationReason = res.deprecationReason
-		}
-	}
-}

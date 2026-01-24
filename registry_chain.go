@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/albertocavalcante/go-bzlmod/registry"
 )
@@ -54,15 +55,26 @@ type RegistryChain struct {
 //   - https:// or http:// - Remote registry
 //   - file:// - Local filesystem registry (for airgap/offline)
 //
-// Returns nil if no valid registries could be created.
-func NewRegistryChain(registryURLs []string) *RegistryChain {
+// Returns an error if:
+//   - No registry URLs are provided (nil or empty slice)
+//   - All provided URLs are invalid or cannot be parsed
+//
+// If some URLs are invalid but at least one is valid, the invalid URLs
+// are silently skipped and a chain is created with the valid ones.
+func NewRegistryChain(registryURLs []string) (*RegistryChain, error) {
+	return NewRegistryChainWithTimeout(registryURLs, 0)
+}
+
+// NewRegistryChainWithTimeout creates a chain of registries with a custom timeout.
+// If timeout is zero or negative, uses the default timeout.
+func NewRegistryChainWithTimeout(registryURLs []string, timeout time.Duration) (*RegistryChain, error) {
 	if len(registryURLs) == 0 {
-		return nil
+		return nil, errors.New("no registry URLs provided")
 	}
 
 	clients := make([]RegistryInterface, 0, len(registryURLs))
 	for _, url := range registryURLs {
-		client, err := createRegistryClient(url)
+		client, err := createRegistryClientWithTimeout(url, timeout)
 		if err != nil {
 			// Log error but continue with other registries
 			// In production, consider adding a warning mechanism
@@ -72,13 +84,13 @@ func NewRegistryChain(registryURLs []string) *RegistryChain {
 	}
 
 	if len(clients) == 0 {
-		return nil
+		return nil, fmt.Errorf("no valid registries could be created from %d URLs", len(registryURLs))
 	}
 
 	return &RegistryChain{
 		clients:        clients,
 		moduleRegistry: make(map[string]int),
-	}
+	}, nil
 }
 
 // GetModuleFile fetches a MODULE.bazel file using the registry chain.

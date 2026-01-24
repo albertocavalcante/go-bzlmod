@@ -67,44 +67,60 @@ func TestNewRegistryChain(t *testing.T) {
 	tests := []struct {
 		name        string
 		registryURLs []string
-		wantNil     bool
+		wantErr     bool
 		wantClients int
 	}{
 		{
 			name:        "empty URLs",
 			registryURLs: []string{},
-			wantNil:     true,
-			wantClients: 0,
+			wantErr:     true,
 		},
 		{
 			name:        "nil URLs",
 			registryURLs: nil,
-			wantNil:     true,
-			wantClients: 0,
+			wantErr:     true,
+		},
+		{
+			name:        "all invalid file URLs",
+			registryURLs: []string{"file:///nonexistent/path1", "file:///nonexistent/path2"},
+			wantErr:     true,
 		},
 		{
 			name:        "single registry",
 			registryURLs: []string{"https://bcr.bazel.build"},
-			wantNil:     false,
+			wantErr:     false,
 			wantClients: 1,
 		},
 		{
 			name:        "multiple registries",
 			registryURLs: []string{"https://registry1.example.com", "https://bcr.bazel.build"},
-			wantNil:     false,
+			wantErr:     false,
 			wantClients: 2,
+		},
+		{
+			name:        "mixed valid and invalid file URLs",
+			registryURLs: []string{"file:///nonexistent/path", "https://bcr.bazel.build"},
+			wantErr:     false,
+			wantClients: 1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			chain := NewRegistryChain(tt.registryURLs)
+			chain, err := NewRegistryChain(tt.registryURLs)
 
-			if tt.wantNil {
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("NewRegistryChain() error = nil, want error")
+				}
 				if chain != nil {
-					t.Errorf("NewRegistryChain() = %v, want nil", chain)
+					t.Errorf("NewRegistryChain() returned non-nil chain with error")
 				}
 				return
+			}
+
+			if err != nil {
+				t.Fatalf("NewRegistryChain() unexpected error: %v", err)
 			}
 
 			if chain == nil {
@@ -124,7 +140,10 @@ func TestRegistryChain_GetModuleFile_FirstRegistryMatch(t *testing.T) {
 	defer reg2.Close()
 	defer reg3.Close()
 
-	chain := NewRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
+	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 	ctx := context.Background()
 
 	// Test: module_a is in registry1 (first registry)
@@ -188,11 +207,14 @@ func TestRegistryChain_ModuleStickiness(t *testing.T) {
 	defer reg1.Close()
 	defer reg2.Close()
 
-	chain := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 	ctx := context.Background()
 
 	// First lookup of module_a@1.0.0 -> finds in reg1
-	_, err := chain.GetModuleFile(ctx, "module_a", "1.0.0")
+	_, err = chain.GetModuleFile(ctx, "module_a", "1.0.0")
 	if err != nil {
 		t.Fatalf("First lookup failed: %v", err)
 	}
@@ -220,11 +242,14 @@ func TestRegistryChain_NotFound(t *testing.T) {
 	defer reg2.Close()
 	defer reg3.Close()
 
-	chain := NewRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
+	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 	ctx := context.Background()
 
 	// Test: module that doesn't exist in any registry
-	_, err := chain.GetModuleFile(ctx, "nonexistent_module", "1.0.0")
+	_, err = chain.GetModuleFile(ctx, "nonexistent_module", "1.0.0")
 	if err == nil {
 		t.Error("GetModuleFile() should return error for nonexistent module")
 	}
@@ -241,11 +266,14 @@ func TestRegistryChain_GetModuleMetadata(t *testing.T) {
 	defer reg1.Close()
 	defer reg2.Close()
 
-	chain := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 	ctx := context.Background()
 
 	// First, fetch a module to establish mapping
-	_, err := chain.GetModuleFile(ctx, "module_a", "1.0.0")
+	_, err = chain.GetModuleFile(ctx, "module_a", "1.0.0")
 	if err != nil {
 		t.Fatalf("GetModuleFile() error = %v", err)
 	}
@@ -262,7 +290,10 @@ func TestRegistryChain_GetModuleMetadata(t *testing.T) {
 }
 
 func TestRegistryChain_BaseURL(t *testing.T) {
-	chain := NewRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
+	chain, err := NewRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 
 	// BaseURL should return the first registry
 	if chain.BaseURL() != "https://reg1.example.com" {
@@ -271,7 +302,10 @@ func TestRegistryChain_BaseURL(t *testing.T) {
 }
 
 func TestRegistryChain_GetRegistryForModule_NotFound(t *testing.T) {
-	chain := NewRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
+	chain, err := NewRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 
 	// Should return empty string for modules not yet looked up
 	if registry := chain.GetRegistryForModule("unknown_module"); registry != "" {
@@ -291,7 +325,10 @@ func TestRegistryChain_ConcurrentAccess(t *testing.T) {
 	defer reg1.Close()
 	defer reg2.Close()
 
-	chain := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 	ctx := context.Background()
 
 	// Launch multiple concurrent requests
@@ -340,7 +377,10 @@ func TestRegistryChain_FallbackOnError(t *testing.T) {
 	}))
 	defer successRegistry.Close()
 
-	chain := NewRegistryChain([]string{errorRegistry.URL, successRegistry.URL})
+	chain, err := NewRegistryChain([]string{errorRegistry.URL, successRegistry.URL})
+	if err != nil {
+		t.Fatalf("NewRegistryChain() error = %v", err)
+	}
 	ctx := context.Background()
 
 	// Should successfully get module from second registry despite first registry error

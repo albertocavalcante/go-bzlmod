@@ -1,6 +1,10 @@
 package gobzlmod
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // ModuleInfo represents the information extracted from a MODULE.bazel file.
 // It contains the module's identity, version, and all its direct dependencies
@@ -254,6 +258,14 @@ type ResolutionOptions struct {
 	//
 	// This mirrors Bazel's --vendor_dir flag behavior.
 	VendorDir string
+
+	// Timeout specifies the HTTP request timeout for registry requests.
+	// When set to a positive value, overrides the default 15 second timeout.
+	// Zero or negative values use the default timeout.
+	// This is useful for slow networks or testing scenarios.
+	//
+	// Example: 30 * time.Second for slower networks
+	Timeout time.Duration
 }
 
 // YankedVersionsError is returned when resolution selects yanked versions
@@ -268,11 +280,17 @@ func (e *YankedVersionsError) Error() string {
 		m := e.Modules[0]
 		return "selected yanked version " + m.Name + "@" + m.Version + ": " + m.YankReason
 	}
-	msg := fmt.Sprintf("selected %d yanked versions:", len(e.Modules))
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("selected %d yanked versions:", len(e.Modules)))
 	for _, m := range e.Modules {
-		msg += "\n  - " + m.Name + "@" + m.Version + ": " + m.YankReason
+		sb.WriteString("\n  - ")
+		sb.WriteString(m.Name)
+		sb.WriteByte('@')
+		sb.WriteString(m.Version)
+		sb.WriteString(": ")
+		sb.WriteString(m.YankReason)
 	}
-	return msg
+	return sb.String()
 }
 
 // DirectDepMismatch represents a mismatch between declared and resolved versions.
@@ -298,12 +316,17 @@ func (e *DirectDepsMismatchError) Error() string {
 		return fmt.Sprintf("direct dependency %s declared as %s but resolved to %s",
 			m.Name, m.DeclaredVersion, m.ResolvedVersion)
 	}
-	msg := fmt.Sprintf("%d direct dependencies don't match resolved versions:", len(e.Mismatches))
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d direct dependencies don't match resolved versions:", len(e.Mismatches)))
 	for _, m := range e.Mismatches {
-		msg += fmt.Sprintf("\n  - %s: declared %s, resolved %s",
-			m.Name, m.DeclaredVersion, m.ResolvedVersion)
+		sb.WriteString("\n  - ")
+		sb.WriteString(m.Name)
+		sb.WriteString(": declared ")
+		sb.WriteString(m.DeclaredVersion)
+		sb.WriteString(", resolved ")
+		sb.WriteString(m.ResolvedVersion)
 	}
-	return msg
+	return sb.String()
 }
 
 // DepRequest tracks a version request during dependency graph construction.
@@ -317,4 +340,58 @@ type DepRequest struct {
 
 	// RequiredBy lists the modules that made this request.
 	RequiredBy []string
+}
+
+// DependencyCycleError was historically returned when a circular dependency was detected.
+//
+// Deprecated: This error is no longer returned as of the change to match Bazel's behavior.
+// Bazel does NOT detect cycles during module resolution - it uses a global visited set
+// that silently skips already-visited modules. This allows mutual dependencies like
+// rules_go <-> gazelle to work correctly.
+//
+// Bazel source reference:
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+// See DepGraphWalker.walk() which uses Set<ModuleKey> known to track visited modules.
+//
+// This type is kept for backward compatibility only.
+type DependencyCycleError struct {
+	// Cycle contains the dependency path that forms the cycle.
+	// Format: ["<root>", "module_a@1.0.0", "module_b@1.0.0", "module_a@1.0.0"]
+	Cycle []string
+}
+
+func (e *DependencyCycleError) Error() string {
+	if len(e.Cycle) == 0 {
+		return "dependency cycle detected"
+	}
+	// Build the cycle path string
+	return fmt.Sprintf("dependency cycle detected: %s", formatCyclePath(e.Cycle))
+}
+
+// formatCyclePath formats a cycle path for display.
+// Example: ["<root>", "A@1.0", "B@1.0", "A@1.0"] -> "<root> -> A@1.0 -> B@1.0 -> A@1.0"
+func formatCyclePath(cycle []string) string {
+	if len(cycle) == 0 {
+		return ""
+	}
+	result := cycle[0]
+	for i := 1; i < len(cycle); i++ {
+		result += " -> " + cycle[i]
+	}
+	return result
+}
+
+// MaxDepthExceededError is returned when dependency depth exceeds the maximum allowed.
+type MaxDepthExceededError struct {
+	// Depth is the depth at which the error occurred.
+	Depth int
+	// MaxDepth is the maximum allowed depth.
+	MaxDepth int
+	// Path is the dependency path that exceeded the depth.
+	Path []string
+}
+
+func (e *MaxDepthExceededError) Error() string {
+	return fmt.Sprintf("maximum dependency depth exceeded: depth %d > max %d (path: %s)",
+		e.Depth, e.MaxDepth, formatCyclePath(e.Path))
 }
