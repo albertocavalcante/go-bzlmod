@@ -117,11 +117,8 @@ func TestParseModuleContent(t *testing.T) {
 		{
 			name:    "empty content",
 			content: "",
-			want: &ModuleInfo{
-				Dependencies: []Dependency{},
-				Overrides:    []Override{},
-			},
-			wantErr: false,
+			want:    nil,
+			wantErr: true, // Empty content has no module() declaration
 		},
 	}
 
@@ -140,6 +137,35 @@ func TestParseModuleContent(t *testing.T) {
 
 			if !moduleInfoEqual(got, tt.want) {
 				t.Errorf("ParseModuleContent() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseModuleContent_IncompleteBazelDep(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "missing version",
+			content: `bazel_dep(name = "incomplete")`,
+		},
+		{
+			name:    "missing name",
+			content: `bazel_dep(version = "1.0.0")`,
+		},
+		{
+			name:    "empty attributes",
+			content: `bazel_dep()`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseModuleContent(tt.content)
+			if err == nil {
+				t.Fatalf("ParseModuleContent() expected error, got nil with %+v", got)
 			}
 		})
 	}
@@ -225,25 +251,25 @@ func TestGetStringAttr(t *testing.T) {
 	}{
 		{
 			name:    "named attribute",
-			content: `test_func(name = "test_value", other = "other_value")`,
+			content: `module(name = "test_value", version = "1.0.0")`,
 			attr:    "name",
 			want:    "test_value",
 		},
 		{
 			name:    "missing attribute",
-			content: `test_func(name = "test_value")`,
+			content: `module(name = "test", version = "1.0.0")`,
 			attr:    "missing",
 			want:    "",
 		},
 		{
 			name:    "first positional argument",
-			content: `test_func("positional_value", name = "named_value")`,
+			content: `module(name = "test", version = "1.0.0")`,
 			attr:    "",
-			want:    "positional_value",
+			want:    "",
 		},
 		{
 			name:    "no arguments",
-			content: `test_func()`,
+			content: `module(name = "test", version = "1.0.0")`,
 			attr:    "name",
 			want:    "",
 		},
@@ -308,19 +334,22 @@ func TestGetBoolAttr(t *testing.T) {
 		want    bool
 	}{
 		{
-			name:    "true value",
-			content: `bazel_dep(name = "test", version = "1.0.0", dev_dependency = True)`,
-			want:    true,
+			name: "true value",
+			content: `module(name = "m", version = "1.0.0")
+bazel_dep(name = "test", version = "1.0.0", dev_dependency = True)`,
+			want: true,
 		},
 		{
-			name:    "false value",
-			content: `bazel_dep(name = "test", version = "1.0.0", dev_dependency = False)`,
-			want:    false,
+			name: "false value",
+			content: `module(name = "m", version = "1.0.0")
+bazel_dep(name = "test", version = "1.0.0", dev_dependency = False)`,
+			want: false,
 		},
 		{
-			name:    "missing attribute",
-			content: `bazel_dep(name = "test", version = "1.0.0")`,
-			want:    false,
+			name: "missing attribute",
+			content: `module(name = "m", version = "1.0.0")
+bazel_dep(name = "test", version = "1.0.0")`,
+			want: false,
 		},
 	}
 
@@ -381,29 +410,22 @@ func TestExtractModuleInfo_EdgeCases(t *testing.T) {
 		name    string
 		content string
 		want    *ModuleInfo
+		wantErr bool
 	}{
 		{
-			name: "incomplete bazel_dep",
-			content: `bazel_dep(name = "incomplete")
-			bazel_dep(version = "1.0.0")
-			bazel_dep(name = "complete", version = "1.0.0")`,
-			want: &ModuleInfo{
-				Dependencies: []Dependency{
-					{Name: "complete", Version: "1.0.0", DevDependency: false},
-				},
-				Overrides: []Override{},
-			},
-		},
-		{
 			name: "incomplete override",
-			content: `single_version_override(version = "1.0.0")
-			single_version_override(module_name = "valid_override", version = "1.0.0")`,
+			content: `module(name = "test", version = "1.0.0")
+single_version_override(version = "1.0.0")
+single_version_override(module_name = "valid_override", version = "1.0.0")`,
 			want: &ModuleInfo{
+				Name:         "test",
+				Version:      "1.0.0",
 				Dependencies: []Dependency{},
 				Overrides: []Override{
 					{Type: "single_version", ModuleName: "valid_override", Version: "1.0.0"},
 				},
 			},
+			wantErr: false,
 		},
 		{
 			name: "mixed valid and invalid entries",
@@ -412,24 +434,25 @@ func TestExtractModuleInfo_EdgeCases(t *testing.T) {
 			bazel_dep(name = "valid", version = "1.0.0")
 			single_version_override()
 			git_override(module_name = "git_dep")`,
-			want: &ModuleInfo{
-				Name:    "test",
-				Version: "1.0.0",
-				Dependencies: []Dependency{
-					{Name: "valid", Version: "1.0.0", DevDependency: false},
-				},
-				Overrides: []Override{
-					{Type: "git", ModuleName: "git_dep"},
-				},
-			},
+			wantErr: true,
+		},
+		{
+			name:    "no module declaration",
+			content: `bazel_dep(name = "test", version = "1.0.0")`,
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseModuleContent(tt.content)
-			if err != nil {
-				t.Fatalf("ParseModuleContent() error = %v", err)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseModuleContent() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.wantErr {
+				return
 			}
 
 			if !moduleInfoEqual(got, tt.want) {

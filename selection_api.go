@@ -25,14 +25,27 @@ const (
 //
 // For simpler MVS-only resolution, use DependencyResolver instead.
 type SelectionResolver struct {
-	registry *RegistryClient
+	registry RegistryInterface
 	options  ResolutionOptions
 }
 
 // NewSelectionResolver creates a resolver using Bazel's full selection algorithm.
-func NewSelectionResolver(registry *RegistryClient, opts ResolutionOptions) *SelectionResolver {
+//
+// The registry can be nil if opts.Registries is set, otherwise it's required.
+// When opts.Registries is set, it takes precedence over the registry parameter.
+func NewSelectionResolver(registry RegistryInterface, opts ResolutionOptions) *SelectionResolver {
+	reg := registry
+
+	// Registries in options takes precedence
+	if len(opts.Registries) > 0 {
+		reg = Registry(opts.Registries...)
+	} else if reg == nil {
+		// No registry provided and no Registries in options, use BCR default
+		reg = Registry()
+	}
+
 	return &SelectionResolver{
-		registry: registry,
+		registry: reg,
 		options:  opts,
 	}
 }

@@ -17,7 +17,12 @@ type VersionConfig struct {
 }
 
 // bazelConfigs maps Bazel versions to their MODULE.tools dependencies.
+//
+// Note on Bazel 6: Version 6.6.0 is the final release in the Bazel 6.x series.
+// Bazel 6 reached end-of-life with the release of Bazel 9.
+// See: https://blog.bazel.build/2026/01/20/bazel-9.html#bazel-6-deprecation
 var bazelConfigs = map[string]VersionConfig{
+	// 6.6.0 is the final Bazel 6.x release (no further 6.x versions will be released)
 	"6.6.0": {
 		BazelVersion: "6.6.0",
 		Deps: []ToolDep{

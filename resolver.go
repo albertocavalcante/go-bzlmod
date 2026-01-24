@@ -32,14 +32,24 @@ const (
 //
 // The resolver fetches dependencies concurrently (up to 5 at a time) and caches
 // results to avoid redundant network requests.
+//
+// Multi-registry support: When ResolutionOptions.Registries is set with multiple URLs,
+// the resolver searches registries in order. The first registry where a module is found
+// is used for ALL versions of that module.
 type DependencyResolver struct {
-	registry *RegistryClient
-	options  ResolutionOptions
+	registry        RegistryInterface
+	options         ResolutionOptions
+	overrideMu      sync.RWMutex
+	overrideModules map[string]*ModuleInfo
 }
 
-// NewDependencyResolver creates a new resolver with the given registry client.
+// NewDependencyResolver creates a new resolver with the given registry.
 // If includeDevDeps is false, dev_dependency=True modules are excluded from resolution.
-func NewDependencyResolver(registry *RegistryClient, includeDevDeps bool) *DependencyResolver {
+//
+// The registry can be created with Registry() for sensible defaults:
+//
+//	resolver := NewDependencyResolver(Registry(), false)
+func NewDependencyResolver(registry RegistryInterface, includeDevDeps bool) *DependencyResolver {
 	return &DependencyResolver{
 		registry: registry,
 		options:  ResolutionOptions{IncludeDevDeps: includeDevDeps},
@@ -47,11 +57,75 @@ func NewDependencyResolver(registry *RegistryClient, includeDevDeps bool) *Depen
 }
 
 // NewDependencyResolverWithOptions creates a resolver with full configuration control.
-func NewDependencyResolverWithOptions(registry *RegistryClient, opts ResolutionOptions) *DependencyResolver {
+//
+// The registry can be nil if opts.Registries is set, otherwise it's required.
+// When opts.Registries is set, it takes precedence over the registry parameter.
+func NewDependencyResolverWithOptions(registry RegistryInterface, opts ResolutionOptions) *DependencyResolver {
+	reg := registry
+
+	// Registries in options takes precedence
+	if len(opts.Registries) > 0 {
+		reg = Registry(opts.Registries...)
+	} else if reg == nil {
+		// No registry provided and no Registries in options, use BCR default
+		reg = Registry()
+	}
+
 	return &DependencyResolver{
-		registry: registry,
+		registry: reg,
 		options:  opts,
 	}
+}
+
+// AddOverrideModuleContent registers MODULE.bazel content for a git/local/archive override.
+// The content is parsed and used to hydrate transitive dependencies for that module.
+func (r *DependencyResolver) AddOverrideModuleContent(moduleName, content string) error {
+	if moduleName == "" {
+		return fmt.Errorf("override module name is empty")
+	}
+	moduleInfo, err := ParseModuleContent(content)
+	if err != nil {
+		return fmt.Errorf("parse override module content for %s: %w", moduleName, err)
+	}
+	return r.AddOverrideModuleInfo(moduleName, moduleInfo)
+}
+
+// AddOverrideModuleInfo registers parsed module info for a git/local/archive override.
+func (r *DependencyResolver) AddOverrideModuleInfo(moduleName string, moduleInfo *ModuleInfo) error {
+	if moduleName == "" {
+		return fmt.Errorf("override module name is empty")
+	}
+	if moduleInfo == nil {
+		return fmt.Errorf("override module info is nil")
+	}
+
+	clone := *moduleInfo
+	if clone.Name == "" {
+		clone.Name = moduleName
+	} else if clone.Name != moduleName {
+		return fmt.Errorf("override module name mismatch: %s != %s", clone.Name, moduleName)
+	}
+
+	r.overrideMu.Lock()
+	defer r.overrideMu.Unlock()
+	if r.overrideModules == nil {
+		r.overrideModules = make(map[string]*ModuleInfo)
+	}
+	r.overrideModules[moduleName] = &clone
+	return nil
+}
+
+func (r *DependencyResolver) overrideModuleSnapshot() map[string]*ModuleInfo {
+	r.overrideMu.RLock()
+	defer r.overrideMu.RUnlock()
+	if len(r.overrideModules) == 0 {
+		return nil
+	}
+	snapshot := make(map[string]*ModuleInfo, len(r.overrideModules))
+	for name, info := range r.overrideModules {
+		snapshot[name] = info
+	}
+	return snapshot
 }
 
 // ResolveDependencies resolves all transitive dependencies for a root module.
@@ -71,8 +145,9 @@ func (r *DependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 	depGraph := make(map[string]map[string]*DepRequest)
 	visiting := &sync.Map{}
 	overrideIndex := indexOverrides(rootModule.Overrides)
+	overrideModules := r.overrideModuleSnapshot()
 
-	if err := r.buildDependencyGraphWithOverrides(ctx, rootModule, depGraph, visiting, []string{"<root>"}, overrideIndex); err != nil {
+	if err := r.buildDependencyGraphWithOverrides(ctx, rootModule, depGraph, visiting, []string{"<root>"}, overrideIndex, overrideModules); err != nil {
 		return nil, fmt.Errorf("build dependency graph: %w", err)
 	}
 
@@ -99,10 +174,10 @@ func (r *DependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 }
 
 func (r *DependencyResolver) buildDependencyGraph(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string) error {
-	return r.buildDependencyGraphWithOverrides(ctx, module, depGraph, visiting, path, nil)
+	return r.buildDependencyGraphWithOverrides(ctx, module, depGraph, visiting, path, nil, nil)
 }
 
-func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string, overrides map[string]Override) error {
+func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string, overrides map[string]Override, overrideModules map[string]*ModuleInfo) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -152,7 +227,8 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 		}
 	}
 
-	processDeps := func(module *ModuleInfo, path []string) {
+	var processDeps func(module *ModuleInfo, path []string)
+	processDeps = func(module *ModuleInfo, path []string) {
 		for _, dep := range module.Dependencies {
 			if dep.DevDependency && !r.options.IncludeDevDeps {
 				continue
@@ -191,6 +267,13 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 			mu.Unlock()
 
 			if skipFetch {
+				if overrideModule, ok := overrideModules[dep.Name]; ok {
+					depKey := dep.Name + "@" + effectiveVersion
+					if _, visited := visiting.LoadOrStore(depKey, struct{}{}); !visited {
+						depPath := append(path[:len(path):len(path)], dep.Name+"@"+effectiveVersion)
+						processDeps(overrideModule, depPath)
+					}
+				}
 				continue
 			}
 
@@ -207,7 +290,14 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 				continue
 			}
 
-			transitiveDep, err := r.registry.GetModuleFile(ctx, task.name, task.version)
+			// Check if there's a registry override for this module
+			registryToUse := r.registry
+			if override, ok := overrides[task.name]; ok && override.Registry != "" {
+				// Use the overridden registry for this specific module
+				registryToUse = NewRegistryClient(override.Registry)
+			}
+
+			transitiveDep, err := registryToUse.GetModuleFile(ctx, task.name, task.version)
 			if err != nil {
 				if isNotFound(err) {
 					mu.Lock()
@@ -337,10 +427,19 @@ func (r *DependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 
 	for moduleName, req := range selectedVersions {
 		registryURL := defaultRegistry
+
+		// Check for registry override in root module
 		for _, override := range rootModule.Overrides {
 			if override.ModuleName == moduleName && override.Registry != "" {
 				registryURL = override.Registry
 				break
+			}
+		}
+
+		// For multi-registry chains, get the actual registry that provided this module
+		if chain, ok := r.registry.(*RegistryChain); ok && registryURL == defaultRegistry {
+			if moduleRegistry := chain.GetRegistryForModule(moduleName); moduleRegistry != "" {
+				registryURL = moduleRegistry
 			}
 		}
 

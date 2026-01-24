@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -675,6 +677,69 @@ func TestResolveDependencies_GitOverrideKeepsModuleWithoutRegistryFetch(t *testi
 	}
 	if !found {
 		t.Fatal("Expected local_mod to remain in the resolution list")
+	}
+}
+
+func TestResolveDependencies_GitOverrideHydratesProvidedModule(t *testing.T) {
+	var fetchedLocal atomic.Bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dep", version = "1.0.0")`)
+		default:
+			if strings.Contains(r.URL.Path, "/modules/local_mod/") {
+				fetchedLocal.Store(true)
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	overrideContent := `module(name = "local_mod", version = "1.0.0")
+	bazel_dep(name = "dep", version = "1.0.0")`
+	if err := resolver.AddOverrideModuleContent("local_mod", overrideContent); err != nil {
+		t.Fatalf("AddOverrideModuleContent() error = %v", err)
+	}
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "local_mod", Version: "1.0.0"},
+		},
+		Overrides: []Override{
+			{
+				Type:       "git",
+				ModuleName: "local_mod",
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	versions := make(map[string]string)
+	for _, mod := range list.Modules {
+		versions[mod.Name] = mod.Version
+	}
+
+	if got := versions["local_mod"]; got != "1.0.0" {
+		t.Fatalf("Expected local_mod version 1.0.0, got %q", got)
+	}
+	if got := versions["dep"]; got != "1.0.0" {
+		t.Fatalf("Expected dep version 1.0.0, got %q", got)
+	}
+	if fetchedLocal.Load() {
+		t.Fatal("Expected local_mod to be hydrated from override content without registry fetch")
 	}
 }
 

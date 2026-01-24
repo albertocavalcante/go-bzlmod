@@ -31,15 +31,21 @@ func parseModule(filename string, content []byte) (*ModuleInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", filename, err)
 	}
-	return extractModuleInfo(f), nil
+	info, err := extractModuleInfo(f)
+	if err != nil {
+		return nil, err
+	}
+	return info, nil
 }
 
 // extractModuleInfo extracts module information from parsed BUILD file
-func extractModuleInfo(f *build.File) *ModuleInfo {
+func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 	info := &ModuleInfo{
 		Dependencies: []Dependency{},
 		Overrides:    []Override{},
 	}
+
+	foundModule := false
 
 	for _, stmt := range f.Stmt {
 		call, ok := stmt.(*build.CallExpr)
@@ -49,6 +55,7 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 
 		switch buildutil.FuncName(call) {
 		case "module":
+			foundModule = true
 			info.Name = buildutil.String(call, "name")
 			info.Version = buildutil.String(call, "version")
 			info.CompatibilityLevel = buildutil.Int(call, "compatibility_level")
@@ -61,9 +68,10 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 				RepoName:              buildutil.String(call, "repo_name"),
 				DevDependency:         buildutil.Bool(call, "dev_dependency"),
 			}
-			if dep.Name != "" && dep.Version != "" {
-				info.Dependencies = append(info.Dependencies, dep)
+			if dep.Name == "" || dep.Version == "" {
+				return nil, fmt.Errorf("bazel_dep requires name and version")
 			}
+			info.Dependencies = append(info.Dependencies, dep)
 
 		case "single_version_override":
 			override := Override{
@@ -105,5 +113,9 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 		}
 	}
 
-	return info
+	if !foundModule {
+		return nil, fmt.Errorf("no module() declaration found")
+	}
+
+	return info, nil
 }

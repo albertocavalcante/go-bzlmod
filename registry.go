@@ -13,6 +13,42 @@ import (
 	"github.com/albertocavalcante/go-bzlmod/registry"
 )
 
+// DefaultRegistry is the Bazel Central Registry (BCR) URL.
+// This matches Bazel's DEFAULT_REGISTRIES in BazelRepositoryModule.java.
+const DefaultRegistry = "https://bcr.bazel.build"
+
+// DefaultRegistryMirror is the GitHub-hosted mirror of BCR.
+// This serves as a fallback when bcr.bazel.build is unavailable.
+// The BCR has experienced outages due to certificate expiration.
+// Using raw.githubusercontent.com provides resilience against such incidents.
+//
+// Reference: https://github.com/bazelbuild/bazel/issues/28101
+const DefaultRegistryMirror = "https://raw.githubusercontent.com/bazelbuild/bazel-central-registry/main"
+
+// DefaultRegistries is the default list of registries with fallback.
+// BCR is tried first, with the GitHub mirror as backup.
+var DefaultRegistries = []string{
+	DefaultRegistry,
+	DefaultRegistryMirror,
+}
+
+// RegistryWithFallback creates a registry chain with your registries plus BCR fallback.
+// This is a convenience function for private registry setups.
+//
+// Example:
+//
+//	// Private registry with full BCR resilience (BCR + GitHub mirror)
+//	reg := RegistryWithFallback("https://registry.example.com")
+//
+//	// Multiple private registries with BCR fallback
+//	reg := RegistryWithFallback("https://primary.example.com", "https://secondary.example.com")
+func RegistryWithFallback(privateRegistries ...string) RegistryInterface {
+	urls := make([]string, 0, len(privateRegistries)+len(DefaultRegistries))
+	urls = append(urls, privateRegistries...)
+	urls = append(urls, DefaultRegistries...)
+	return NewRegistryChain(urls)
+}
+
 // HTTP client configuration constants.
 const (
 	defaultMaxIdleConns        = 50
@@ -60,15 +96,68 @@ func (r *RegistryClient) BaseURL() string {
 	return r.baseURL
 }
 
+// Registry creates a registry client for dependency resolution.
+//
+// With no arguments, uses BCR with GitHub mirror fallback for resilience.
+// With one URL, creates a single registry client (no fallback).
+// With multiple URLs, creates a registry chain that tries each in order.
+//
+// Supports both remote and local registries:
+//   - https:// or http:// - Remote registry
+//   - file:// - Local filesystem registry (for airgap/offline)
+//
+// When using multiple registries, modules are looked up in order and the first
+// registry where a module is found is used for ALL versions of that module.
+// This matches Bazel's --registry flag behavior.
+//
+// The default configuration provides resilience against BCR outages.
+// See: https://github.com/bazelbuild/bazel/issues/28101
+//
+// Examples:
+//
+//	// Use BCR with GitHub mirror fallback (recommended)
+//	reg := Registry()
+//
+//	// Use a private registry only (no fallback)
+//	reg := Registry("https://registry.example.com")
+//
+//	// Private registry with BCR fallback
+//	reg := Registry("https://registry.example.com", DefaultRegistry)
+//
+//	// Local/airgap registry
+//	reg := Registry("file:///opt/bazel-registry")
+//
+//	// Mixed: local first, then remote fallback
+//	reg := Registry("file:///opt/local-modules", DefaultRegistry)
+func Registry(urls ...string) RegistryInterface {
+	if len(urls) == 0 {
+		// Use BCR + GitHub mirror for resilience
+		return NewRegistryChain(DefaultRegistries)
+	}
+	if len(urls) == 1 {
+		reg, err := createRegistryClient(urls[0])
+		if err != nil {
+			// Fall back to treating it as a remote URL if parsing fails
+			return newRegistryClient(urls[0])
+		}
+		return reg
+	}
+	return NewRegistryChain(urls)
+}
+
 // NewRegistryClient creates a client for the given registry URL.
+//
+// Deprecated: Use Registry() instead, which provides sensible defaults
+// and supports multiple registries.
 //
 // The URL should be the base of a Bazel registry implementing the standard
 // layout where module files are at /modules/{name}/{version}/MODULE.bazel.
-//
-// Example:
-//
-//	client := NewRegistryClient("https://bcr.bazel.build")
 func NewRegistryClient(baseURL string) *RegistryClient {
+	return newRegistryClient(baseURL)
+}
+
+// newRegistryClient is the internal constructor for RegistryClient.
+func newRegistryClient(baseURL string) *RegistryClient {
 	transport := &http.Transport{
 		MaxIdleConns:        defaultMaxIdleConns,
 		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,

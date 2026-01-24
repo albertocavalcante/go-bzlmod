@@ -157,6 +157,26 @@ const (
 	DirectDepsError
 )
 
+// NetworkMode controls network access during resolution.
+// This enables airgap and restricted network environments.
+type NetworkMode int
+
+const (
+	// NetworkOnline allows unrestricted network access (default).
+	// All configured registries can be accessed.
+	NetworkOnline NetworkMode = iota
+
+	// NetworkOffline disables all network access.
+	// Only cached data and file:// registries can be used.
+	// Useful for fully airgapped environments.
+	NetworkOffline
+
+	// NetworkAllowlist restricts network access to allowed domains only.
+	// Use with AllowedDomains to specify permitted hosts.
+	// Useful for environments with network egress restrictions.
+	NetworkAllowlist
+)
+
 // ResolutionOptions configures the dependency resolution behavior.
 type ResolutionOptions struct {
 	// IncludeDevDeps includes dev_dependency=True modules in resolution.
@@ -197,6 +217,43 @@ type ResolutionOptions struct {
 	// Format: "7.0.0", "8.0.0", etc.
 	// Default is empty (no MODULE.tools deps included).
 	BazelVersion string
+
+	// Registries is an ordered list of registry URLs to search for modules.
+	// When multiple registries are specified, modules are looked up in order.
+	// The first registry where a module is found is used for ALL versions of that module.
+	// This matches Bazel's --registry flag behavior.
+	// If empty or nil, uses DefaultRegistries (BCR + GitHub mirror).
+	//
+	// Supported URL schemes:
+	//   - https:// - Remote registry (e.g., "https://bcr.bazel.build")
+	//   - http://  - Remote registry (not recommended for production)
+	//   - file://  - Local registry (e.g., "file:///path/to/registry")
+	//
+	// Example: []string{"https://registry.example.com", "https://bcr.bazel.build"}
+	// Airgap:  []string{"file:///opt/bazel-registry"}
+	Registries []string
+
+	// Network controls network access mode for resolution.
+	// Default is NetworkOnline (unrestricted access).
+	//
+	// For airgapped environments, use NetworkOffline with file:// registries.
+	// For restricted networks, use NetworkAllowlist with AllowedDomains.
+	Network NetworkMode
+
+	// AllowedDomains restricts network access to these domains only.
+	// Only used when Network is NetworkAllowlist.
+	// Example: []string{"bcr.bazel.build", "registry.example.com"}
+	AllowedDomains []string
+
+	// VendorDir specifies a directory containing vendored module files.
+	// When set, modules are first looked up in this directory before
+	// checking registries. This enables offline/airgap workflows.
+	//
+	// The vendor directory should have the same structure as a registry:
+	//   vendor/modules/{name}/{version}/MODULE.bazel
+	//
+	// This mirrors Bazel's --vendor_dir flag behavior.
+	VendorDir string
 }
 
 // YankedVersionsError is returned when resolution selects yanked versions

@@ -444,3 +444,58 @@ func BenchmarkGetModuleFile_Uncached(b *testing.B) {
 		}
 	}
 }
+
+func TestRegistry_Default(t *testing.T) {
+	// Test zero-config - should default to BCR with GitHub mirror fallback
+	reg := Registry()
+	if reg == nil {
+		t.Fatal("Registry() returned nil")
+	}
+
+	// Should be a RegistryChain for resilience
+	chain, ok := reg.(*RegistryChain)
+	if !ok {
+		t.Fatal("Expected RegistryChain for default Registry()")
+	}
+
+	// First registry should be BCR
+	if reg.BaseURL() != DefaultRegistry {
+		t.Errorf("Default registry URL = %q, want %q", reg.BaseURL(), DefaultRegistry)
+	}
+
+	// Should have both BCR and GitHub mirror
+	if len(chain.clients) != 2 {
+		t.Errorf("Expected 2 registries in chain, got %d", len(chain.clients))
+	}
+	if chain.clients[0].BaseURL() != DefaultRegistry {
+		t.Errorf("First registry = %q, want %q", chain.clients[0].BaseURL(), DefaultRegistry)
+	}
+	if chain.clients[1].BaseURL() != DefaultRegistryMirror {
+		t.Errorf("Second registry = %q, want %q", chain.clients[1].BaseURL(), DefaultRegistryMirror)
+	}
+}
+
+func TestRegistry_SingleURL(t *testing.T) {
+	reg := Registry("https://custom.registry.com")
+	if reg == nil {
+		t.Fatal("Registry() returned nil")
+	}
+	if reg.BaseURL() != "https://custom.registry.com" {
+		t.Errorf("Registry URL = %q, want %q", reg.BaseURL(), "https://custom.registry.com")
+	}
+}
+
+func TestRegistry_MultipleURLs(t *testing.T) {
+	reg := Registry("https://private.example.com", DefaultRegistry)
+	if reg == nil {
+		t.Fatal("Registry() returned nil")
+	}
+	// First registry in chain should be the base URL
+	if reg.BaseURL() != "https://private.example.com" {
+		t.Errorf("Registry URL = %q, want %q", reg.BaseURL(), "https://private.example.com")
+	}
+	// Should be a RegistryChain
+	if _, ok := reg.(*RegistryChain); !ok {
+		t.Error("Expected RegistryChain for multiple URLs")
+	}
+}

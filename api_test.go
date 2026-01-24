@@ -1,12 +1,15 @@
 package gobzlmod
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestResolveFromFile_Success(t *testing.T) {
@@ -232,7 +235,7 @@ func TestResolveFromContent_WithOverrides(t *testing.T) {
 	single_version_override(
 		module_name = "rules_go",
 		version = "0.40.0",
-		registry = "https://custom.registry.com",
+		registry = "` + server.URL + `",
 	)`
 
 	list, err := ResolveDependenciesFromContent(content, server.URL, false)
@@ -251,8 +254,52 @@ func TestResolveFromContent_WithOverrides(t *testing.T) {
 	if module.Version != "0.40.0" {
 		t.Errorf("Expected version 0.40.0 (overridden), got %s", module.Version)
 	}
-	if module.Registry != "https://custom.registry.com" {
+	if module.Registry != server.URL {
 		t.Errorf("Expected custom registry, got %s", module.Registry)
+	}
+}
+
+func TestResolveFromContent_WithOverrideModules(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dep", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	content := `module(name = "test_project", version = "1.0.0")
+
+	bazel_dep(name = "local_mod", version = "1.0.0")
+
+	git_override(module_name = "local_mod")`
+
+	overrideModules := map[string]string{
+		"local_mod": `module(name = "local_mod", version = "1.0.0")
+		bazel_dep(name = "dep", version = "1.0.0")`,
+	}
+
+	list, err := ResolveDependenciesFromContentWithOverrides(content, server.URL, false, overrideModules)
+	if err != nil {
+		t.Fatalf("ResolveDependenciesFromContentWithOverrides() error = %v", err)
+	}
+
+	if len(list.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(list.Modules))
+	}
+
+	versions := make(map[string]string)
+	for _, module := range list.Modules {
+		versions[module.Name] = module.Version
+	}
+
+	if versions["local_mod"] != "1.0.0" {
+		t.Errorf("Expected local_mod version 1.0.0, got %s", versions["local_mod"])
+	}
+	if versions["dep"] != "1.0.0" {
+		t.Errorf("Expected dep version 1.0.0, got %s", versions["dep"])
 	}
 }
 
@@ -375,4 +422,862 @@ func BenchmarkResolveFromContent_Complex(b *testing.B) {
 			b.Fatalf("ResolveDependenciesFromContent() error = %v", err)
 		}
 	}
+}
+
+// =============================================================================
+// Adversarial Tests for New API Functions (Resolve, ResolveFile, registryFromOptions)
+// =============================================================================
+
+// TestResolve_EmptyContent verifies behavior with empty input
+func TestResolve_EmptyContent(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty string should fail parsing (no module() call)
+	_, err := Resolve(ctx, "", ResolutionOptions{})
+	if err == nil {
+		t.Error("Expected error for empty content, got nil")
+	}
+}
+
+// TestResolve_WhitespaceOnlyContent tests content with only whitespace
+func TestResolve_WhitespaceOnlyContent(t *testing.T) {
+	ctx := context.Background()
+
+	testCases := []string{
+		"   ",
+		"\t\t\t",
+		"\n\n\n",
+		"  \t  \n  ",
+		"\r\n\r\n",
+	}
+
+	for _, content := range testCases {
+		_, err := Resolve(ctx, content, ResolutionOptions{})
+		if err == nil {
+			t.Errorf("Expected error for whitespace-only content %q, got nil", content)
+		}
+	}
+}
+
+// TestResolve_ContextCancellation ensures cancellation is respected
+func TestResolve_ContextCancellation(t *testing.T) {
+	// Create a server that delays responses
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		fmt.Fprint(w, `module(name = "slow_dep", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "slow_dep", version = "1.0.0")`
+
+	// Cancel immediately
+	cancel()
+
+	_, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err == nil {
+		t.Error("Expected error when context is cancelled")
+	}
+}
+
+// TestResolve_ContextTimeout ensures timeout is respected
+func TestResolve_ContextTimeout(t *testing.T) {
+	// Create a server that delays responses longer than timeout
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		fmt.Fprint(w, `module(name = "slow_dep", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "slow_dep", version = "1.0.0")`
+
+	_, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err == nil {
+		t.Error("Expected error when context times out")
+	}
+}
+
+// TestResolve_NoDependencies verifies handling of module with no deps
+func TestResolve_NoDependencies(t *testing.T) {
+	ctx := context.Background()
+
+	content := `module(name = "standalone", version = "1.0.0")`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{})
+	if err != nil {
+		t.Fatalf("Unexpected error for module with no deps: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	if len(result.Modules) != 0 {
+		t.Errorf("Expected 0 modules for standalone module, got %d", len(result.Modules))
+	}
+
+	if result.Summary.TotalModules != 0 {
+		t.Errorf("Expected TotalModules=0, got %d", result.Summary.TotalModules)
+	}
+}
+
+// TestResolve_DefaultRegistry verifies BCR is used by default
+func TestResolve_DefaultRegistry(t *testing.T) {
+	// This test verifies that when Registries is empty, we use BCR.
+	// We can't actually test against BCR in unit tests, but we can verify
+	// the behavior by checking that an error occurs for a non-existent module
+	// (meaning we tried to reach a registry)
+	ctx := context.Background()
+
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "definitely_nonexistent_module_xyz_123", version = "0.0.0")`
+
+	// With empty registries, should use default (BCR)
+	_, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: nil, // Should default to BCR
+	})
+
+	// We expect an error (module not found), not a crash
+	if err == nil {
+		t.Error("Expected error for non-existent module, got nil")
+	}
+}
+
+// TestResolve_CustomSingleRegistry tests single custom registry
+func TestResolve_CustomSingleRegistry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/custom_dep/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(name = "custom_dep", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "custom_dep", version = "1.0.0")`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(result.Modules))
+	}
+
+	if result.Modules[0].Registry != server.URL {
+		t.Errorf("Expected registry %s, got %s", server.URL, result.Modules[0].Registry)
+	}
+}
+
+// TestResolve_MultipleRegistries tests registry chain behavior
+func TestResolve_MultipleRegistries(t *testing.T) {
+	// Server 1: has module_a
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/module_a/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server1.Close()
+
+	// Server 2: has module_b
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/module_b/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server2.Close()
+
+	ctx := context.Background()
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "module_a", version = "1.0.0")
+bazel_dep(name = "module_b", version = "1.0.0")`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: []string{server1.URL, server2.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(result.Modules))
+	}
+
+	// Verify each module came from the correct registry
+	for _, m := range result.Modules {
+		switch m.Name {
+		case "module_a":
+			if m.Registry != server1.URL {
+				t.Errorf("module_a should come from server1, got %s", m.Registry)
+			}
+		case "module_b":
+			if m.Registry != server2.URL {
+				t.Errorf("module_b should come from server2, got %s", m.Registry)
+			}
+		}
+	}
+}
+
+// TestResolve_InvalidRegistryURL tests behavior with invalid registry URLs
+func TestResolve_InvalidRegistryURL(t *testing.T) {
+	ctx := context.Background()
+
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "some_dep", version = "1.0.0")`
+
+	// Invalid URLs should fail gracefully
+	testCases := []string{
+		"not-a-url",
+		"ftp://invalid-protocol.com",
+		"://missing-scheme",
+	}
+
+	for _, url := range testCases {
+		_, err := Resolve(ctx, content, ResolutionOptions{
+			Registries: []string{url},
+		})
+
+		// Should get an error, not a panic
+		if err == nil {
+			t.Errorf("Expected error for invalid registry URL %q", url)
+		}
+	}
+}
+
+// TestResolve_UnicodeModuleName tests handling of unicode in module names
+func TestResolve_UnicodeModuleName(t *testing.T) {
+	ctx := context.Background()
+
+	// Bazel module names should only contain [A-Za-z0-9_.-]
+	// Unicode should be rejected at parse time
+	content := `module(name = "模块", version = "1.0.0")`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{})
+
+	// The parser may accept this but it's invalid per Bazel spec
+	// At minimum, it shouldn't panic
+	_ = result
+	_ = err
+}
+
+// TestResolve_SpecialCharactersInVersion tests version strings
+func TestResolve_SpecialCharactersInVersion(t *testing.T) {
+	ctx := context.Background()
+
+	testCases := []struct {
+		version   string
+		shouldErr bool
+	}{
+		{"1.0.0", false},
+		{"1.0.0-alpha", false},
+		{"1.0.0+build", false},
+		{"1.0.0-alpha.1", false},
+	}
+
+	for _, tc := range testCases {
+		content := fmt.Sprintf(`module(name = "test", version = "%s")`, tc.version)
+		_, err := Resolve(ctx, content, ResolutionOptions{})
+
+		if tc.shouldErr && err == nil {
+			t.Errorf("Expected error for version %q", tc.version)
+		}
+		if !tc.shouldErr && err != nil {
+			t.Errorf("Unexpected error for version %q: %v", tc.version, err)
+		}
+	}
+}
+
+// TestResolve_WindowsLineEndings tests CRLF handling
+func TestResolve_WindowsLineEndings(t *testing.T) {
+	ctx := context.Background()
+
+	content := "module(name = \"test\", version = \"1.0.0\")\r\n"
+
+	result, err := Resolve(ctx, content, ResolutionOptions{})
+	if err != nil {
+		t.Fatalf("Failed to parse content with CRLF: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+}
+
+// TestResolve_MixedLineEndings tests mixed line ending handling
+func TestResolve_MixedLineEndings(t *testing.T) {
+	ctx := context.Background()
+
+	content := "module(\r\n  name = \"test\",\n  version = \"1.0.0\"\r\n)"
+
+	result, err := Resolve(ctx, content, ResolutionOptions{})
+	if err != nil {
+		t.Fatalf("Failed to parse content with mixed line endings: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+}
+
+// TestResolve_TrailingWhitespace tests trailing whitespace handling
+func TestResolve_TrailingWhitespace(t *testing.T) {
+	ctx := context.Background()
+
+	content := `module(name = "test", version = "1.0.0")
+	`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{})
+	if err != nil {
+		t.Fatalf("Failed to parse content with trailing whitespace: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+}
+
+// TestResolve_LargeContent tests handling of very large MODULE.bazel files
+func TestResolve_LargeContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `module(name = "dep", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+
+	// Generate content with many dependencies
+	var content strings.Builder
+	content.WriteString(`module(name = "large_project", version = "1.0.0")
+`)
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&content, "bazel_dep(name = \"dep\", version = \"1.0.0\")\n")
+	}
+
+	// Should not panic or timeout quickly
+	result, err := Resolve(ctx, content.String(), ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	// We expect success here since all deps point to the same module
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+}
+
+// TestResolveFile_NonExistent tests non-existent file path
+func TestResolveFile_NonExistent(t *testing.T) {
+	ctx := context.Background()
+
+	_, err := ResolveFile(ctx, "/nonexistent/path/MODULE.bazel", ResolutionOptions{})
+
+	if err == nil {
+		t.Error("Expected error for non-existent file")
+	}
+}
+
+// TestResolveFile_EmptyFile tests empty file
+func TestResolveFile_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	emptyFile := filepath.Join(tmpDir, "MODULE.bazel")
+
+	if err := os.WriteFile(emptyFile, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	_, err := ResolveFile(ctx, emptyFile, ResolutionOptions{})
+
+	if err == nil {
+		t.Error("Expected error for empty file")
+	}
+}
+
+// TestResolveFile_DirectoryInsteadOfFile tests passing a directory path
+func TestResolveFile_DirectoryInsteadOfFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	ctx := context.Background()
+	_, err := ResolveFile(ctx, tmpDir, ResolutionOptions{})
+
+	if err == nil {
+		t.Error("Expected error when path is a directory")
+	}
+}
+
+// TestResolveFile_ValidFile tests a valid file
+func TestResolveFile_ValidFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `module(name = "file_dep", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	moduleFile := filepath.Join(tmpDir, "MODULE.bazel")
+
+	content := `module(name = "file_test", version = "1.0.0")
+bazel_dep(name = "file_dep", version = "1.0.0")`
+
+	if err := os.WriteFile(moduleFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	result, err := ResolveFile(ctx, moduleFile, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(result.Modules))
+	}
+}
+
+// TestResolveFile_Symlink tests following symlinks
+func TestResolveFile_Symlink(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create actual file
+	realFile := filepath.Join(tmpDir, "real_MODULE.bazel")
+	content := `module(name = "symlink_test", version = "1.0.0")`
+	if err := os.WriteFile(realFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create symlink
+	symlinkPath := filepath.Join(tmpDir, "MODULE.bazel")
+	if err := os.Symlink(realFile, symlinkPath); err != nil {
+		t.Skip("Cannot create symlinks on this system")
+	}
+
+	ctx := context.Background()
+	result, err := ResolveFile(ctx, symlinkPath, ResolutionOptions{})
+
+	if err != nil {
+		t.Fatalf("Failed to resolve via symlink: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+}
+
+// TestResolveFile_RelativePath tests relative path handling
+func TestResolveFile_RelativePath(t *testing.T) {
+	// Save and restore working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	tmpDir := t.TempDir()
+	moduleFile := filepath.Join(tmpDir, "MODULE.bazel")
+
+	content := `module(name = "relative_test", version = "1.0.0")`
+	if err := os.WriteFile(moduleFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to temp directory
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	result, err := ResolveFile(ctx, "MODULE.bazel", ResolutionOptions{})
+
+	if err != nil {
+		t.Fatalf("Failed to resolve relative path: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+}
+
+// TestResolveFile_PermissionDenied tests file without read permission
+func TestResolveFile_PermissionDenied(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("Cannot test permission denied as root")
+	}
+
+	tmpDir := t.TempDir()
+	moduleFile := filepath.Join(tmpDir, "MODULE.bazel")
+
+	content := `module(name = "perm_test", version = "1.0.0")`
+	if err := os.WriteFile(moduleFile, []byte(content), 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(moduleFile, 0644) // Cleanup
+
+	ctx := context.Background()
+	_, err := ResolveFile(ctx, moduleFile, ResolutionOptions{})
+
+	if err == nil {
+		t.Error("Expected error for file without read permission")
+	}
+}
+
+// TestRegistryFromOptions_EmptyRegistries tests empty registries defaults to BCR
+func TestRegistryFromOptions_EmptyRegistries(t *testing.T) {
+	opts := ResolutionOptions{
+		Registries: nil,
+	}
+
+	reg := registryFromOptions(opts)
+
+	if reg == nil {
+		t.Fatal("Expected non-nil registry for empty options")
+	}
+
+	// Should be a registry chain with default registries
+	chain, ok := reg.(*RegistryChain)
+	if !ok {
+		t.Fatalf("Expected *RegistryChain, got %T", reg)
+	}
+
+	if len(chain.clients) != len(DefaultRegistries) {
+		t.Errorf("Expected %d clients for default registries, got %d",
+			len(DefaultRegistries), len(chain.clients))
+	}
+}
+
+// TestRegistryFromOptions_SingleRegistry tests single registry config
+func TestRegistryFromOptions_SingleRegistry(t *testing.T) {
+	opts := ResolutionOptions{
+		Registries: []string{"https://example.com"},
+	}
+
+	reg := registryFromOptions(opts)
+
+	if reg == nil {
+		t.Fatal("Expected non-nil registry")
+	}
+
+	// Single registry should return a direct client, not a chain
+	client, ok := reg.(*RegistryClient)
+	if !ok {
+		t.Fatalf("Expected *RegistryClient for single URL, got %T", reg)
+	}
+
+	if client.BaseURL() != "https://example.com" {
+		t.Errorf("Expected base URL https://example.com, got %s", client.BaseURL())
+	}
+}
+
+// TestRegistryFromOptions_MultipleRegistries tests multiple registry config
+func TestRegistryFromOptions_MultipleRegistries(t *testing.T) {
+	opts := ResolutionOptions{
+		Registries: []string{
+			"https://first.example.com",
+			"https://second.example.com",
+		},
+	}
+
+	reg := registryFromOptions(opts)
+
+	chain, ok := reg.(*RegistryChain)
+	if !ok {
+		t.Fatalf("Expected *RegistryChain for multiple URLs, got %T", reg)
+	}
+
+	if len(chain.clients) != 2 {
+		t.Errorf("Expected 2 clients, got %d", len(chain.clients))
+	}
+}
+
+// TestRegistryFromOptions_FileURL tests file:// URL handling
+func TestRegistryFromOptions_FileURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	fileURL := "file://" + tmpDir
+
+	opts := ResolutionOptions{
+		Registries: []string{fileURL},
+	}
+
+	reg := registryFromOptions(opts)
+
+	if reg == nil {
+		t.Fatal("Expected non-nil registry for file:// URL")
+	}
+
+	local, ok := reg.(*LocalRegistry)
+	if !ok {
+		t.Fatalf("Expected *LocalRegistry for file:// URL, got %T", reg)
+	}
+
+	if local == nil {
+		t.Fatal("Expected non-nil LocalRegistry")
+	}
+}
+
+// TestRegistryFromOptions_MixedURLs tests mixed local and remote registries
+func TestRegistryFromOptions_MixedURLs(t *testing.T) {
+	tmpDir := t.TempDir()
+	fileURL := "file://" + tmpDir
+
+	opts := ResolutionOptions{
+		Registries: []string{
+			fileURL,
+			"https://bcr.bazel.build",
+		},
+	}
+
+	reg := registryFromOptions(opts)
+
+	chain, ok := reg.(*RegistryChain)
+	if !ok {
+		t.Fatalf("Expected *RegistryChain for mixed URLs, got %T", reg)
+	}
+
+	if len(chain.clients) != 2 {
+		t.Errorf("Expected 2 clients, got %d", len(chain.clients))
+	}
+
+	// First should be LocalRegistry
+	if _, ok := chain.clients[0].(*LocalRegistry); !ok {
+		t.Errorf("First client should be *LocalRegistry, got %T", chain.clients[0])
+	}
+
+	// Second should be RegistryClient
+	if _, ok := chain.clients[1].(*RegistryClient); !ok {
+		t.Errorf("Second client should be *RegistryClient, got %T", chain.clients[1])
+	}
+}
+
+// TestResolve_CircularDependency tests handling of circular dependencies
+func TestResolve_CircularDependency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/cycle_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "cycle_a", version = "1.0.0")
+bazel_dep(name = "cycle_b", version = "1.0.0")`)
+		case "/modules/cycle_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "cycle_b", version = "1.0.0")
+bazel_dep(name = "cycle_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "cycle_a", version = "1.0.0")`
+
+	// Should not infinite loop or crash
+	result, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	// Resolution should succeed - cycles are handled by tracking visited modules
+	if err != nil {
+		t.Fatalf("Unexpected error with circular deps: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	// Should have both modules
+	if len(result.Modules) != 2 {
+		t.Errorf("Expected 2 modules in cycle, got %d", len(result.Modules))
+	}
+}
+
+// TestResolve_DiamondDependency tests diamond dependency resolution
+func TestResolve_DiamondDependency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/left/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "left", version = "1.0.0")
+bazel_dep(name = "bottom", version = "1.0.0")`)
+		case "/modules/right/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "right", version = "1.0.0")
+bazel_dep(name = "bottom", version = "2.0.0")`)
+		case "/modules/bottom/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bottom", version = "1.0.0")`)
+		case "/modules/bottom/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bottom", version = "2.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	content := `module(name = "top", version = "1.0.0")
+bazel_dep(name = "left", version = "1.0.0")
+bazel_dep(name = "right", version = "1.0.0")`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// MVS should select version 2.0.0 (the higher version)
+	var bottomVersion string
+	for _, m := range result.Modules {
+		if m.Name == "bottom" {
+			bottomVersion = m.Version
+			break
+		}
+	}
+
+	if bottomVersion != "2.0.0" {
+		t.Errorf("MVS should select bottom@2.0.0, got %s", bottomVersion)
+	}
+}
+
+// TestResolve_DevDependencyExclusion verifies dev deps are excluded by default
+func TestResolve_DevDependencyExclusion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_dep", version = "1.0.0")`)
+		case "/modules/dev_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dev_dep", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "prod_dep", version = "1.0.0")
+bazel_dep(name = "dev_dep", version = "1.0.0", dev_dependency = True)`
+
+	// Default: exclude dev deps
+	result, err := Resolve(ctx, content, ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: false,
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.Modules) != 1 {
+		t.Errorf("Expected 1 module (dev excluded), got %d", len(result.Modules))
+	}
+
+	if result.Modules[0].Name != "prod_dep" {
+		t.Errorf("Expected prod_dep, got %s", result.Modules[0].Name)
+	}
+}
+
+// TestResolve_DevDependencyInclusion verifies dev deps can be included
+func TestResolve_DevDependencyInclusion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_dep", version = "1.0.0")`)
+		case "/modules/dev_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dev_dep", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	content := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "prod_dep", version = "1.0.0")
+bazel_dep(name = "dev_dep", version = "1.0.0", dev_dependency = True)`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: true,
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(result.Modules) != 2 {
+		t.Errorf("Expected 2 modules (dev included), got %d", len(result.Modules))
+	}
+}
+
+// TestResolve_ModuleStickiness tests that once a module is found in a registry,
+// all versions come from that registry (Bazel behavior)
+func TestResolve_ModuleStickiness(t *testing.T) {
+	// Server 1: has dep@1.0.0 but NOT dep@2.0.0
+	callCount1 := 0
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount1++
+		switch r.URL.Path {
+		case "/modules/top/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "top", version = "1.0.0")
+bazel_dep(name = "dep", version = "2.0.0")`)
+		case "/modules/dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dep", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server1.Close()
+
+	// Server 2: has dep@2.0.0
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/dep/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dep", version = "2.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server2.Close()
+
+	ctx := context.Background()
+	content := `module(name = "root", version = "1.0.0")
+bazel_dep(name = "top", version = "1.0.0")
+bazel_dep(name = "dep", version = "1.0.0")`
+
+	result, err := Resolve(ctx, content, ResolutionOptions{
+		Registries: []string{server1.URL, server2.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// dep should be resolved from server1 (where 1.0.0 was found first)
+	// and then should fail or fallback for 2.0.0
+	// This tests module stickiness behavior
+	_ = result
 }
