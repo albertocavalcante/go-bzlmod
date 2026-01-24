@@ -2,20 +2,24 @@ package gobzlmod
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 
-	"golang.org/x/mod/semver"
+	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
+
+const defaultMaxConcurrency = 5
 
 // DependencyResolver resolves Bazel module dependencies using Minimal Version Selection (MVS).
 //
 // The resolution algorithm proceeds in three phases:
 //  1. Graph construction: Recursively fetches MODULE.bazel files from the registry
 //     to build a complete dependency graph with all requested versions.
-//  2. Override application: Applies single_version, git, local_path, and archive
-//     overrides to modify or remove modules from the graph.
+//  2. Override application: Applies single_version overrides to pin versions and
+//     preserves git/local_path/archive overrides without fetching from the registry.
 //  3. MVS selection: For each module, selects the highest version requested by
 //     any dependent module.
 //
@@ -40,10 +44,15 @@ func NewDependencyResolver(registry *RegistryClient, includeDevDeps bool) *Depen
 //
 // The method is safe for concurrent use and respects context cancellation.
 func (r *DependencyResolver) ResolveDependencies(ctx context.Context, rootModule *ModuleInfo) (*ResolutionList, error) {
+	if rootModule == nil {
+		return nil, fmt.Errorf("root module is nil")
+	}
+
 	depGraph := make(map[string]map[string]*DepRequest)
 	visiting := &sync.Map{}
+	overrideIndex := indexOverrides(rootModule.Overrides)
 
-	if err := r.buildDependencyGraph(ctx, rootModule, depGraph, visiting, []string{"<root>"}); err != nil {
+	if err := r.buildDependencyGraphWithOverrides(ctx, rootModule, depGraph, visiting, []string{"<root>"}, overrideIndex); err != nil {
 		return nil, fmt.Errorf("build dependency graph: %w", err)
 	}
 
@@ -53,72 +62,145 @@ func (r *DependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 }
 
 func (r *DependencyResolver) buildDependencyGraph(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string) error {
-	return r.buildDependencyGraphInternal(ctx, module, depGraph, visiting, path, &sync.Mutex{})
+	return r.buildDependencyGraphWithOverrides(ctx, module, depGraph, visiting, path, nil)
 }
 
-func (r *DependencyResolver) buildDependencyGraphInternal(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string, mu *sync.Mutex) error {
-	const maxConcurrency = 5
-	semaphore := make(chan struct{}, maxConcurrency)
-	var wg sync.WaitGroup
+func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string, overrides map[string]Override) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	for _, dep := range module.Dependencies {
-		if dep.DevDependency && !r.includeDevDeps {
-			continue
+	var mu sync.Mutex
+	var errOnce sync.Once
+	var firstErr error
+
+	setErr := func(err error) {
+		if err == nil {
+			return
 		}
+		errOnce.Do(func() {
+			firstErr = err
+			cancel()
+		})
+	}
 
-		mu.Lock()
-		if depGraph[dep.Name] == nil {
-			depGraph[dep.Name] = make(map[string]*DepRequest)
+	type depTask struct {
+		name    string
+		version string
+		path    []string
+	}
+
+	tasks := make(chan depTask, defaultMaxConcurrency)
+	var tasksWG sync.WaitGroup
+	var workersWG sync.WaitGroup
+
+	enqueue := func(depName, depVersion string, depPath []string) {
+		if ctx.Err() != nil {
+			return
 		}
-
-		if existing, exists := depGraph[dep.Name][dep.Version]; exists {
-			existing.RequiredBy = append(existing.RequiredBy, path[len(path)-1])
-			if dep.DevDependency {
-				existing.DevDependency = true
-			}
-		} else {
-			depGraph[dep.Name][dep.Version] = &DepRequest{
-				Version:       dep.Version,
-				DevDependency: dep.DevDependency,
-				RequiredBy:    []string{path[len(path)-1]},
-			}
+		depKey := depName + "@" + depVersion
+		if _, visited := visiting.LoadOrStore(depKey, struct{}{}); visited {
+			return
 		}
-		mu.Unlock()
-
-		depKey := dep.Name + "@" + dep.Version
-		if _, visited := visiting.LoadOrStore(depKey, true); !visited {
-			wg.Add(1)
-			go func(depName, depVersion string, depPath []string) {
-				defer wg.Done()
-				semaphore <- struct{}{}
-				defer func() { <-semaphore }()
-
-				transitiveDep, err := r.registry.GetModuleFile(ctx, depName, depVersion)
-				if err != nil {
-					// Remove failed dependency from the graph. This can happen when:
-					// - The module is overridden (git/local_path/archive) and doesn't exist in registry
-					// - The version doesn't exist in the registry
-					// - Network errors during fetch
-					// This is normal behavior - the module will be excluded from resolution.
-					mu.Lock()
-					if versions, exists := depGraph[depName]; exists {
-						delete(versions, depVersion)
-						if len(versions) == 0 {
-							delete(depGraph, depName)
-						}
-					}
-					mu.Unlock()
-					return
-				}
-
-				newPath := append(depPath[:len(depPath):len(depPath)], depName+"@"+depVersion)
-				_ = r.buildDependencyGraphInternal(ctx, transitiveDep, depGraph, visiting, newPath, mu)
-			}(dep.Name, dep.Version, path)
+		tasksWG.Add(1)
+		select {
+		case tasks <- depTask{name: depName, version: depVersion, path: depPath}:
+		case <-ctx.Done():
+			tasksWG.Done()
 		}
 	}
 
-	wg.Wait()
-	return nil
+	processDeps := func(module *ModuleInfo, path []string) {
+		for _, dep := range module.Dependencies {
+			if dep.DevDependency && !r.includeDevDeps {
+				continue
+			}
+
+			effectiveVersion := dep.Version
+			skipFetch := false
+			if override, ok := overrides[dep.Name]; ok {
+				switch override.Type {
+				case "single_version":
+					if override.Version != "" {
+						effectiveVersion = override.Version
+					}
+				case "git", "local_path", "archive":
+					skipFetch = true
+				}
+			}
+
+			mu.Lock()
+			if depGraph[dep.Name] == nil {
+				depGraph[dep.Name] = make(map[string]*DepRequest)
+			}
+
+			if existing, exists := depGraph[dep.Name][effectiveVersion]; exists {
+				existing.RequiredBy = append(existing.RequiredBy, path[len(path)-1])
+				if dep.DevDependency {
+					existing.DevDependency = true
+				}
+			} else {
+				depGraph[dep.Name][effectiveVersion] = &DepRequest{
+					Version:       effectiveVersion,
+					DevDependency: dep.DevDependency,
+					RequiredBy:    []string{path[len(path)-1]},
+				}
+			}
+			mu.Unlock()
+
+			if skipFetch {
+				continue
+			}
+
+			depPath := append(path[:len(path):len(path)], dep.Name+"@"+effectiveVersion)
+			enqueue(dep.Name, effectiveVersion, depPath)
+		}
+	}
+
+	worker := func() {
+		defer workersWG.Done()
+		for task := range tasks {
+			if ctx.Err() != nil {
+				tasksWG.Done()
+				continue
+			}
+
+			transitiveDep, err := r.registry.GetModuleFile(ctx, task.name, task.version)
+			if err != nil {
+				if isNotFound(err) {
+					mu.Lock()
+					removeDependency(depGraph, task.name, task.version)
+					mu.Unlock()
+					tasksWG.Done()
+					continue
+				}
+				setErr(fmt.Errorf("fetch module %s@%s: %w", task.name, task.version, err))
+				tasksWG.Done()
+				continue
+			}
+
+			processDeps(transitiveDep, task.path)
+			tasksWG.Done()
+		}
+	}
+
+	for i := 0; i < defaultMaxConcurrency; i++ {
+		workersWG.Add(1)
+		go worker()
+	}
+
+	processDeps(module, path)
+
+	go func() {
+		tasksWG.Wait()
+		close(tasks)
+	}()
+
+	workersWG.Wait()
+
+	if firstErr != nil {
+		return firstErr
+	}
+	return ctx.Err()
 }
 
 func (r *DependencyResolver) applyOverrides(depGraph map[string]map[string]*DepRequest, overrides []Override) {
@@ -150,7 +232,7 @@ func (r *DependencyResolver) applyOverrides(depGraph map[string]map[string]*DepR
 				}
 			}
 		case "git", "local_path", "archive":
-			delete(depGraph, override.ModuleName)
+			continue
 		}
 	}
 }
@@ -163,7 +245,7 @@ func (r *DependencyResolver) applyMVS(depGraph map[string]map[string]*DepRequest
 	for moduleName, versions := range depGraph {
 		var maxReq *DepRequest
 		for _, req := range versions {
-			if maxReq == nil || semver.Compare("v"+req.Version, "v"+maxReq.Version) > 0 {
+			if maxReq == nil || version.Compare(req.Version, maxReq.Version) > 0 {
 				maxReq = req
 			}
 		}
@@ -214,4 +296,32 @@ func (r *DependencyResolver) buildResolutionList(selectedVersions map[string]*De
 	}
 
 	return list, nil
+}
+
+func isNotFound(err error) bool {
+	var regErr *RegistryError
+	return errors.As(err, &regErr) && regErr.StatusCode == http.StatusNotFound
+}
+
+func removeDependency(depGraph map[string]map[string]*DepRequest, moduleName, moduleVersion string) {
+	if versions, exists := depGraph[moduleName]; exists {
+		delete(versions, moduleVersion)
+		if len(versions) == 0 {
+			delete(depGraph, moduleName)
+		}
+	}
+}
+
+func indexOverrides(overrides []Override) map[string]Override {
+	if len(overrides) == 0 {
+		return nil
+	}
+	index := make(map[string]Override, len(overrides))
+	for _, override := range overrides {
+		if override.ModuleName == "" {
+			continue
+		}
+		index[override.ModuleName] = override
+	}
+	return index
 }

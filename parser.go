@@ -18,14 +18,18 @@ func ParseModuleFile(filename string) (*ModuleInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read module file: %w", err)
 	}
-	return ParseModuleContent(string(data))
+	return parseModule(filename, data)
 }
 
 // ParseModuleContent parses the content of a MODULE.bazel file.
 func ParseModuleContent(content string) (*ModuleInfo, error) {
-	f, err := build.ParseModule("MODULE.bazel", []byte(content))
+	return parseModule("MODULE.bazel", []byte(content))
+}
+
+func parseModule(filename string, content []byte) (*ModuleInfo, error) {
+	f, err := build.ParseModule(filename, content)
 	if err != nil {
-		return nil, fmt.Errorf("parse MODULE.bazel: %w", err)
+		return nil, fmt.Errorf("parse %s: %w", filename, err)
 	}
 	return extractModuleInfo(f), nil
 }

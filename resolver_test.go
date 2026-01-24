@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/mod/semver"
+	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
 
 // Mock registry server for testing
@@ -151,6 +151,27 @@ func TestApplyMVS(t *testing.T) {
 			},
 		},
 		{
+			name: "bcr versions select highest",
+			depGraph: map[string]map[string]*DepRequest{
+				"module_a": {
+					"1.2.3.bcr.2": &DepRequest{
+						Version:    "1.2.3.bcr.2",
+						RequiredBy: []string{"dependency_b"},
+					},
+					"1.2.3.bcr.10": &DepRequest{
+						Version:    "1.2.3.bcr.10",
+						RequiredBy: []string{"dependency_c"},
+					},
+				},
+			},
+			want: map[string]*DepRequest{
+				"module_a": {
+					Version:    "1.2.3.bcr.10",
+					RequiredBy: []string{"dependency_c"},
+				},
+			},
+		},
+		{
 			name: "multiple modules",
 			depGraph: map[string]map[string]*DepRequest{
 				"module_a": {
@@ -235,7 +256,7 @@ func TestApplyOverrides(t *testing.T) {
 			},
 		},
 		{
-			name: "git override removes module",
+			name: "git override keeps module",
 			depGraph: map[string]map[string]*DepRequest{
 				"module_a": {
 					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
@@ -251,13 +272,16 @@ func TestApplyOverrides(t *testing.T) {
 				},
 			},
 			want: map[string]map[string]*DepRequest{
+				"module_a": {
+					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+				},
 				"module_b": {
 					"2.0.0": &DepRequest{Version: "2.0.0", RequiredBy: []string{"module_a"}},
 				},
 			},
 		},
 		{
-			name: "local_path override removes module",
+			name: "local_path override keeps module",
 			depGraph: map[string]map[string]*DepRequest{
 				"module_a": {
 					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
@@ -269,10 +293,14 @@ func TestApplyOverrides(t *testing.T) {
 					ModuleName: "module_a",
 				},
 			},
-			want: map[string]map[string]*DepRequest{},
+			want: map[string]map[string]*DepRequest{
+				"module_a": {
+					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+				},
+			},
 		},
 		{
-			name: "archive override removes module",
+			name: "archive override keeps module",
 			depGraph: map[string]map[string]*DepRequest{
 				"module_a": {
 					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
@@ -284,7 +312,11 @@ func TestApplyOverrides(t *testing.T) {
 					ModuleName: "module_a",
 				},
 			},
-			want: map[string]map[string]*DepRequest{},
+			want: map[string]map[string]*DepRequest{
+				"module_a": {
+					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+				},
+			},
 		},
 		{
 			name: "override nonexistent module",
@@ -455,7 +487,7 @@ func TestResolveDependencies_Integration(t *testing.T) {
 	}
 }
 
-func TestSemverComparison(t *testing.T) {
+func TestVersionComparison(t *testing.T) {
 	tests := []struct {
 		name     string
 		version1 string
@@ -468,13 +500,15 @@ func TestSemverComparison(t *testing.T) {
 		{"v1 greater patch", "1.0.1", "1.0.0", 1},
 		{"v2 greater", "1.0.0", "1.1.0", -1},
 		{"complex versions", "1.2.3", "1.2.4", -1},
+		{"bcr suffix versions", "1.2.3.bcr.2", "1.2.3.bcr.10", -1},
+		{"prerelease vs release", "1.2.3-rc1", "1.2.3", -1},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := semver.Compare("v"+tt.version1, "v"+tt.version2)
+			got := version.Compare(tt.version1, tt.version2)
 			if got != tt.want {
-				t.Errorf("semver.Compare(v%s, v%s) = %d, want %d", tt.version1, tt.version2, got, tt.want)
+				t.Errorf("version.Compare(%s, %s) = %d, want %d", tt.version1, tt.version2, got, tt.want)
 			}
 		})
 	}
@@ -539,6 +573,108 @@ func TestBuildDependencyGraph_DevDependencies(t *testing.T) {
 				t.Errorf("Expected %d modules in dependency graph, got %d", tt.wantModules, len(depGraph))
 			}
 		})
+	}
+}
+
+func TestResolveDependencies_SingleVersionOverrideHydratesTransitiveDeps(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/foo/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "foo", version = "1.0.0")
+			bazel_dep(name = "bar", version = "1.0.0")`)
+		case "/modules/foo/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "foo", version = "2.0.0")
+			bazel_dep(name = "bar", version = "2.0.0")`)
+		case "/modules/bar/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bar", version = "1.0.0")`)
+		case "/modules/bar/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bar", version = "2.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "foo", Version: "1.0.0"},
+		},
+		Overrides: []Override{
+			{
+				Type:       "single_version",
+				ModuleName: "foo",
+				Version:    "2.0.0",
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	versions := make(map[string]string)
+	for _, mod := range list.Modules {
+		versions[mod.Name] = mod.Version
+	}
+
+	if got := versions["foo"]; got != "2.0.0" {
+		t.Fatalf("Expected foo version 2.0.0, got %q", got)
+	}
+	if got := versions["bar"]; got != "2.0.0" {
+		t.Fatalf("Expected bar version 2.0.0 from override module, got %q", got)
+	}
+}
+
+func TestResolveDependencies_GitOverrideKeepsModuleWithoutRegistryFetch(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	registry := NewRegistryClient(server.URL)
+	resolver := NewDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "local_mod", Version: "1.0.0"},
+		},
+		Overrides: []Override{
+			{
+				Type:       "git",
+				ModuleName: "local_mod",
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	found := false
+	for _, mod := range list.Modules {
+		if mod.Name == "local_mod" {
+			found = true
+			if mod.Version != "1.0.0" {
+				t.Fatalf("Expected local_mod version 1.0.0, got %q", mod.Version)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Expected local_mod to remain in the resolution list")
 	}
 }
 

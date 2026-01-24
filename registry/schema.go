@@ -52,8 +52,8 @@ func (v *Validator) compileSchemas() error {
 	if err != nil {
 		return fmt.Errorf("failed to parse metadata schema: %w", err)
 	}
-	if err := v.compiler.AddResource("metadata.schema.json", metadataDoc); err != nil {
-		return fmt.Errorf("failed to add metadata schema: %w", err)
+	if addErr := v.compiler.AddResource("metadata.schema.json", metadataDoc); addErr != nil {
+		return fmt.Errorf("failed to add metadata schema: %w", addErr)
 	}
 
 	// Parse and add source schema
@@ -61,8 +61,8 @@ func (v *Validator) compileSchemas() error {
 	if err != nil {
 		return fmt.Errorf("failed to parse source schema: %w", err)
 	}
-	if err := v.compiler.AddResource("source.schema.json", sourceDoc); err != nil {
-		return fmt.Errorf("failed to add source schema: %w", err)
+	if addErr := v.compiler.AddResource("source.schema.json", sourceDoc); addErr != nil {
+		return fmt.Errorf("failed to add source schema: %w", addErr)
 	}
 
 	// Compile metadata schema

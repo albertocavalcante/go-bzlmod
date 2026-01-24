@@ -204,19 +204,12 @@ func TestResolveFromContent_NetworkError(t *testing.T) {
 	// Use invalid registry URL
 	list, err := ResolveDependenciesFromContent(content, "http://invalid-registry.com", false)
 
-	// The resolver should complete successfully but with warnings for failed dependencies
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+	if err == nil {
+		t.Error("Expected error for network failures")
 	}
 
-	if list == nil {
-		t.Error("Expected non-nil list even with network errors")
-		return
-	}
-
-	// The failed dependency should not appear in the results
-	if len(list.Modules) != 0 {
-		t.Errorf("Expected 0 modules due to network failures, got %d", len(list.Modules))
+	if list != nil {
+		t.Error("Expected nil list due to network failures")
 	}
 }
 

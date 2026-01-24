@@ -18,6 +18,24 @@ const (
 	defaultRequestTimeout      = 15 * time.Second
 )
 
+// RegistryError provides status details for registry HTTP failures.
+type RegistryError struct {
+	StatusCode int
+	ModuleName string
+	Version    string
+	URL        string
+}
+
+func (e *RegistryError) Error() string {
+	if e.ModuleName != "" && e.Version != "" {
+		return fmt.Sprintf("registry returned status %d for module %s@%s", e.StatusCode, e.ModuleName, e.Version)
+	}
+	if e.URL != "" {
+		return fmt.Sprintf("registry returned status %d for %s", e.StatusCode, e.URL)
+	}
+	return fmt.Sprintf("registry returned status %d", e.StatusCode)
+}
+
 // RegistryClient fetches Bazel module metadata from a registry (typically BCR).
 //
 // The client is optimized for high-throughput concurrent access with:
@@ -86,7 +104,12 @@ func (r *RegistryClient) GetModuleFile(ctx context.Context, moduleName, version 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry returned status %d for module %s@%s", resp.StatusCode, moduleName, version)
+		return nil, &RegistryError{
+			StatusCode: resp.StatusCode,
+			ModuleName: moduleName,
+			Version:    version,
+			URL:        url,
+		}
 	}
 
 	data, err := io.ReadAll(resp.Body)
