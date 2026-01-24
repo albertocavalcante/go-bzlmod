@@ -13,6 +13,14 @@ type ModuleKey struct {
 	Version string
 }
 
+// String returns the module key as "name@version" or "name@_" if version is empty.
+func (k ModuleKey) String() string {
+	if k.Version == "" {
+		return k.Name + "@_"
+	}
+	return k.Name + "@" + k.Version
+}
+
 // DepSpec represents a dependency specification.
 // Corresponds to Bazel's InterimModule.DepSpec.
 //

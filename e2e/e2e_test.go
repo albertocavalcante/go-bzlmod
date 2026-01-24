@@ -12,12 +12,17 @@ import (
 	"time"
 
 	gobzlmod "github.com/albertocavalcante/go-bzlmod"
+	"github.com/albertocavalcante/go-bzlmod/graph"
 )
 
 // Type aliases for easier usage in tests
 type ModuleToResolve = gobzlmod.ModuleToResolve
 type ResolutionSummary = gobzlmod.ResolutionSummary
 type ResolutionList = gobzlmod.ResolutionList
+
+// Type aliases for Bazel graph types from graph package
+type BazelDependency = graph.BazelDependency
+type BazelModGraph = graph.BazelModGraph
 
 // resolveDependencies uses our library API to resolve dependencies
 func resolveDependencies(content, registry string, includeDevDeps bool) (*ResolutionList, error) {
@@ -28,26 +33,6 @@ func resolveDependencies(content, registry string, includeDevDeps bool) (*Resolu
 	}
 
 	return resolutionList, nil
-}
-
-// BazelDependency represents a dependency in Bazel's module graph
-type BazelDependency struct {
-	Key                  string            `json:"key"`
-	Dependencies         []BazelDependency `json:"dependencies,omitempty"`
-	IndirectDependencies []BazelDependency `json:"indirectDependencies,omitempty"`
-	Cycles               []BazelDependency `json:"cycles,omitempty"`
-	Unexpanded           bool              `json:"unexpanded,omitempty"`
-}
-
-// BazelModGraph represents Bazel's mod graph JSON output structure
-type BazelModGraph struct {
-	Key                  string            `json:"key"`
-	Name                 string            `json:"name,omitempty"`
-	Version              string            `json:"version,omitempty"`
-	Dependencies         []BazelDependency `json:"dependencies,omitempty"`
-	IndirectDependencies []BazelDependency `json:"indirectDependencies,omitempty"`
-	Cycles               []BazelDependency `json:"cycles,omitempty"`
-	Root                 bool              `json:"root,omitempty"`
 }
 
 // BazelModuleInfo represents a flattened module for easier comparison
