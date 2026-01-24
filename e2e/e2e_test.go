@@ -26,8 +26,18 @@ type BazelModGraph = graph.BazelModGraph
 
 // resolveDependencies uses our library API to resolve dependencies
 func resolveDependencies(content, registry string, includeDevDeps bool) (*ResolutionList, error) {
-	// Use the library API directly instead of building a binary
-	resolutionList, err := gobzlmod.ResolveDependenciesFromContent(content, registry, includeDevDeps)
+	return resolveDependenciesWithBazelVersion(content, registry, includeDevDeps, "7.0.0")
+}
+
+// resolveDependenciesWithBazelVersion resolves with a specific Bazel version for MODULE.tools compat
+func resolveDependenciesWithBazelVersion(content, registry string, includeDevDeps bool, bazelVersion string) (*ResolutionList, error) {
+	opts := gobzlmod.ResolutionOptions{
+		IncludeDevDeps:   includeDevDeps,
+		SubstituteYanked: true,
+		BazelVersion:     bazelVersion,
+	}
+	ctx := context.Background()
+	resolutionList, err := gobzlmod.ResolveDependenciesWithOptions(ctx, content, registry, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve dependencies: %v", err)
 	}
@@ -128,18 +138,8 @@ func runBazelModGraph(t *testing.T, workspaceDir string) (*BazelModGraph, error)
 func flattenBazelGraph(graph *BazelModGraph) []BazelModuleInfo {
 	modules := make(map[string]BazelModuleInfo)
 
-	// Add root module if it has name and version
-	if graph.Name != "" && graph.Version != "" {
-		key := graph.Key
-		if key == "" {
-			key = graph.Name + "@" + graph.Version
-		}
-		modules[key] = BazelModuleInfo{
-			Key:     key,
-			Name:    graph.Name,
-			Version: graph.Version,
-		}
-	}
+	// Skip root module - we only compare dependencies
+	// The root module has Key="<root>" and is not a dependency
 
 	// Recursively process dependencies
 	var processDeps func(deps []BazelDependency)
@@ -195,7 +195,7 @@ func compareModuleLists(t *testing.T, ourModules []ModuleToResolve, bazelModules
 	bazelModuleMap := make(map[string]BazelModuleInfo)
 	for _, module := range bazelModules {
 		key := normalizeModuleName(module.Name)
-		// Skip root module and empty names
+		// Skip empty names and internal references
 		if key == "" || strings.Contains(key, "<root>") || strings.Contains(key, "@@") {
 			continue
 		}

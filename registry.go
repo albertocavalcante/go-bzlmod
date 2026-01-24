@@ -2,12 +2,15 @@ package gobzlmod
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/albertocavalcante/go-bzlmod/registry"
 )
 
 // HTTP client configuration constants.
@@ -46,9 +49,10 @@ func (e *RegistryError) Error() string {
 // The cache is unbounded and lives for the lifetime of the client. For long-running
 // processes, consider creating a new client periodically to clear the cache.
 type RegistryClient struct {
-	baseURL string
-	client  *http.Client
-	cache   sync.Map // map[string]*ModuleInfo keyed by "name@version"
+	baseURL       string
+	client        *http.Client
+	cache         sync.Map // map[string]*ModuleInfo keyed by "name@version"
+	metadataCache sync.Map // map[string]*registry.Metadata keyed by module name
 }
 
 // BaseURL returns the base URL of the registry (e.g., "https://bcr.bazel.build").
@@ -124,4 +128,46 @@ func (r *RegistryClient) GetModuleFile(ctx context.Context, moduleName, version 
 
 	r.cache.Store(cacheKey, moduleInfo)
 	return moduleInfo, nil
+}
+
+// GetModuleMetadata fetches the metadata.json file for a module.
+// This includes version list, yanked versions, maintainers, and deprecation info.
+// Results are cached, so repeated calls for the same module are fast.
+func (r *RegistryClient) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
+	if cached, ok := r.metadataCache.Load(moduleName); ok {
+		return cached.(*registry.Metadata), nil
+	}
+
+	url := fmt.Sprintf("%s/modules/%s/metadata.json", r.baseURL, moduleName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, &RegistryError{
+			StatusCode: resp.StatusCode,
+			ModuleName: moduleName,
+			URL:        url,
+		}
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var metadata registry.Metadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("parse metadata for %s: %w", moduleName, err)
+	}
+
+	r.metadataCache.Store(moduleName, &metadata)
+	return &metadata, nil
 }

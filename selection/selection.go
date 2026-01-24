@@ -64,22 +64,41 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 		return selectedVersions[group]
 	}
 
-	// Step 5: Walk the graph from the root, collecting reachable nodes.
-	// This also rewrites deps to point to selected versions.
+	// Step 5: Two-phase graph walking (Bazel 7.6+ behavior)
 	//
-	// Reference: Selection.java lines 317-353, DepGraphWalker class
-	walker := &depGraphWalker{
+	// Phase 1: Walk with nodep deps included (validation only).
+	// This validates that all nodep dependencies exist and have valid versions,
+	// but doesn't include them in the final resolved graph.
+	//
+	// Reference: Selection.java lines 317-353, 397-403
+	walkerPhase1 := &depGraphWalker{
 		oldGraph:        graph,
 		overrides:       overrides,
 		selectionGroups: selectionGroups,
+		ignoreNodepDeps: false, // Include nodep deps for validation
 	}
 
-	resolvedGraph, bfsOrder, err := walker.walk(resolutionStrategy)
+	// Run phase 1 to validate (we discard the result)
+	_, _, err = walkerPhase1.walk(resolutionStrategy)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build unpruned graph with updated deps
+	// Phase 2: Walk without nodep deps (final pruning).
+	// Modules only reachable via nodep edges are excluded from final graph.
+	walkerPhase2 := &depGraphWalker{
+		oldGraph:        graph,
+		overrides:       overrides,
+		selectionGroups: selectionGroups,
+		ignoreNodepDeps: true, // Exclude nodep deps for pruning
+	}
+
+	resolvedGraph, bfsOrder, err := walkerPhase2.walk(resolutionStrategy)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build unpruned graph with updated deps (includes all modules from phase 1)
 	unprunedGraph := make(map[ModuleKey]*Module, len(graph.Modules))
 	for key, module := range graph.Modules {
 		newDeps := make([]DepSpec, len(module.Deps))
@@ -90,9 +109,21 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 				MaxCompatibilityLevel: dep.MaxCompatibilityLevel,
 			}
 		}
+		var newNodepDeps []DepSpec
+		if len(module.NodepDeps) > 0 {
+			newNodepDeps = make([]DepSpec, len(module.NodepDeps))
+			for i, dep := range module.NodepDeps {
+				newNodepDeps[i] = DepSpec{
+					Name:                  dep.Name,
+					Version:               resolutionStrategy(dep),
+					MaxCompatibilityLevel: dep.MaxCompatibilityLevel,
+				}
+			}
+		}
 		unprunedGraph[key] = &Module{
 			Key:         key,
 			Deps:        newDeps,
+			NodepDeps:   newNodepDeps,
 			CompatLevel: module.CompatLevel,
 		}
 	}
@@ -199,6 +230,10 @@ type depGraphWalker struct {
 	oldGraph        *DepGraph
 	overrides       map[string]Override
 	selectionGroups map[ModuleKey]SelectionGroup
+	// ignoreNodepDeps when true excludes nodep dependencies from graph traversal.
+	// This is used in the second phase of two-phase walking to prune modules
+	// that are only reachable via nodep edges.
+	ignoreNodepDeps bool
 }
 
 // walk traverses the graph from root, building a new graph with only reachable modules.
@@ -231,16 +266,67 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 		// Transform deps using resolution strategy
 		newDeps := make([]DepSpec, len(oldModule.Deps))
 		for i, dep := range oldModule.Deps {
+			resolvedVersion := resolutionStrategy(dep)
 			newDeps[i] = DepSpec{
 				Name:                  dep.Name,
-				Version:               resolutionStrategy(dep),
+				Version:               resolvedVersion,
 				MaxCompatibilityLevel: dep.MaxCompatibilityLevel,
+			}
+
+			// Validate MaxCompatibilityLevel constraint
+			// Reference: Bazel enforces that resolved module's compat level <= max_compatibility_level
+			if dep.MaxCompatibilityLevel >= 0 {
+				resolvedKey := ModuleKey{Name: dep.Name, Version: resolvedVersion}
+				if resolvedModule, ok := w.oldGraph.Modules[resolvedKey]; ok {
+					if resolvedModule.CompatLevel > dep.MaxCompatibilityLevel {
+						return nil, nil, &SelectionError{
+							Code: "VERSION_RESOLUTION_ERROR",
+							Message: fmt.Sprintf(
+								"%v depends on %s with max_compatibility_level %d, "+
+									"but %s@%s has compatibility_level %d which is higher",
+								item.key, dep.Name, dep.MaxCompatibilityLevel,
+								dep.Name, resolvedVersion, resolvedModule.CompatLevel),
+						}
+					}
+				}
+			}
+		}
+
+		// Transform nodep deps using resolution strategy (for validation and consistency)
+		var newNodepDeps []DepSpec
+		if len(oldModule.NodepDeps) > 0 {
+			newNodepDeps = make([]DepSpec, len(oldModule.NodepDeps))
+			for i, dep := range oldModule.NodepDeps {
+				resolvedVersion := resolutionStrategy(dep)
+				newNodepDeps[i] = DepSpec{
+					Name:                  dep.Name,
+					Version:               resolvedVersion,
+					MaxCompatibilityLevel: dep.MaxCompatibilityLevel,
+				}
+
+				// Validate MaxCompatibilityLevel for nodep deps too
+				if dep.MaxCompatibilityLevel >= 0 {
+					resolvedKey := ModuleKey{Name: dep.Name, Version: resolvedVersion}
+					if resolvedModule, ok := w.oldGraph.Modules[resolvedKey]; ok {
+						if resolvedModule.CompatLevel > dep.MaxCompatibilityLevel {
+							return nil, nil, &SelectionError{
+								Code: "VERSION_RESOLUTION_ERROR",
+								Message: fmt.Sprintf(
+									"%v has nodep_dep on %s with max_compatibility_level %d, "+
+										"but %s@%s has compatibility_level %d which is higher",
+									item.key, dep.Name, dep.MaxCompatibilityLevel,
+									dep.Name, resolvedVersion, resolvedModule.CompatLevel),
+							}
+						}
+					}
+				}
 			}
 		}
 
 		module := &Module{
 			Key:         item.key,
 			Deps:        newDeps,
+			NodepDeps:   newNodepDeps,
 			CompatLevel: oldModule.CompatLevel,
 		}
 
@@ -249,12 +335,24 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 			return nil, nil, err
 		}
 
-		// Add deps to queue
+		// Add deps to queue (regular deps are always followed)
 		for _, dep := range module.Deps {
 			depKey := dep.ToModuleKey()
 			if !known[depKey] {
 				known[depKey] = true
 				queue = append(queue, queueItem{key: depKey, dependent: &item.key})
+			}
+		}
+
+		// Add nodep deps to queue only in phase 1 (when not ignoring them)
+		// In phase 2, nodep deps are ignored for pruning
+		if !w.ignoreNodepDeps {
+			for _, dep := range module.NodepDeps {
+				depKey := dep.ToModuleKey()
+				if !known[depKey] {
+					known[depKey] = true
+					queue = append(queue, queueItem{key: depKey, dependent: &item.key})
+				}
 			}
 		}
 

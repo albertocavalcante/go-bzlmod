@@ -45,6 +45,13 @@ type Module struct {
 	Key         ModuleKey
 	Deps        []DepSpec
 	CompatLevel int // The compatibility_level from module(), default 0
+
+	// NodepDeps are dependencies that participate in version selection but don't
+	// create transitive dependency edges during graph pruning. Modules reachable
+	// only via NodepDeps are not included in the final resolved graph.
+	// Introduced in Bazel 7.6+.
+	// Reference: Selection.java lines 397-403
+	NodepDeps []DepSpec
 }
 
 // DepGraph represents the complete dependency graph before selection.

@@ -92,8 +92,8 @@ func TestNewDependencyResolver(t *testing.T) {
 				t.Error("Registry not set correctly")
 			}
 
-			if resolver.includeDevDeps != tt.includeDevDeps {
-				t.Errorf("includeDevDeps = %v, want %v", resolver.includeDevDeps, tt.includeDevDeps)
+			if resolver.options.IncludeDevDeps != tt.includeDevDeps {
+				t.Errorf("options.IncludeDevDeps = %v, want %v", resolver.options.IncludeDevDeps, tt.includeDevDeps)
 			}
 		})
 	}
@@ -392,7 +392,7 @@ func TestBuildResolutionList(t *testing.T) {
 		},
 	}
 
-	list, err := resolver.buildResolutionList(selectedVersions, rootModule)
+	list, err := resolver.buildResolutionList(context.Background(), selectedVersions, rootModule)
 	if err != nil {
 		t.Fatalf("buildResolutionList() error = %v", err)
 	}
@@ -675,6 +675,74 @@ func TestResolveDependencies_GitOverrideKeepsModuleWithoutRegistryFetch(t *testi
 	}
 	if !found {
 		t.Fatal("Expected local_mod to remain in the resolution list")
+	}
+}
+
+// TestDirectDepsMode_Warn tests that DirectDepsWarn adds warnings for mismatches.
+func TestDirectDepsMode_Warn(t *testing.T) {
+	registry := NewRegistryClient("https://bcr.bazel.build")
+	opts := ResolutionOptions{
+		IncludeDevDeps: false,
+		DirectDepsMode: DirectDepsWarn,
+	}
+	resolver := NewDependencyResolverWithOptions(registry, opts)
+
+	// Root declares dep_a@1.0.0, but transitive deps will bump it higher
+	rootModule := &ModuleInfo{
+		Name:    "test",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "dep_a", Version: "1.0.0"},
+		},
+	}
+
+	// Simulate: dep_a@1.0.0 requested, but dep_a@2.0.0 is selected (via MVS)
+	selectedVersions := map[string]*DepRequest{
+		"dep_a": {Version: "2.0.0", RequiredBy: []string{"other_module"}},
+	}
+
+	mismatches := resolver.checkDirectDeps(rootModule, selectedVersions)
+	if len(mismatches) != 1 {
+		t.Fatalf("Expected 1 mismatch, got %d", len(mismatches))
+	}
+
+	m := mismatches[0]
+	if m.Name != "dep_a" {
+		t.Errorf("Expected mismatch for dep_a, got %s", m.Name)
+	}
+	if m.DeclaredVersion != "1.0.0" {
+		t.Errorf("Expected declared version 1.0.0, got %s", m.DeclaredVersion)
+	}
+	if m.ResolvedVersion != "2.0.0" {
+		t.Errorf("Expected resolved version 2.0.0, got %s", m.ResolvedVersion)
+	}
+}
+
+// TestDirectDepsMode_NoMismatch tests that matching versions produce no warnings.
+func TestDirectDepsMode_NoMismatch(t *testing.T) {
+	registry := NewRegistryClient("https://bcr.bazel.build")
+	opts := ResolutionOptions{
+		IncludeDevDeps: false,
+		DirectDepsMode: DirectDepsWarn,
+	}
+	resolver := NewDependencyResolverWithOptions(registry, opts)
+
+	rootModule := &ModuleInfo{
+		Name:    "test",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "dep_a", Version: "1.0.0"},
+		},
+	}
+
+	// Selected version matches declared
+	selectedVersions := map[string]*DepRequest{
+		"dep_a": {Version: "1.0.0", RequiredBy: []string{"<root>"}},
+	}
+
+	mismatches := resolver.checkDirectDeps(rootModule, selectedVersions)
+	if len(mismatches) != 0 {
+		t.Errorf("Expected no mismatches, got %d", len(mismatches))
 	}
 }
 

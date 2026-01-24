@@ -154,3 +154,14 @@ func (m *Metadata) HasVersion(version string) bool {
 	}
 	return false
 }
+
+// NonYankedVersions returns all versions that are not yanked, in order.
+func (m *Metadata) NonYankedVersions() []string {
+	result := make([]string, 0, len(m.Versions))
+	for _, v := range m.Versions {
+		if !m.IsYanked(v) {
+			result = append(result, v)
+		}
+	}
+	return result
+}

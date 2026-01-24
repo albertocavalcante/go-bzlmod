@@ -325,3 +325,186 @@ func keys(m map[ModuleKey]*Module) []ModuleKey {
 	}
 	return result
 }
+
+// TestMaxCompatibilityLevel_Exceeded tests that max_compatibility_level is enforced.
+func TestMaxCompatibilityLevel_Exceeded(t *testing.T) {
+	// Given: A depends on B@1.0 with max_compatibility_level=1
+	//        B@1.0 has compat_level=2 (exceeds max)
+	// Expected: Error due to compat level exceeding max
+	graph := &DepGraph{
+		Modules: map[ModuleKey]*Module{
+			{Name: "<root>", Version: ""}: {
+				Key: ModuleKey{Name: "<root>", Version: ""},
+				Deps: []DepSpec{{
+					Name:                  "B",
+					Version:               "1.0",
+					MaxCompatibilityLevel: 1, // Max allowed is 1
+				}},
+			},
+			{Name: "B", Version: "1.0"}: {
+				Key:         ModuleKey{Name: "B", Version: "1.0"},
+				CompatLevel: 2, // Has compat level 2, exceeds max
+				Deps:        nil,
+			},
+		},
+		RootKey: ModuleKey{Name: "<root>", Version: ""},
+	}
+
+	_, err := Run(graph, nil)
+	if err == nil {
+		t.Error("Expected error due to max_compatibility_level exceeded")
+	}
+	if selErr, ok := err.(*SelectionError); ok {
+		if selErr.Code != "VERSION_RESOLUTION_ERROR" {
+			t.Errorf("Expected VERSION_RESOLUTION_ERROR, got %s", selErr.Code)
+		}
+	}
+}
+
+// TestMaxCompatibilityLevel_Satisfied tests that max_compatibility_level allows valid deps.
+func TestMaxCompatibilityLevel_Satisfied(t *testing.T) {
+	// Given: A depends on B@1.0 with max_compatibility_level=2
+	//        B@1.0 has compat_level=1 (within max)
+	// Expected: Success
+	graph := &DepGraph{
+		Modules: map[ModuleKey]*Module{
+			{Name: "<root>", Version: ""}: {
+				Key: ModuleKey{Name: "<root>", Version: ""},
+				Deps: []DepSpec{{
+					Name:                  "B",
+					Version:               "1.0",
+					MaxCompatibilityLevel: 2, // Max allowed is 2
+				}},
+			},
+			{Name: "B", Version: "1.0"}: {
+				Key:         ModuleKey{Name: "B", Version: "1.0"},
+				CompatLevel: 1, // Has compat level 1, within max
+				Deps:        nil,
+			},
+		},
+		RootKey: ModuleKey{Name: "<root>", Version: ""},
+	}
+
+	result, err := Run(graph, nil)
+	if err != nil {
+		t.Fatalf("Selection.Run() error = %v", err)
+	}
+
+	// B@1.0 should be selected
+	if _, ok := result.ResolvedGraph[ModuleKey{Name: "B", Version: "1.0"}]; !ok {
+		t.Error("Expected B@1.0 to be selected")
+	}
+}
+
+// TestMaxCompatibilityLevel_NoConstraint tests that -1 means no constraint.
+func TestMaxCompatibilityLevel_NoConstraint(t *testing.T) {
+	// Given: A depends on B@1.0 with max_compatibility_level=-1 (no constraint)
+	//        B@1.0 has compat_level=10
+	// Expected: Success (no max constraint)
+	graph := &DepGraph{
+		Modules: map[ModuleKey]*Module{
+			{Name: "<root>", Version: ""}: {
+				Key: ModuleKey{Name: "<root>", Version: ""},
+				Deps: []DepSpec{{
+					Name:                  "B",
+					Version:               "1.0",
+					MaxCompatibilityLevel: -1, // No constraint
+				}},
+			},
+			{Name: "B", Version: "1.0"}: {
+				Key:         ModuleKey{Name: "B", Version: "1.0"},
+				CompatLevel: 10, // High compat level
+				Deps:        nil,
+			},
+		},
+		RootKey: ModuleKey{Name: "<root>", Version: ""},
+	}
+
+	result, err := Run(graph, nil)
+	if err != nil {
+		t.Fatalf("Selection.Run() error = %v", err)
+	}
+
+	if _, ok := result.ResolvedGraph[ModuleKey{Name: "B", Version: "1.0"}]; !ok {
+		t.Error("Expected B@1.0 to be selected")
+	}
+}
+
+// TestNodepDeps_NotInResolvedGraph tests that nodep deps are excluded from final graph.
+func TestNodepDeps_NotInResolvedGraph(t *testing.T) {
+	// Given: root has regular dep on A, A has nodep dep on B
+	// Expected: B is NOT in resolved graph (only reachable via nodep)
+	graph := &DepGraph{
+		Modules: map[ModuleKey]*Module{
+			{Name: "<root>", Version: ""}: {
+				Key:  ModuleKey{Name: "<root>", Version: ""},
+				Deps: []DepSpec{{Name: "A", Version: "1.0"}},
+			},
+			{Name: "A", Version: "1.0"}: {
+				Key:       ModuleKey{Name: "A", Version: "1.0"},
+				Deps:      nil,
+				NodepDeps: []DepSpec{{Name: "B", Version: "1.0"}}, // nodep dep
+			},
+			{Name: "B", Version: "1.0"}: {
+				Key:  ModuleKey{Name: "B", Version: "1.0"},
+				Deps: nil,
+			},
+		},
+		RootKey: ModuleKey{Name: "<root>", Version: ""},
+	}
+
+	result, err := Run(graph, nil)
+	if err != nil {
+		t.Fatalf("Selection.Run() error = %v", err)
+	}
+
+	// A should be in resolved graph
+	if _, ok := result.ResolvedGraph[ModuleKey{Name: "A", Version: "1.0"}]; !ok {
+		t.Error("Expected A@1.0 to be in resolved graph")
+	}
+
+	// B should NOT be in resolved graph (only reachable via nodep)
+	if _, ok := result.ResolvedGraph[ModuleKey{Name: "B", Version: "1.0"}]; ok {
+		t.Error("Expected B@1.0 to NOT be in resolved graph (only nodep reachable)")
+	}
+
+	// B should be in unpruned graph
+	if _, ok := result.UnprunedGraph[ModuleKey{Name: "B", Version: "1.0"}]; !ok {
+		t.Error("Expected B@1.0 to be in unpruned graph")
+	}
+}
+
+// TestNodepDeps_Validation tests that nodep deps are still validated.
+func TestNodepDeps_Validation(t *testing.T) {
+	// Given: A has nodep dep on B with max_compatibility_level=1
+	//        B@1.0 has compat_level=2 (exceeds max)
+	// Expected: Error (nodep deps are still validated)
+	graph := &DepGraph{
+		Modules: map[ModuleKey]*Module{
+			{Name: "<root>", Version: ""}: {
+				Key:  ModuleKey{Name: "<root>", Version: ""},
+				Deps: []DepSpec{{Name: "A", Version: "1.0"}},
+			},
+			{Name: "A", Version: "1.0"}: {
+				Key:  ModuleKey{Name: "A", Version: "1.0"},
+				Deps: nil,
+				NodepDeps: []DepSpec{{
+					Name:                  "B",
+					Version:               "1.0",
+					MaxCompatibilityLevel: 1, // Max is 1
+				}},
+			},
+			{Name: "B", Version: "1.0"}: {
+				Key:         ModuleKey{Name: "B", Version: "1.0"},
+				CompatLevel: 2, // Exceeds max
+				Deps:        nil,
+			},
+		},
+		RootKey: ModuleKey{Name: "<root>", Version: ""},
+	}
+
+	_, err := Run(graph, nil)
+	if err == nil {
+		t.Error("Expected error due to max_compatibility_level exceeded for nodep dep")
+	}
+}

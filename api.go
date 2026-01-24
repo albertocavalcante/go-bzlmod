@@ -11,7 +11,7 @@
 //
 //   - Parser: Parses MODULE.bazel files to extract module information
 //   - Registry: Fetches module metadata from Bazel Central Registry (BCR)
-//   - Resolver: Resolves transitive dependencies using MVS
+//   - Resolver: Resolves transitive dependencies using MVS or Bazel's selection algorithm
 //
 // # Quick Start
 //
@@ -29,16 +29,39 @@
 //	    fmt.Printf("%s@%s\n", mod.Name, mod.Version)
 //	}
 //
+// # Selection API (Full Bazel Compatibility)
+//
+// For full Bazel compatibility including compatibility levels and proper pruning:
+//
+//	opts := gobzlmod.ResolutionOptions{
+//	    IncludeDevDeps: false,
+//	    CheckYanked:    true,
+//	    YankedBehavior: gobzlmod.YankedVersionWarn,
+//	}
+//	result, err := gobzlmod.ResolveWithSelection(ctx, moduleContent, registryURL, opts)
+//
+// # Yanked Version Handling
+//
+// The library supports detecting and handling yanked versions from the registry:
+//
+//	opts := gobzlmod.ResolutionOptions{
+//	    CheckYanked:    true,                        // Enable yanked version checking
+//	    YankedBehavior: gobzlmod.YankedVersionError, // Fail if yanked versions selected
+//	}
+//
+// YankedBehavior options:
+//   - YankedVersionAllow: Populate yanked info but don't warn or error
+//   - YankedVersionWarn: Include warnings in result for yanked versions
+//   - YankedVersionError: Return error if any yanked version is selected
+//
 // # Differences from Bazel's Algorithm
 //
-// Bazel's actual resolution algorithm includes additional features not implemented here:
+// The simple MVS resolver differs from Bazel's algorithm in:
 //   - Compatibility level checking and automatic upgrades
-//   - Yanked version handling
 //   - Multiple version override support
 //   - Module extension resolution
 //
-// For production use requiring full Bazel compatibility, see the selection package
-// which implements Bazel's complete algorithm.
+// Use ResolveWithSelection for compatibility level enforcement and proper pruning.
 //
 // # Thread Safety
 //
@@ -79,4 +102,47 @@ func ResolveDependenciesWithContext(ctx context.Context, moduleContent, registry
 	registry := NewRegistryClient(registryURL)
 	resolver := NewDependencyResolver(registry, includeDevDeps)
 	return resolver.ResolveDependencies(ctx, moduleInfo)
+}
+
+// ResolveDependenciesWithOptions resolves dependencies with full configuration control.
+// This allows enabling yanked version checking and other advanced options.
+func ResolveDependenciesWithOptions(ctx context.Context, moduleContent, registryURL string, opts ResolutionOptions) (*ResolutionList, error) {
+	moduleInfo, err := ParseModuleContent(moduleContent)
+	if err != nil {
+		return nil, fmt.Errorf("parse module content: %w", err)
+	}
+
+	registry := NewRegistryClient(registryURL)
+	resolver := NewDependencyResolverWithOptions(registry, opts)
+	return resolver.ResolveDependencies(ctx, moduleInfo)
+}
+
+// ResolveWithSelection resolves dependencies using Bazel's complete selection algorithm.
+// This provides full compatibility with Bazel including:
+//   - Compatibility level enforcement
+//   - Multiple version override support (when available in Override type)
+//   - Proper pruning of unreachable modules
+//
+// Returns a SelectionResult with both resolved and unpruned views.
+func ResolveWithSelection(ctx context.Context, moduleContent, registryURL string, opts ResolutionOptions) (*SelectionResult, error) {
+	moduleInfo, err := ParseModuleContent(moduleContent)
+	if err != nil {
+		return nil, fmt.Errorf("parse module content: %w", err)
+	}
+
+	registry := NewRegistryClient(registryURL)
+	resolver := NewSelectionResolver(registry, opts)
+	return resolver.Resolve(ctx, moduleInfo)
+}
+
+// ResolveWithSelectionFromFile loads a MODULE.bazel file and resolves using the selection algorithm.
+func ResolveWithSelectionFromFile(moduleFilePath, registryURL string, opts ResolutionOptions) (*SelectionResult, error) {
+	moduleInfo, err := ParseModuleFile(moduleFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("parse module file: %w", err)
+	}
+
+	registry := NewRegistryClient(registryURL)
+	resolver := NewSelectionResolver(registry, opts)
+	return resolver.Resolve(context.Background(), moduleInfo)
 }

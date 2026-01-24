@@ -55,10 +55,11 @@ func extractModuleInfo(f *build.File) *ModuleInfo {
 
 		case "bazel_dep":
 			dep := Dependency{
-				Name:          buildutil.String(call, "name"),
-				Version:       buildutil.String(call, "version"),
-				RepoName:      buildutil.String(call, "repo_name"),
-				DevDependency: buildutil.Bool(call, "dev_dependency"),
+				Name:                  buildutil.String(call, "name"),
+				Version:               buildutil.String(call, "version"),
+				MaxCompatibilityLevel: buildutil.Int(call, "max_compatibility_level"),
+				RepoName:              buildutil.String(call, "repo_name"),
+				DevDependency:         buildutil.Bool(call, "dev_dependency"),
 			}
 			if dep.Name != "" && dep.Version != "" {
 				info.Dependencies = append(info.Dependencies, dep)
