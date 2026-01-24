@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/albertocavalcante/go-bzlmod/bazeltools"
+	"github.com/albertocavalcante/go-bzlmod/graph"
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
 
@@ -43,7 +44,7 @@ const (
 	maxDependencyDepth = 1000
 )
 
-// DependencyResolver resolves Bazel module dependencies using Minimal Version Selection (MVS).
+// dependencyResolver resolves Bazel module dependencies using Minimal Version Selection (MVS).
 //
 // The resolution algorithm proceeds in three phases:
 //  1. Graph construction: Recursively fetches MODULE.bazel files from the registry
@@ -59,11 +60,34 @@ const (
 // Multi-registry support: When ResolutionOptions.Registries is set with multiple URLs,
 // the resolver searches registries in order. The first registry where a module is found
 // is used for ALL versions of that module.
-type DependencyResolver struct {
-	registry        RegistryInterface
+type dependencyResolver struct {
+	registry        registryInterface
 	options         ResolutionOptions
 	overrideMu      sync.RWMutex
 	overrideModules map[string]*ModuleInfo
+}
+
+// graphBuildContext holds state during dependency graph construction.
+// Grouping these fields reduces function parameter count and makes the
+// relationship between these values explicit.
+type graphBuildContext struct {
+	// depGraph maps module name -> version -> request info
+	depGraph map[string]map[string]*depRequest
+
+	// moduleDeps maps module name -> list of dependency names (for graph building)
+	moduleDeps map[string][]string
+
+	// visiting tracks modules currently being processed to detect cycles
+	visiting *sync.Map
+
+	// overrides maps module name -> override configuration
+	overrides map[string]Override
+
+	// overrideModules contains pre-parsed MODULE.bazel for overridden modules
+	overrideModules map[string]*ModuleInfo
+
+	// mu protects concurrent writes to depGraph and moduleDeps
+	mu sync.Mutex
 }
 
 // NewDependencyResolver creates a new resolver with the given registry.
@@ -72,8 +96,8 @@ type DependencyResolver struct {
 // The registry can be created with Registry() for sensible defaults:
 //
 //	resolver := NewDependencyResolver(Registry(), false)
-func NewDependencyResolver(registry RegistryInterface, includeDevDeps bool) *DependencyResolver {
-	return &DependencyResolver{
+func NewDependencyResolver(registry registryInterface, includeDevDeps bool) *dependencyResolver {
+	return &dependencyResolver{
 		registry: registry,
 		options:  ResolutionOptions{IncludeDevDeps: includeDevDeps},
 	}
@@ -83,7 +107,7 @@ func NewDependencyResolver(registry RegistryInterface, includeDevDeps bool) *Dep
 //
 // The registry can be nil if opts.Registries is set, otherwise it's required.
 // When opts.Registries is set, it takes precedence over the registry parameter.
-func NewDependencyResolverWithOptions(registry RegistryInterface, opts ResolutionOptions) *DependencyResolver {
+func NewDependencyResolverWithOptions(registry registryInterface, opts ResolutionOptions) *dependencyResolver {
 	reg := registry
 
 	// Registries in options takes precedence
@@ -94,7 +118,7 @@ func NewDependencyResolverWithOptions(registry RegistryInterface, opts Resolutio
 		reg = registryWithTimeout(opts.Timeout)
 	}
 
-	return &DependencyResolver{
+	return &dependencyResolver{
 		registry: reg,
 		options:  opts,
 	}
@@ -102,7 +126,7 @@ func NewDependencyResolverWithOptions(registry RegistryInterface, opts Resolutio
 
 // AddOverrideModuleContent registers MODULE.bazel content for a git/local/archive override.
 // The content is parsed and used to hydrate transitive dependencies for that module.
-func (r *DependencyResolver) AddOverrideModuleContent(moduleName, content string) error {
+func (r *dependencyResolver) AddOverrideModuleContent(moduleName, content string) error {
 	if moduleName == "" {
 		return fmt.Errorf("override module name is empty")
 	}
@@ -114,7 +138,7 @@ func (r *DependencyResolver) AddOverrideModuleContent(moduleName, content string
 }
 
 // AddOverrideModuleInfo registers parsed module info for a git/local/archive override.
-func (r *DependencyResolver) AddOverrideModuleInfo(moduleName string, moduleInfo *ModuleInfo) error {
+func (r *dependencyResolver) AddOverrideModuleInfo(moduleName string, moduleInfo *ModuleInfo) error {
 	if moduleName == "" {
 		return fmt.Errorf("override module name is empty")
 	}
@@ -138,7 +162,7 @@ func (r *DependencyResolver) AddOverrideModuleInfo(moduleName string, moduleInfo
 	return nil
 }
 
-func (r *DependencyResolver) overrideModuleSnapshot() map[string]*ModuleInfo {
+func (r *dependencyResolver) overrideModuleSnapshot() map[string]*ModuleInfo {
 	r.overrideMu.RLock()
 	defer r.overrideMu.RUnlock()
 	if len(r.overrideModules) == 0 {
@@ -155,7 +179,7 @@ func (r *DependencyResolver) overrideModuleSnapshot() map[string]*ModuleInfo {
 // It returns a ResolutionList containing all selected modules sorted by name.
 //
 // The method is safe for concurrent use and respects context cancellation.
-func (r *DependencyResolver) ResolveDependencies(ctx context.Context, rootModule *ModuleInfo) (*ResolutionList, error) {
+func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule *ModuleInfo) (*ResolutionList, error) {
 	if rootModule == nil {
 		return nil, fmt.Errorf("root module is nil")
 	}
@@ -165,22 +189,26 @@ func (r *DependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		injectBazelToolsDeps(rootModule, r.options.BazelVersion)
 	}
 
-	depGraph := make(map[string]map[string]*DepRequest)
-	visiting := &sync.Map{}
-	overrideIndex := indexOverrides(rootModule.Overrides)
-	overrideModules := r.overrideModuleSnapshot()
+	// Initialize graph build context with all state needed for traversal
+	bc := &graphBuildContext{
+		depGraph:        make(map[string]map[string]*depRequest),
+		moduleDeps:      make(map[string][]string),
+		visiting:        &sync.Map{},
+		overrides:       indexOverrides(rootModule.Overrides),
+		overrideModules: r.overrideModuleSnapshot(),
+	}
 
-	if err := r.buildDependencyGraphWithOverrides(ctx, rootModule, depGraph, visiting, []string{"<root>"}, overrideIndex, overrideModules); err != nil {
+	if err := r.buildDependencyGraph(ctx, rootModule, bc, []string{"<root>"}); err != nil {
 		return nil, fmt.Errorf("build dependency graph: %w", err)
 	}
 
 	// Substitute yanked versions if enabled
 	if r.options.SubstituteYanked {
-		r.substituteYankedVersionsInGraph(ctx, depGraph)
+		r.substituteYankedVersionsInGraph(ctx, bc.depGraph)
 	}
 
-	r.applyOverrides(depGraph, rootModule.Overrides)
-	selectedVersions := r.applyMVS(depGraph)
+	r.applyOverrides(bc.depGraph, rootModule.Overrides)
+	selectedVersions := r.applyMVS(bc.depGraph)
 
 	// Validate direct dependencies match resolved versions
 	if r.options.DirectDepsMode != DirectDepsOff {
@@ -193,18 +221,15 @@ func (r *DependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		}
 	}
 
-	return r.buildResolutionList(ctx, selectedVersions, rootModule)
+	return r.buildResolutionList(ctx, selectedVersions, bc.moduleDeps, rootModule)
 }
 
-func (r *DependencyResolver) buildDependencyGraph(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string) error {
-	return r.buildDependencyGraphWithOverrides(ctx, module, depGraph, visiting, path, nil, nil)
-}
-
-func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Context, module *ModuleInfo, depGraph map[string]map[string]*DepRequest, visiting *sync.Map, path []string, overrides map[string]Override, overrideModules map[string]*ModuleInfo) error {
+// buildDependencyGraph constructs the dependency graph by recursively fetching
+// and processing MODULE.bazel files. Uses bc (graphBuildContext) to accumulate state.
+func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *ModuleInfo, bc *graphBuildContext, path []string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	var mu sync.Mutex
 	var errOnce sync.Once
 	var firstErr error
 
@@ -259,7 +284,7 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 		// This allows A -> B -> A patterns because when B tries to add A, A is already
 		// in the visited set, so we just skip it - no reprocessing, no infinite loop.
 		// See: Selection.java DepGraphWalker.walk() in Bazel source.
-		if _, visited := visiting.LoadOrStore(depKey, struct{}{}); visited {
+		if _, visited := bc.visiting.LoadOrStore(depKey, struct{}{}); visited {
 			return
 		}
 
@@ -279,6 +304,20 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 
 	var processDeps func(module *ModuleInfo, path []string) error
 	processDeps = func(module *ModuleInfo, path []string) error {
+		// Capture this module's dependencies for graph building (O(n) - just collect names)
+		var deps []string
+		for _, dep := range module.Dependencies {
+			if dep.DevDependency && !r.options.IncludeDevDeps {
+				continue
+			}
+			deps = append(deps, dep.Name)
+		}
+		if len(deps) > 0 && module.Name != "" {
+			bc.mu.Lock()
+			bc.moduleDeps[module.Name] = deps
+			bc.mu.Unlock()
+		}
+
 		for _, dep := range module.Dependencies {
 			if dep.DevDependency && !r.options.IncludeDevDeps {
 				continue
@@ -286,7 +325,7 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 
 			effectiveVersion := dep.Version
 			skipFetch := false
-			if override, ok := overrides[dep.Name]; ok {
+			if override, ok := bc.overrides[dep.Name]; ok {
 				switch override.Type {
 				case "single_version":
 					if override.Version != "" {
@@ -297,27 +336,27 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 				}
 			}
 
-			mu.Lock()
-			if depGraph[dep.Name] == nil {
-				depGraph[dep.Name] = make(map[string]*DepRequest)
+			bc.mu.Lock()
+			if bc.depGraph[dep.Name] == nil {
+				bc.depGraph[dep.Name] = make(map[string]*depRequest)
 			}
 
-			if existing, exists := depGraph[dep.Name][effectiveVersion]; exists {
+			if existing, exists := bc.depGraph[dep.Name][effectiveVersion]; exists {
 				existing.RequiredBy = append(existing.RequiredBy, path[len(path)-1])
 				if dep.DevDependency {
 					existing.DevDependency = true
 				}
 			} else {
-				depGraph[dep.Name][effectiveVersion] = &DepRequest{
+				bc.depGraph[dep.Name][effectiveVersion] = &depRequest{
 					Version:       effectiveVersion,
 					DevDependency: dep.DevDependency,
 					RequiredBy:    []string{path[len(path)-1]},
 				}
 			}
-			mu.Unlock()
+			bc.mu.Unlock()
 
 			if skipFetch {
-				if overrideModule, ok := overrideModules[dep.Name]; ok {
+				if overrideModule, ok := bc.overrideModules[dep.Name]; ok {
 					depKey := dep.Name + "@" + effectiveVersion
 					depPath := append(path[:len(path):len(path)], dep.Name+"@"+effectiveVersion)
 
@@ -329,7 +368,7 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 					// Try to mark as visited and process if this is the first visit.
 					// This prevents infinite loops in mutual dependencies (like rules_go <-> gazelle).
 					// Following Bazel's approach: if already visited, skip silently - no error.
-					if _, visited := visiting.LoadOrStore(depKey, struct{}{}); !visited {
+					if _, visited := bc.visiting.LoadOrStore(depKey, struct{}{}); !visited {
 						if err := processDeps(overrideModule, depPath); err != nil {
 							return err
 						}
@@ -354,7 +393,7 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 
 			// Check if there's a registry override for this module
 			registryToUse := r.registry
-			if override, ok := overrides[task.name]; ok && override.Registry != "" {
+			if override, ok := bc.overrides[task.name]; ok && override.Registry != "" {
 				// Use the overridden registry for this specific module with the configured timeout
 				registryToUse = newRegistryClientWithTimeout(override.Registry, r.options.Timeout)
 			}
@@ -362,9 +401,9 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 			transitiveDep, err := registryToUse.GetModuleFile(ctx, task.name, task.version)
 			if err != nil {
 				if isNotFound(err) {
-					mu.Lock()
-					removeDependency(depGraph, task.name, task.version)
-					mu.Unlock()
+					bc.mu.Lock()
+					removeDependency(bc.depGraph, task.name, task.version)
+					bc.mu.Unlock()
 					tasksWG.Done()
 					continue
 				}
@@ -402,17 +441,17 @@ func (r *DependencyResolver) buildDependencyGraphWithOverrides(ctx context.Conte
 	return ctx.Err()
 }
 
-func (r *DependencyResolver) applyOverrides(depGraph map[string]map[string]*DepRequest, overrides []Override) {
+func (r *dependencyResolver) applyOverrides(depGraph map[string]map[string]*depRequest, overrides []Override) {
 	for _, override := range overrides {
 		switch override.Type {
 		case "single_version":
 			if override.Version != "" {
 				if versions, exists := depGraph[override.ModuleName]; exists {
-					newVersions := make(map[string]*DepRequest)
+					newVersions := make(map[string]*depRequest)
 					if req, hasVersion := versions[override.Version]; hasVersion {
 						newVersions[override.Version] = req
 					} else {
-						newVersions[override.Version] = &DepRequest{
+						newVersions[override.Version] = &depRequest{
 							Version:       override.Version,
 							DevDependency: false,
 							RequiredBy:    []string{"<override>"},
@@ -421,7 +460,7 @@ func (r *DependencyResolver) applyOverrides(depGraph map[string]map[string]*DepR
 					depGraph[override.ModuleName] = newVersions
 				} else {
 					// Create entry for nonexistent module
-					depGraph[override.ModuleName] = map[string]*DepRequest{
+					depGraph[override.ModuleName] = map[string]*depRequest{
 						override.Version: {
 							Version:       override.Version,
 							DevDependency: false,
@@ -438,11 +477,11 @@ func (r *DependencyResolver) applyOverrides(depGraph map[string]map[string]*DepR
 
 // applyMVS implements Minimal Version Selection: for each module, select the
 // highest version requested by any dependent.
-func (r *DependencyResolver) applyMVS(depGraph map[string]map[string]*DepRequest) map[string]*DepRequest {
-	selected := make(map[string]*DepRequest)
+func (r *dependencyResolver) applyMVS(depGraph map[string]map[string]*depRequest) map[string]*depRequest {
+	selected := make(map[string]*depRequest)
 
 	for moduleName, versions := range depGraph {
-		var maxReq *DepRequest
+		var maxReq *depRequest
 		for _, req := range versions {
 			if maxReq == nil || version.Compare(req.Version, maxReq.Version) > 0 {
 				maxReq = req
@@ -458,7 +497,7 @@ func (r *DependencyResolver) applyMVS(depGraph map[string]map[string]*DepRequest
 
 // checkDirectDeps validates that direct dependencies' declared versions match resolved versions.
 // Returns a list of mismatches for reporting or error handling.
-func (r *DependencyResolver) checkDirectDeps(rootModule *ModuleInfo, selected map[string]*DepRequest) []DirectDepMismatch {
+func (r *dependencyResolver) checkDirectDeps(rootModule *ModuleInfo, selected map[string]*depRequest) []DirectDepMismatch {
 	var mismatches []DirectDepMismatch
 
 	for _, dep := range rootModule.Dependencies {
@@ -484,12 +523,18 @@ func (r *DependencyResolver) checkDirectDeps(rootModule *ModuleInfo, selected ma
 	return mismatches
 }
 
-func (r *DependencyResolver) buildResolutionList(ctx context.Context, selectedVersions map[string]*DepRequest, rootModule *ModuleInfo) (*ResolutionList, error) {
+func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVersions map[string]*depRequest, moduleDeps map[string][]string, rootModule *ModuleInfo) (*ResolutionList, error) {
 	list := &ResolutionList{
 		Modules: make([]ModuleToResolve, 0, len(selectedVersions)),
 	}
 
 	defaultRegistry := r.registry.BaseURL()
+
+	// Build a set of selected module names for filtering dependencies
+	selectedNames := make(map[string]bool, len(selectedVersions))
+	for name := range selectedVersions {
+		selectedNames[name] = true
+	}
 
 	for moduleName, req := range selectedVersions {
 		registryURL := defaultRegistry
@@ -503,9 +548,19 @@ func (r *DependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		}
 
 		// For multi-registry chains, get the actual registry that provided this module
-		if chain, ok := r.registry.(*RegistryChain); ok && registryURL == defaultRegistry {
+		if chain, ok := r.registry.(*registryChain); ok && registryURL == defaultRegistry {
 			if moduleRegistry := chain.GetRegistryForModule(moduleName); moduleRegistry != "" {
 				registryURL = moduleRegistry
+			}
+		}
+
+		// Get dependencies for this module, filtered to only include selected modules
+		var deps []string
+		if rawDeps, ok := moduleDeps[moduleName]; ok {
+			for _, dep := range rawDeps {
+				if selectedNames[dep] {
+					deps = append(deps, dep)
+				}
 			}
 		}
 
@@ -514,6 +569,7 @@ func (r *DependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 			Version:       req.Version,
 			Registry:      registryURL,
 			DevDependency: req.DevDependency,
+			Dependencies:  deps,
 			RequiredBy:    req.RequiredBy,
 		})
 	}
@@ -586,16 +642,67 @@ func (r *DependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		}
 	}
 
+	// Build dependency graph - O(n) where n = number of modules
+	list.Graph = buildGraph(rootModule, list.Modules, moduleDeps)
+
 	return list, nil
 }
 
+// buildGraph constructs a graph.Graph from resolution results.
+// This is O(n) where n is the number of modules.
+func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve, moduleDeps map[string][]string) *graph.Graph {
+	// Create module index for O(1) version lookup
+	moduleVersions := make(map[string]string, len(modules))
+	for _, m := range modules {
+		moduleVersions[m.Name] = m.Version
+	}
+
+	// Build root dependencies (filtered to selected modules)
+	var rootDeps []graph.ModuleKey
+	for _, dep := range rootModule.Dependencies {
+		if version, ok := moduleVersions[dep.Name]; ok {
+			rootDeps = append(rootDeps, graph.ModuleKey{Name: dep.Name, Version: version})
+		}
+	}
+
+	// Build SimpleModule list for graph.Build - O(n)
+	simpleModules := make([]graph.SimpleModule, 0, len(modules)+1)
+
+	// Add root module
+	simpleModules = append(simpleModules, graph.SimpleModule{
+		Name:         rootModule.Name,
+		Version:      rootModule.Version,
+		Dependencies: rootDeps,
+	})
+
+	// Add resolved modules
+	for _, m := range modules {
+		// Convert dependency names to ModuleKeys
+		deps := make([]graph.ModuleKey, 0, len(m.Dependencies))
+		for _, depName := range m.Dependencies {
+			if version, ok := moduleVersions[depName]; ok {
+				deps = append(deps, graph.ModuleKey{Name: depName, Version: version})
+			}
+		}
+
+		simpleModules = append(simpleModules, graph.SimpleModule{
+			Name:          m.Name,
+			Version:       m.Version,
+			Dependencies:  deps,
+			DevDependency: m.DevDependency,
+		})
+	}
+
+	rootKey := graph.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}
+	return graph.Build(rootKey, simpleModules)
+}
 
 func isNotFound(err error) bool {
 	var regErr *RegistryError
 	return errors.As(err, &regErr) && regErr.StatusCode == http.StatusNotFound
 }
 
-func removeDependency(depGraph map[string]map[string]*DepRequest, moduleName, moduleVersion string) {
+func removeDependency(depGraph map[string]map[string]*depRequest, moduleName, moduleVersion string) {
 	if versions, exists := depGraph[moduleName]; exists {
 		delete(versions, moduleVersion)
 		if len(versions) == 0 {
@@ -636,7 +743,7 @@ func injectBazelToolsDeps(rootModule *ModuleInfo, bazelVersion string) {
 
 // substituteYankedVersionsInGraph iterates through the dependency graph and replaces
 // yanked versions with non-yanked alternatives in the same compatibility level.
-func (r *DependencyResolver) substituteYankedVersionsInGraph(ctx context.Context, depGraph map[string]map[string]*DepRequest) {
+func (r *dependencyResolver) substituteYankedVersionsInGraph(ctx context.Context, depGraph map[string]map[string]*depRequest) {
 	for moduleName, versions := range depGraph {
 		// Collect replacements to avoid modifying map during iteration
 		replacements := make(map[string]string)
@@ -660,7 +767,7 @@ func (r *DependencyResolver) substituteYankedVersionsInGraph(ctx context.Context
 // findNonYankedVersion finds a non-yanked replacement for a yanked version.
 // Returns the original version if not yanked or no replacement is found.
 // The replacement must be in the same compatibility level.
-func (r *DependencyResolver) findNonYankedVersion(ctx context.Context, moduleName, requestedVersion string) string {
+func (r *dependencyResolver) findNonYankedVersion(ctx context.Context, moduleName, requestedVersion string) string {
 	// Fetch metadata to check yanked status
 	metadata, err := r.registry.GetModuleMetadata(ctx, moduleName)
 	if err != nil {

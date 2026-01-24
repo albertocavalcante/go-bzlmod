@@ -14,7 +14,7 @@ import (
 	"github.com/albertocavalcante/go-bzlmod/registry"
 )
 
-// LocalRegistry provides module data from a local file system path.
+// localRegistry provides module data from a local file system path.
 // This enables airgap/offline workflows where modules are pre-downloaded
 // or vendored into a local directory.
 //
@@ -31,23 +31,23 @@ import (
 //	// Windows
 //	reg := Registry("file:///C:/path/to/registry")
 //
-// Or use NewLocalRegistry directly with a native path:
+// Or use newLocalRegistry directly with a native path:
 //
-//	reg := NewLocalRegistry("/path/to/registry")      // Unix
-//	reg := NewLocalRegistry("C:\\path\\to\\registry") // Windows
-type LocalRegistry struct {
+//	reg := newLocalRegistry("/path/to/registry")      // Unix
+//	reg := newLocalRegistry("C:\\path\\to\\registry") // Windows
+type localRegistry struct {
 	rootPath      string
 	cache         sync.Map // map[string]*ModuleInfo keyed by "name@version"
 	metadataCache sync.Map // map[string]*registry.Metadata keyed by module name
 }
 
-// NewLocalRegistry creates a registry client for a local directory.
+// newLocalRegistry creates a registry client for a local directory.
 //
 // The path should be an absolute path to a directory with the standard
 // registry layout. Use file:// URLs with Registry() for a cleaner API.
 // The path can use either forward slashes or the native OS separator.
-func NewLocalRegistry(rootPath string) *LocalRegistry {
-	return &LocalRegistry{
+func newLocalRegistry(rootPath string) *localRegistry {
+	return &localRegistry{
 		rootPath: filepath.Clean(rootPath),
 	}
 }
@@ -85,7 +85,7 @@ func isWindowsDriveLetter(c byte) bool {
 
 // BaseURL returns the file:// URL for this registry.
 // The URL uses forward slashes regardless of OS, per RFC 8089.
-func (r *LocalRegistry) BaseURL() string {
+func (r *localRegistry) BaseURL() string {
 	// Convert to forward slashes for URL (required by file:// URL spec)
 	urlPath := filepath.ToSlash(r.rootPath)
 
@@ -99,7 +99,7 @@ func (r *LocalRegistry) BaseURL() string {
 }
 
 // GetModuleFile reads a MODULE.bazel file from the local registry.
-func (r *LocalRegistry) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
+func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
 	cacheKey := moduleName + "@" + version
 	if cached, ok := r.cache.Load(cacheKey); ok {
 		return cached.(*ModuleInfo), nil
@@ -136,7 +136,7 @@ func (r *LocalRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 }
 
 // GetModuleMetadata reads metadata.json from the local registry.
-func (r *LocalRegistry) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
+func (r *localRegistry) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
 	if cached, ok := r.metadataCache.Load(moduleName); ok {
 		return cached.(*registry.Metadata), nil
 	}
@@ -184,8 +184,8 @@ func pathToFileURL(path string) string {
 	return "file://" + urlPath
 }
 
-// Verify LocalRegistry implements RegistryInterface
-var _ RegistryInterface = (*LocalRegistry)(nil)
+// Verify localRegistry implements registryInterface
+var _ registryInterface = (*localRegistry)(nil)
 
 // isFileURL checks if a URL is a file:// URL.
 func isFileURL(url string) bool {
@@ -194,13 +194,13 @@ func isFileURL(url string) bool {
 
 // createRegistryClient creates the appropriate registry client for a URL.
 // Handles file:// URLs for local registries and http(s):// for remote.
-func createRegistryClient(url string) (RegistryInterface, error) {
+func createRegistryClient(url string) (registryInterface, error) {
 	return createRegistryClientWithTimeout(url, 0)
 }
 
 // createRegistryClientWithTimeout creates a registry client with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
-func createRegistryClientWithTimeout(url string, timeout time.Duration) (RegistryInterface, error) {
+func createRegistryClientWithTimeout(url string, timeout time.Duration) (registryInterface, error) {
 	if isFileURL(url) {
 		path, err := parseFileURL(url)
 		if err != nil {
@@ -213,7 +213,7 @@ func createRegistryClientWithTimeout(url string, timeout time.Duration) (Registr
 			}
 			return nil, fmt.Errorf("cannot access local registry path %s: %w", path, err)
 		}
-		return NewLocalRegistry(path), nil
+		return newLocalRegistry(path), nil
 	}
 
 	// Remote registry

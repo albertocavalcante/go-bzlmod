@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/albertocavalcante/go-bzlmod/registry"
 )
 
-// RegistryChain implements multi-registry lookup with fallback behavior.
+// registryChain implements multi-registry lookup with fallback behavior.
 // It tries registries in order and remembers which registry provides each module.
 //
 // Supports both remote (https://) and local (file://) registries,
@@ -40,8 +39,8 @@ import (
 //   - https://github.com/bazelbuild/bazel/issues/26442 (source.json fallback bug)
 //
 // By always falling back, we provide better resilience than Bazel itself.
-type RegistryChain struct {
-	clients []RegistryInterface
+type registryChain struct {
+	clients []registryInterface
 
 	// moduleRegistry tracks which registry provides each module (by module name)
 	// Once a module is found in a registry, all versions come from that registry
@@ -49,7 +48,7 @@ type RegistryChain struct {
 	moduleRegistryMu sync.RWMutex
 }
 
-// NewRegistryChain creates a chain of registries from URLs.
+// newRegistryChain creates a chain of registries from URLs.
 //
 // Supports both remote and local registries:
 //   - https:// or http:// - Remote registry
@@ -61,18 +60,18 @@ type RegistryChain struct {
 //
 // If some URLs are invalid but at least one is valid, the invalid URLs
 // are silently skipped and a chain is created with the valid ones.
-func NewRegistryChain(registryURLs []string) (*RegistryChain, error) {
-	return NewRegistryChainWithTimeout(registryURLs, 0)
+func newRegistryChain(registryURLs []string) (*registryChain, error) {
+	return newRegistryChainWithTimeout(registryURLs, 0)
 }
 
-// NewRegistryChainWithTimeout creates a chain of registries with a custom timeout.
+// newRegistryChainWithTimeout creates a chain of registries with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
-func NewRegistryChainWithTimeout(registryURLs []string, timeout time.Duration) (*RegistryChain, error) {
+func newRegistryChainWithTimeout(registryURLs []string, timeout time.Duration) (*registryChain, error) {
 	if len(registryURLs) == 0 {
 		return nil, errors.New("no registry URLs provided")
 	}
 
-	clients := make([]RegistryInterface, 0, len(registryURLs))
+	clients := make([]registryInterface, 0, len(registryURLs))
 	for _, url := range registryURLs {
 		client, err := createRegistryClientWithTimeout(url, timeout)
 		if err != nil {
@@ -87,7 +86,7 @@ func NewRegistryChainWithTimeout(registryURLs []string, timeout time.Duration) (
 		return nil, fmt.Errorf("no valid registries could be created from %d URLs", len(registryURLs))
 	}
 
-	return &RegistryChain{
+	return &registryChain{
 		clients:        clients,
 		moduleRegistry: make(map[string]int),
 	}, nil
@@ -96,7 +95,7 @@ func NewRegistryChainWithTimeout(registryURLs []string, timeout time.Duration) (
 // GetModuleFile fetches a MODULE.bazel file using the registry chain.
 // It tries registries in order for the first request for a module name,
 // then caches which registry provides that module.
-func (rc *RegistryChain) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
+func (rc *registryChain) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
 	// Check if we've already determined which registry provides this module
 	rc.moduleRegistryMu.RLock()
 	registryIdx, found := rc.moduleRegistry[moduleName]
@@ -148,7 +147,7 @@ func (rc *RegistryChain) GetModuleFile(ctx context.Context, moduleName, version 
 }
 
 // GetModuleMetadata fetches metadata using the registry that provides this module.
-func (rc *RegistryChain) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
+func (rc *registryChain) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
 	// Check if we've already determined which registry provides this module
 	rc.moduleRegistryMu.RLock()
 	registryIdx, found := rc.moduleRegistry[moduleName]
@@ -193,7 +192,7 @@ func (rc *RegistryChain) GetModuleMetadata(ctx context.Context, moduleName strin
 
 // BaseURL returns the URL of the first registry in the chain.
 // This is used for display purposes and backwards compatibility.
-func (rc *RegistryChain) BaseURL() string {
+func (rc *registryChain) BaseURL() string {
 	if len(rc.clients) == 0 {
 		return ""
 	}
@@ -202,7 +201,7 @@ func (rc *RegistryChain) BaseURL() string {
 
 // GetRegistryForModule returns the registry URL that provides the given module.
 // Returns empty string if the module hasn't been looked up yet.
-func (rc *RegistryChain) GetRegistryForModule(moduleName string) string {
+func (rc *registryChain) GetRegistryForModule(moduleName string) string {
 	rc.moduleRegistryMu.RLock()
 	defer rc.moduleRegistryMu.RUnlock()
 
@@ -212,21 +211,14 @@ func (rc *RegistryChain) GetRegistryForModule(moduleName string) string {
 	return ""
 }
 
-// RegistryInterface defines the minimal interface needed by DependencyResolver.
-// Both RegistryClient and RegistryChain implement this interface.
-type RegistryInterface interface {
+// registryInterface defines the minimal interface needed by dependencyResolver.
+// Both registryClient and registryChain implement this interface.
+type registryInterface interface {
 	GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error)
 	GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error)
 	BaseURL() string
 }
 
 // Verify that both types implement the interface
-var _ RegistryInterface = (*RegistryClient)(nil)
-var _ RegistryInterface = (*RegistryChain)(nil)
-
-// isNotFoundChain checks if an error represents a 404 Not Found response.
-// This is a helper that works with both single errors and wrapped errors.
-func isNotFoundChain(err error) bool {
-	var regErr *RegistryError
-	return errors.As(err, &regErr) && regErr.StatusCode == http.StatusNotFound
-}
+var _ registryInterface = (*registryClient)(nil)
+var _ registryInterface = (*registryChain)(nil)

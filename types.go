@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/albertocavalcante/go-bzlmod/graph"
 )
 
 // ModuleInfo represents the information extracted from a MODULE.bazel file.
@@ -78,6 +80,11 @@ type ResolutionList struct {
 	// Warnings contains non-fatal issues encountered during resolution.
 	// For example, yanked version warnings when YankedVersionWarn is used.
 	Warnings []string `json:"warnings,omitempty"`
+
+	// Graph is the dependency graph for advanced queries.
+	// Use this for bazel mod graph/explain equivalent functionality.
+	// Supports: Explain(), Path(), AllPaths(), ToJSON(), ToDOT(), ToText()
+	Graph *graph.Graph `json:"-"`
 }
 
 // ModuleToResolve represents a module selected by dependency resolution.
@@ -94,6 +101,10 @@ type ModuleToResolve struct {
 
 	// DevDependency indicates if this module is only a dev dependency.
 	DevDependency bool `json:"dev_dependency"`
+
+	// Dependencies lists the modules this one depends on (by name).
+	// These are the resolved dependency names, not versions.
+	Dependencies []string `json:"dependencies,omitempty"`
 
 	// RequiredBy lists the modules that depend on this one.
 	RequiredBy []string `json:"required_by"`
@@ -329,9 +340,9 @@ func (e *DirectDepsMismatchError) Error() string {
 	return sb.String()
 }
 
-// DepRequest tracks a version request during dependency graph construction.
+// depRequest tracks a version request during dependency graph construction.
 // Multiple modules may request the same dependency at different versions.
-type DepRequest struct {
+type depRequest struct {
 	// Version is the requested version.
 	Version string
 
@@ -342,43 +353,19 @@ type DepRequest struct {
 	RequiredBy []string
 }
 
-// DependencyCycleError was historically returned when a circular dependency was detected.
-//
-// Deprecated: This error is no longer returned as of the change to match Bazel's behavior.
-// Bazel does NOT detect cycles during module resolution - it uses a global visited set
-// that silently skips already-visited modules. This allows mutual dependencies like
-// rules_go <-> gazelle to work correctly.
-//
-// Bazel source reference:
-// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
-// See DepGraphWalker.walk() which uses Set<ModuleKey> known to track visited modules.
-//
-// This type is kept for backward compatibility only.
-type DependencyCycleError struct {
-	// Cycle contains the dependency path that forms the cycle.
-	// Format: ["<root>", "module_a@1.0.0", "module_b@1.0.0", "module_a@1.0.0"]
-	Cycle []string
-}
-
-func (e *DependencyCycleError) Error() string {
-	if len(e.Cycle) == 0 {
-		return "dependency cycle detected"
-	}
-	// Build the cycle path string
-	return fmt.Sprintf("dependency cycle detected: %s", formatCyclePath(e.Cycle))
-}
-
-// formatCyclePath formats a cycle path for display.
-// Example: ["<root>", "A@1.0", "B@1.0", "A@1.0"] -> "<root> -> A@1.0 -> B@1.0 -> A@1.0"
-func formatCyclePath(cycle []string) string {
-	if len(cycle) == 0 {
+// formatDepPath formats a dependency path for display.
+// Example: ["<root>", "A@1.0", "B@1.0"] -> "<root> -> A@1.0 -> B@1.0"
+func formatDepPath(path []string) string {
+	if len(path) == 0 {
 		return ""
 	}
-	result := cycle[0]
-	for i := 1; i < len(cycle); i++ {
-		result += " -> " + cycle[i]
+	var b strings.Builder
+	b.WriteString(path[0])
+	for i := 1; i < len(path); i++ {
+		b.WriteString(" -> ")
+		b.WriteString(path[i])
 	}
-	return result
+	return b.String()
 }
 
 // MaxDepthExceededError is returned when dependency depth exceeds the maximum allowed.
@@ -393,5 +380,5 @@ type MaxDepthExceededError struct {
 
 func (e *MaxDepthExceededError) Error() string {
 	return fmt.Sprintf("maximum dependency depth exceeded: depth %d > max %d (path: %s)",
-		e.Depth, e.MaxDepth, formatCyclePath(e.Path))
+		e.Depth, e.MaxDepth, formatDepPath(e.Path))
 }

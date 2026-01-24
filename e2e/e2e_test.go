@@ -32,12 +32,13 @@ func resolveDependencies(content, registry string, includeDevDeps bool) (*Resolu
 // resolveDependenciesWithBazelVersion resolves with a specific Bazel version for MODULE.tools compat
 func resolveDependenciesWithBazelVersion(content, registry string, includeDevDeps bool, bazelVersion string) (*ResolutionList, error) {
 	opts := gobzlmod.ResolutionOptions{
+		Registries:       []string{registry},
 		IncludeDevDeps:   includeDevDeps,
 		SubstituteYanked: true,
 		BazelVersion:     bazelVersion,
 	}
 	ctx := context.Background()
-	resolutionList, err := gobzlmod.ResolveDependenciesWithOptions(ctx, content, registry, opts)
+	resolutionList, err := gobzlmod.Resolve(ctx, content, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve dependencies: %v", err)
 	}

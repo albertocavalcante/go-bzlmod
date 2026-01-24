@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -12,10 +13,13 @@ func main() {
 	fmt.Println("===================")
 
 	// Resolve dependencies from the example MODULE.bazel file
-	resolutionList, err := gobzlmod.ResolveDependenciesFromFile(
+	resolutionList, err := gobzlmod.ResolveFile(
+		context.Background(),
 		"../MODULE.bazel",
-		"https://bcr.bazel.build",
-		true, // Include dev dependencies
+		gobzlmod.ResolutionOptions{
+			Registries:     []string{"https://bcr.bazel.build"},
+			IncludeDevDeps: true,
+		},
 	)
 	if err != nil {
 		log.Fatalf("❌ Failed to resolve dependencies: %v", err)

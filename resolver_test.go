@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -108,20 +107,20 @@ func TestApplyMVS(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		depGraph map[string]map[string]*DepRequest
-		want     map[string]*DepRequest
+		depGraph map[string]map[string]*depRequest
+		want     map[string]*depRequest
 	}{
 		{
 			name: "single module single version",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{
+					"1.0.0": &depRequest{
 						Version:    "1.0.0",
 						RequiredBy: []string{"<root>"},
 					},
 				},
 			},
-			want: map[string]*DepRequest{
+			want: map[string]*depRequest{
 				"module_a": {
 					Version:    "1.0.0",
 					RequiredBy: []string{"<root>"},
@@ -130,23 +129,23 @@ func TestApplyMVS(t *testing.T) {
 		},
 		{
 			name: "single module multiple versions - MVS selects highest",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{
+					"1.0.0": &depRequest{
 						Version:    "1.0.0",
 						RequiredBy: []string{"dependency_b"},
 					},
-					"1.2.0": &DepRequest{
+					"1.2.0": &depRequest{
 						Version:    "1.2.0",
 						RequiredBy: []string{"dependency_c"},
 					},
-					"1.1.0": &DepRequest{
+					"1.1.0": &depRequest{
 						Version:    "1.1.0",
 						RequiredBy: []string{"dependency_d"},
 					},
 				},
 			},
-			want: map[string]*DepRequest{
+			want: map[string]*depRequest{
 				"module_a": {
 					Version:    "1.2.0",
 					RequiredBy: []string{"dependency_c"},
@@ -155,19 +154,19 @@ func TestApplyMVS(t *testing.T) {
 		},
 		{
 			name: "bcr versions select highest",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.2.3.bcr.2": &DepRequest{
+					"1.2.3.bcr.2": &depRequest{
 						Version:    "1.2.3.bcr.2",
 						RequiredBy: []string{"dependency_b"},
 					},
-					"1.2.3.bcr.10": &DepRequest{
+					"1.2.3.bcr.10": &depRequest{
 						Version:    "1.2.3.bcr.10",
 						RequiredBy: []string{"dependency_c"},
 					},
 				},
 			},
-			want: map[string]*DepRequest{
+			want: map[string]*depRequest{
 				"module_a": {
 					Version:    "1.2.3.bcr.10",
 					RequiredBy: []string{"dependency_c"},
@@ -176,25 +175,25 @@ func TestApplyMVS(t *testing.T) {
 		},
 		{
 			name: "multiple modules",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{
+					"1.0.0": &depRequest{
 						Version:    "1.0.0",
 						RequiredBy: []string{"<root>"},
 					},
 				},
 				"module_b": {
-					"2.1.0": &DepRequest{
+					"2.1.0": &depRequest{
 						Version:    "2.1.0",
 						RequiredBy: []string{"module_a"},
 					},
-					"2.0.0": &DepRequest{
+					"2.0.0": &depRequest{
 						Version:    "2.0.0",
 						RequiredBy: []string{"<root>"},
 					},
 				},
 			},
-			want: map[string]*DepRequest{
+			want: map[string]*depRequest{
 				"module_a": {
 					Version:    "1.0.0",
 					RequiredBy: []string{"<root>"},
@@ -207,8 +206,8 @@ func TestApplyMVS(t *testing.T) {
 		},
 		{
 			name:     "empty dependency graph",
-			depGraph: map[string]map[string]*DepRequest{},
-			want:     map[string]*DepRequest{},
+			depGraph: map[string]map[string]*depRequest{},
+			want:     map[string]*depRequest{},
 		},
 	}
 
@@ -229,16 +228,16 @@ func TestApplyOverrides(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		depGraph  map[string]map[string]*DepRequest
+		depGraph  map[string]map[string]*depRequest
 		overrides []Override
-		want      map[string]map[string]*DepRequest
+		want      map[string]map[string]*depRequest
 	}{
 		{
 			name: "single_version override",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
-					"1.1.0": &DepRequest{Version: "1.1.0", RequiredBy: []string{"dependency_b"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.1.0": &depRequest{Version: "1.1.0", RequiredBy: []string{"dependency_b"}},
 				},
 			},
 			overrides: []Override{
@@ -248,9 +247,9 @@ func TestApplyOverrides(t *testing.T) {
 					Version:    "1.2.0",
 				},
 			},
-			want: map[string]map[string]*DepRequest{
+			want: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.2.0": &DepRequest{
+					"1.2.0": &depRequest{
 						Version:       "1.2.0",
 						DevDependency: false,
 						RequiredBy:    []string{"<override>"},
@@ -260,12 +259,12 @@ func TestApplyOverrides(t *testing.T) {
 		},
 		{
 			name: "git override keeps module",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 				"module_b": {
-					"2.0.0": &DepRequest{Version: "2.0.0", RequiredBy: []string{"module_a"}},
+					"2.0.0": &depRequest{Version: "2.0.0", RequiredBy: []string{"module_a"}},
 				},
 			},
 			overrides: []Override{
@@ -274,20 +273,20 @@ func TestApplyOverrides(t *testing.T) {
 					ModuleName: "module_a",
 				},
 			},
-			want: map[string]map[string]*DepRequest{
+			want: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 				"module_b": {
-					"2.0.0": &DepRequest{Version: "2.0.0", RequiredBy: []string{"module_a"}},
+					"2.0.0": &depRequest{Version: "2.0.0", RequiredBy: []string{"module_a"}},
 				},
 			},
 		},
 		{
 			name: "local_path override keeps module",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 			},
 			overrides: []Override{
@@ -296,17 +295,17 @@ func TestApplyOverrides(t *testing.T) {
 					ModuleName: "module_a",
 				},
 			},
-			want: map[string]map[string]*DepRequest{
+			want: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 			},
 		},
 		{
 			name: "archive override keeps module",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 			},
 			overrides: []Override{
@@ -315,17 +314,17 @@ func TestApplyOverrides(t *testing.T) {
 					ModuleName: "module_a",
 				},
 			},
-			want: map[string]map[string]*DepRequest{
+			want: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 			},
 		},
 		{
 			name: "override nonexistent module",
-			depGraph: map[string]map[string]*DepRequest{
+			depGraph: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 			},
 			overrides: []Override{
@@ -335,12 +334,12 @@ func TestApplyOverrides(t *testing.T) {
 					Version:    "1.0.0",
 				},
 			},
-			want: map[string]map[string]*DepRequest{
+			want: map[string]map[string]*depRequest{
 				"module_a": {
-					"1.0.0": &DepRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
+					"1.0.0": &depRequest{Version: "1.0.0", RequiredBy: []string{"<root>"}},
 				},
 				"nonexistent": {
-					"1.0.0": &DepRequest{
+					"1.0.0": &depRequest{
 						Version:       "1.0.0",
 						DevDependency: false,
 						RequiredBy:    []string{"<override>"},
@@ -377,7 +376,7 @@ func TestBuildResolutionList(t *testing.T) {
 		},
 	}
 
-	selectedVersions := map[string]*DepRequest{
+	selectedVersions := map[string]*depRequest{
 		"module_a": {
 			Version:       "1.0.0",
 			DevDependency: false,
@@ -395,7 +394,8 @@ func TestBuildResolutionList(t *testing.T) {
 		},
 	}
 
-	list, err := resolver.buildResolutionList(context.Background(), selectedVersions, rootModule)
+	moduleDeps := make(map[string][]string) // Empty for this test
+	list, err := resolver.buildResolutionList(context.Background(), selectedVersions, moduleDeps, rootModule)
 	if err != nil {
 		t.Fatalf("buildResolutionList() error = %v", err)
 	}
@@ -517,7 +517,7 @@ func TestVersionComparison(t *testing.T) {
 	}
 }
 
-func TestBuildDependencyGraph_DevDependencies(t *testing.T) {
+func TestResolveDependencies_DevDependencies(t *testing.T) {
 	// Create mock server
 	server := createMockRegistryServer()
 	defer server.Close()
@@ -559,21 +559,21 @@ func TestBuildDependencyGraph_DevDependencies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			registry := NewRegistryClient(server.URL)
-			resolver := NewDependencyResolver(registry, tt.includeDevDeps)
-
-			depGraph := make(map[string]map[string]*DepRequest)
-			visiting := &sync.Map{}
+			resolver := NewDependencyResolverWithOptions(registry, ResolutionOptions{
+				IncludeDevDeps: tt.includeDevDeps,
+			})
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
-			err := resolver.buildDependencyGraph(ctx, tt.rootModule, depGraph, visiting, []string{"<root>"})
+			result, err := resolver.ResolveDependencies(ctx, tt.rootModule)
 			if err != nil {
-				t.Fatalf("buildDependencyGraph() error = %v", err)
+				t.Fatalf("ResolveDependencies() error = %v", err)
 			}
 
-			if len(depGraph) != tt.wantModules {
-				t.Errorf("Expected %d modules in dependency graph, got %d", tt.wantModules, len(depGraph))
+			// Count the modules in the result (excluding root)
+			if result.Summary.TotalModules != tt.wantModules {
+				t.Errorf("Expected %d modules, got %d", tt.wantModules, result.Summary.TotalModules)
 			}
 		})
 	}
@@ -763,7 +763,7 @@ func TestDirectDepsMode_Warn(t *testing.T) {
 	}
 
 	// Simulate: dep_a@1.0.0 requested, but dep_a@2.0.0 is selected (via MVS)
-	selectedVersions := map[string]*DepRequest{
+	selectedVersions := map[string]*depRequest{
 		"dep_a": {Version: "2.0.0", RequiredBy: []string{"other_module"}},
 	}
 
@@ -802,7 +802,7 @@ func TestDirectDepsMode_NoMismatch(t *testing.T) {
 	}
 
 	// Selected version matches declared
-	selectedVersions := map[string]*DepRequest{
+	selectedVersions := map[string]*depRequest{
 		"dep_a": {Version: "1.0.0", RequiredBy: []string{"<root>"}},
 	}
 
@@ -1148,13 +1148,13 @@ func BenchmarkApplyMVS(b *testing.B) {
 	resolver := NewDependencyResolver(registry, false)
 
 	// Create a large dependency graph for benchmarking
-	depGraph := make(map[string]map[string]*DepRequest)
+	depGraph := make(map[string]map[string]*depRequest)
 	for i := 0; i < 100; i++ {
 		moduleName := fmt.Sprintf("module_%d", i)
-		depGraph[moduleName] = make(map[string]*DepRequest)
+		depGraph[moduleName] = make(map[string]*depRequest)
 		for j := 0; j < 10; j++ {
 			version := fmt.Sprintf("1.%d.0", j)
-			depGraph[moduleName][version] = &DepRequest{
+			depGraph[moduleName][version] = &depRequest{
 				Version:    version,
 				RequiredBy: []string{fmt.Sprintf("requirer_%d", j)},
 			}

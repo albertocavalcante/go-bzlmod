@@ -44,11 +44,12 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 
 	t.Run("CheckYanked=false does not populate yanked info", func(t *testing.T) {
 		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 			CheckYanked:    false,
 		}
 
-		list, err := ResolveDependenciesWithOptions(context.Background(), moduleContent, server.URL, opts)
+		list, err := Resolve(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -62,12 +63,13 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 
 	t.Run("CheckYanked=true with YankedVersionAllow", func(t *testing.T) {
 		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 			CheckYanked:    true,
 			YankedBehavior: YankedVersionAllow,
 		}
 
-		list, err := ResolveDependenciesWithOptions(context.Background(), moduleContent, server.URL, opts)
+		list, err := Resolve(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -100,12 +102,13 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 
 	t.Run("CheckYanked=true with YankedVersionWarn", func(t *testing.T) {
 		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 			CheckYanked:    true,
 			YankedBehavior: YankedVersionWarn,
 		}
 
-		list, err := ResolveDependenciesWithOptions(context.Background(), moduleContent, server.URL, opts)
+		list, err := Resolve(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -128,12 +131,13 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 
 	t.Run("CheckYanked=true with YankedVersionError", func(t *testing.T) {
 		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 			CheckYanked:    true,
 			YankedBehavior: YankedVersionError,
 		}
 
-		_, err := ResolveDependenciesWithOptions(context.Background(), moduleContent, server.URL, opts)
+		_, err := Resolve(context.Background(), moduleContent, opts)
 		if err == nil {
 			t.Fatal("expected error for yanked version, got nil")
 		}

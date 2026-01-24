@@ -17,15 +17,15 @@ const (
 	overrideTypeArchive       = "archive"
 )
 
-// SelectionResolver resolves dependencies using Bazel's complete selection algorithm.
+// selectionResolver resolves dependencies using Bazel's complete selection algorithm.
 // This provides full compatibility with Bazel's resolution including:
 //   - Compatibility level enforcement
 //   - Multiple version override support
 //   - Proper pruning of unreachable modules
 //
-// For simpler MVS-only resolution, use DependencyResolver instead.
-type SelectionResolver struct {
-	registry RegistryInterface
+// For simpler MVS-only resolution, use dependencyResolver instead.
+type selectionResolver struct {
+	registry registryInterface
 	options  ResolutionOptions
 }
 
@@ -33,7 +33,7 @@ type SelectionResolver struct {
 //
 // The registry can be nil if opts.Registries is set, otherwise it's required.
 // When opts.Registries is set, it takes precedence over the registry parameter.
-func NewSelectionResolver(registry RegistryInterface, opts ResolutionOptions) *SelectionResolver {
+func NewSelectionResolver(registry registryInterface, opts ResolutionOptions) *selectionResolver {
 	reg := registry
 
 	// Registries in options takes precedence
@@ -44,7 +44,7 @@ func NewSelectionResolver(registry RegistryInterface, opts ResolutionOptions) *S
 		reg = Registry()
 	}
 
-	return &SelectionResolver{
+	return &selectionResolver{
 		registry: reg,
 		options:  opts,
 	}
@@ -53,7 +53,7 @@ func NewSelectionResolver(registry RegistryInterface, opts ResolutionOptions) *S
 // Resolve performs dependency resolution using Bazel's selection algorithm.
 // It returns a ResolutionList with the resolved modules and optionally an
 // unpruned view for debugging.
-func (r *SelectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo) (*SelectionResult, error) {
+func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo) (*SelectionResult, error) {
 	if rootModule == nil {
 		return nil, fmt.Errorf("root module is nil")
 	}
@@ -91,7 +91,7 @@ type SelectionResult struct {
 }
 
 // buildDepGraph fetches all transitive dependencies and builds a selection.DepGraph.
-func (r *SelectionResolver) buildDepGraph(ctx context.Context, rootModule *ModuleInfo) (*selection.DepGraph, error) {
+func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *ModuleInfo) (*selection.DepGraph, error) {
 	modules := make(map[selection.ModuleKey]*selection.Module)
 	overrideIndex := indexOverrides(rootModule.Overrides)
 
@@ -290,7 +290,7 @@ func convertOverrides(overrides []Override) map[string]selection.Override {
 }
 
 // buildResult converts selection.Result to SelectionResult.
-func (r *SelectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo) (*SelectionResult, error) {
+func (r *selectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo) (*SelectionResult, error) {
 	defaultRegistry := r.registry.BaseURL()
 
 	// Build set of root's direct dev dependencies for tracking

@@ -453,7 +453,7 @@ func TestRegistry_Default(t *testing.T) {
 	}
 
 	// Should be a RegistryChain for resilience
-	chain, ok := reg.(*RegistryChain)
+	chain, ok := reg.(*registryChain)
 	if !ok {
 		t.Fatal("Expected RegistryChain for default Registry()")
 	}
@@ -495,7 +495,7 @@ func TestRegistry_MultipleURLs(t *testing.T) {
 		t.Errorf("Registry URL = %q, want %q", reg.BaseURL(), "https://private.example.com")
 	}
 	// Should be a RegistryChain
-	if _, ok := reg.(*RegistryChain); !ok {
+	if _, ok := reg.(*registryChain); !ok {
 		t.Error("Expected RegistryChain for multiple URLs")
 	}
 }

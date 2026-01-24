@@ -23,7 +23,7 @@ bazel_dep(name = "other", version = "2.0.0")
 		t.Fatal(err)
 	}
 
-	reg := NewLocalRegistry(tmpDir)
+	reg := newLocalRegistry(tmpDir)
 	ctx := context.Background()
 
 	// Test successful fetch
@@ -66,7 +66,7 @@ bazel_dep(name = "other", version = "2.0.0")
 func TestLocalRegistry_BaseURL(t *testing.T) {
 	// Use temp dir for cross-platform compatibility
 	tmpDir := t.TempDir()
-	reg := NewLocalRegistry(tmpDir)
+	reg := newLocalRegistry(tmpDir)
 
 	baseURL := reg.BaseURL()
 
@@ -211,8 +211,8 @@ func TestRegistry_FileURL(t *testing.T) {
 	}
 
 	// Verify it's a LocalRegistry
-	if _, ok := reg.(*LocalRegistry); !ok {
-		t.Errorf("Expected *LocalRegistry, got %T", reg)
+	if _, ok := reg.(*localRegistry); !ok {
+		t.Errorf("Expected *localRegistry, got %T", reg)
 	}
 
 	// Test fetching a module
@@ -241,9 +241,9 @@ func TestRegistryChain_MixedLocalAndRemote(t *testing.T) {
 
 	// Create a chain with local first, then BCR
 	fileURL := "file://" + tmpDir
-	chain, err := NewRegistryChain([]string{fileURL, DefaultRegistry})
+	chain, err := newRegistryChain([]string{fileURL, DefaultRegistry})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 
 	if len(chain.clients) != 2 {
@@ -251,13 +251,13 @@ func TestRegistryChain_MixedLocalAndRemote(t *testing.T) {
 	}
 
 	// First should be LocalRegistry
-	if _, ok := chain.clients[0].(*LocalRegistry); !ok {
-		t.Errorf("First client should be *LocalRegistry, got %T", chain.clients[0])
+	if _, ok := chain.clients[0].(*localRegistry); !ok {
+		t.Errorf("First client should be *localRegistry, got %T", chain.clients[0])
 	}
 
 	// Second should be RegistryClient
-	if _, ok := chain.clients[1].(*RegistryClient); !ok {
-		t.Errorf("Second client should be *RegistryClient, got %T", chain.clients[1])
+	if _, ok := chain.clients[1].(*registryClient); !ok {
+		t.Errorf("Second client should be *registryClient, got %T", chain.clients[1])
 	}
 
 	// Test fetching from local registry

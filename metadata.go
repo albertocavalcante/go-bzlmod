@@ -25,7 +25,7 @@ import (
 // Error handling follows Bazel's fail-open pattern: if metadata cannot be fetched for a
 // module, that module is silently skipped and resolution continues. This matches
 // YankedVersionsFunction.java behavior.
-func checkModuleMetadata(ctx context.Context, registry RegistryInterface, opts ResolutionOptions, list *ResolutionList) {
+func checkModuleMetadata(ctx context.Context, registry registryInterface, opts ResolutionOptions, list *ResolutionList) {
 	// Build allowed yanked versions set for quick lookup
 	allowedYanked := buildAllowedYankedSet(opts.AllowYankedVersions)
 

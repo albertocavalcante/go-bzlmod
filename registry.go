@@ -45,11 +45,11 @@ var DefaultRegistries = []string{
 //
 //	// Multiple private registries with BCR fallback
 //	reg := RegistryWithFallback("https://primary.example.com", "https://secondary.example.com")
-func RegistryWithFallback(privateRegistries ...string) RegistryInterface {
+func RegistryWithFallback(privateRegistries ...string) registryInterface {
 	urls := make([]string, 0, len(privateRegistries)+len(DefaultRegistries))
 	urls = append(urls, privateRegistries...)
 	urls = append(urls, DefaultRegistries...)
-	chain, err := NewRegistryChain(urls)
+	chain, err := newRegistryChain(urls)
 	if err != nil {
 		// This should never happen since DefaultRegistries are always valid
 		panic(fmt.Sprintf("failed to create registry chain with fallback: %v", err))
@@ -83,7 +83,7 @@ func (e *RegistryError) Error() string {
 	return fmt.Sprintf("registry returned status %d", e.StatusCode)
 }
 
-// RegistryClient fetches Bazel module metadata from a registry (typically BCR).
+// registryClient fetches Bazel module metadata from a registry (typically BCR).
 //
 // The client is optimized for high-throughput concurrent access with:
 //   - Connection pooling (up to 50 idle connections, 20 per host)
@@ -92,7 +92,7 @@ func (e *RegistryError) Error() string {
 //
 // The cache is unbounded and lives for the lifetime of the client. For long-running
 // processes, consider creating a new client periodically to clear the cache.
-type RegistryClient struct {
+type registryClient struct {
 	baseURL       string
 	client        *http.Client
 	cache         sync.Map // map[string]*ModuleInfo keyed by "name@version"
@@ -100,7 +100,7 @@ type RegistryClient struct {
 }
 
 // BaseURL returns the base URL of the registry (e.g., "https://bcr.bazel.build").
-func (r *RegistryClient) BaseURL() string {
+func (r *registryClient) BaseURL() string {
 	return r.baseURL
 }
 
@@ -141,16 +141,16 @@ func (r *RegistryClient) BaseURL() string {
 //
 //	// Mixed: local first, then remote fallback
 //	reg := Registry("file:///opt/local-modules", DefaultRegistry)
-func Registry(urls ...string) RegistryInterface {
+func Registry(urls ...string) registryInterface {
 	return registryWithTimeout(0, urls...)
 }
 
 // registryWithTimeout creates a registry with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
-func registryWithTimeout(timeout time.Duration, urls ...string) RegistryInterface {
+func registryWithTimeout(timeout time.Duration, urls ...string) registryInterface {
 	if len(urls) == 0 {
 		// Use BCR + GitHub mirror for resilience
-		chain, err := NewRegistryChainWithTimeout(DefaultRegistries, timeout)
+		chain, err := newRegistryChainWithTimeout(DefaultRegistries, timeout)
 		if err != nil {
 			// This should never happen with DefaultRegistries
 			panic(fmt.Sprintf("failed to create default registry chain: %v", err))
@@ -165,7 +165,7 @@ func registryWithTimeout(timeout time.Duration, urls ...string) RegistryInterfac
 		}
 		return reg
 	}
-	chain, err := NewRegistryChainWithTimeout(urls, timeout)
+	chain, err := newRegistryChainWithTimeout(urls, timeout)
 	if err != nil {
 		// Panic on invalid URLs - caller should validate URLs before calling
 		panic(fmt.Sprintf("failed to create registry chain: %v", err))
@@ -180,18 +180,18 @@ func registryWithTimeout(timeout time.Duration, urls ...string) RegistryInterfac
 //
 // The URL should be the base of a Bazel registry implementing the standard
 // layout where module files are at /modules/{name}/{version}/MODULE.bazel.
-func NewRegistryClient(baseURL string) *RegistryClient {
+func NewRegistryClient(baseURL string) *registryClient {
 	return newRegistryClient(baseURL)
 }
 
-// newRegistryClient is the internal constructor for RegistryClient.
-func newRegistryClient(baseURL string) *RegistryClient {
+// newRegistryClient is the internal constructor for registryClient.
+func newRegistryClient(baseURL string) *registryClient {
 	return newRegistryClientWithTimeout(baseURL, 0)
 }
 
-// newRegistryClientWithTimeout creates a RegistryClient with a custom timeout.
+// newRegistryClientWithTimeout creates a registryClient with a custom timeout.
 // If timeout is zero or negative, uses defaultRequestTimeout (15 seconds).
-func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *RegistryClient {
+func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *registryClient {
 	transport := &http.Transport{
 		MaxIdleConns:        defaultMaxIdleConns,
 		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
@@ -204,7 +204,7 @@ func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *Regist
 		actualTimeout = timeout
 	}
 
-	return &RegistryClient{
+	return &registryClient{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		client: &http.Client{
 			Timeout:   actualTimeout,
@@ -217,7 +217,7 @@ func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *Regist
 // Results are cached, so repeated calls for the same module@version are fast.
 //
 // Returns an error if the module doesn't exist, the network fails, or parsing fails.
-func (r *RegistryClient) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
+func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
 	cacheKey := moduleName + "@" + version
 	if cached, ok := r.cache.Load(cacheKey); ok {
 		return cached.(*ModuleInfo), nil
@@ -261,7 +261,7 @@ func (r *RegistryClient) GetModuleFile(ctx context.Context, moduleName, version 
 // GetModuleMetadata fetches the metadata.json file for a module.
 // This includes version list, yanked versions, maintainers, and deprecation info.
 // Results are cached, so repeated calls for the same module are fast.
-func (r *RegistryClient) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
+func (r *registryClient) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
 	if cached, ok := r.metadataCache.Load(moduleName); ok {
 		return cached.(*registry.Metadata), nil
 	}

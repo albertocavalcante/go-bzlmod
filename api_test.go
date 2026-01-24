@@ -69,9 +69,12 @@ func TestResolveFromFile_Success(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			list, err := ResolveDependenciesFromFile(moduleFile, server.URL, tt.includeDevDeps)
+			list, err := ResolveFile(context.Background(), moduleFile, ResolutionOptions{
+				Registries:     []string{server.URL},
+				IncludeDevDeps: tt.includeDevDeps,
+			})
 			if err != nil {
-				t.Fatalf("ResolveDependenciesFromFile() error = %v", err)
+				t.Fatalf("ResolveFile() error = %v", err)
 			}
 
 			if len(list.Modules) != tt.expectedModules {
@@ -113,7 +116,10 @@ func TestResolveFromFile_Success(t *testing.T) {
 func TestResolveFromFile_FileNotFound(t *testing.T) {
 	nonexistentFile := "/path/that/does/not/exist/MODULE.bazel"
 
-	list, err := ResolveDependenciesFromFile(nonexistentFile, "https://bcr.bazel.build", false)
+	list, err := ResolveFile(context.Background(), nonexistentFile, ResolutionOptions{
+		Registries:     []string{"https://bcr.bazel.build"},
+		IncludeDevDeps: false,
+	})
 
 	if err == nil {
 		t.Error("Expected error for nonexistent file")
@@ -139,7 +145,10 @@ func TestResolveFromFile_InvalidModuleFile(t *testing.T) {
 		t.Fatalf("Failed to write invalid MODULE.bazel: %v", err)
 	}
 
-	list, err := ResolveDependenciesFromFile(moduleFile, "https://bcr.bazel.build", false)
+	list, err := ResolveFile(context.Background(), moduleFile, ResolutionOptions{
+		Registries:     []string{"https://bcr.bazel.build"},
+		IncludeDevDeps: false,
+	})
 
 	if err == nil {
 		t.Error("Expected error for invalid MODULE.bazel file")
@@ -166,12 +175,15 @@ func TestResolveFromContent_Success(t *testing.T) {
 		name = "test_project",
 		version = "1.0.0",
 	)
-	
+
 	bazel_dep(name = "rules_go", version = "0.41.0")`
 
-	list, err := ResolveDependenciesFromContent(content, server.URL, false)
+	list, err := Resolve(context.Background(), content, ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: false,
+	})
 	if err != nil {
-		t.Fatalf("ResolveDependenciesFromContent() error = %v", err)
+		t.Fatalf("Resolve() error = %v", err)
 	}
 
 	if len(list.Modules) != 1 {
@@ -189,7 +201,10 @@ func TestResolveFromContent_Success(t *testing.T) {
 func TestResolveFromContent_ParseError(t *testing.T) {
 	content := `invalid syntax here (`
 
-	list, err := ResolveDependenciesFromContent(content, "https://bcr.bazel.build", false)
+	list, err := Resolve(context.Background(), content, ResolutionOptions{
+		Registries:     []string{"https://bcr.bazel.build"},
+		IncludeDevDeps: false,
+	})
 
 	if err == nil {
 		t.Error("Expected error for invalid content")
@@ -205,7 +220,10 @@ func TestResolveFromContent_NetworkError(t *testing.T) {
 	bazel_dep(name = "nonexistent", version = "1.0.0")`
 
 	// Use invalid registry URL
-	list, err := ResolveDependenciesFromContent(content, "http://invalid-registry.com", false)
+	list, err := Resolve(context.Background(), content, ResolutionOptions{
+		Registries:     []string{"http://invalid-registry.com"},
+		IncludeDevDeps: false,
+	})
 
 	if err == nil {
 		t.Error("Expected error for network failures")
@@ -238,9 +256,12 @@ func TestResolveFromContent_WithOverrides(t *testing.T) {
 		registry = "` + server.URL + `",
 	)`
 
-	list, err := ResolveDependenciesFromContent(content, server.URL, false)
+	list, err := Resolve(context.Background(), content, ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: false,
+	})
 	if err != nil {
-		t.Fatalf("ResolveDependenciesFromContent() error = %v", err)
+		t.Fatalf("Resolve() error = %v", err)
 	}
 
 	if len(list.Modules) != 1 {
@@ -281,9 +302,23 @@ func TestResolveFromContent_WithOverrideModules(t *testing.T) {
 		bazel_dep(name = "dep", version = "1.0.0")`,
 	}
 
-	list, err := ResolveDependenciesFromContentWithOverrides(content, server.URL, false, overrideModules)
+	// For override modules, we need to use the resolver directly
+	moduleInfo, err := ParseModuleContent(content)
 	if err != nil {
-		t.Fatalf("ResolveDependenciesFromContentWithOverrides() error = %v", err)
+		t.Fatalf("ParseModuleContent() error = %v", err)
+	}
+
+	reg := Registry(server.URL)
+	resolver := NewDependencyResolver(reg, false)
+	for moduleName, moduleContent := range overrideModules {
+		if err := resolver.AddOverrideModuleContent(moduleName, moduleContent); err != nil {
+			t.Fatalf("AddOverrideModuleContent() error = %v", err)
+		}
+	}
+
+	list, err := resolver.ResolveDependencies(context.Background(), moduleInfo)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
 	}
 
 	if len(list.Modules) != 2 {
@@ -328,9 +363,12 @@ func TestResolveFromContent_MVSSelection(t *testing.T) {
 	bazel_dep(name = "dep_a", version = "1.0.0")
 	bazel_dep(name = "dep_b", version = "1.0.0")`
 
-	list, err := ResolveDependenciesFromContent(content, server.URL, false)
+	list, err := Resolve(context.Background(), content, ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: false,
+	})
 	if err != nil {
-		t.Fatalf("ResolveDependenciesFromContent() error = %v", err)
+		t.Fatalf("Resolve() error = %v", err)
 	}
 
 	// Should have 3 modules: dep_a, dep_b, shared_dep
@@ -359,10 +397,13 @@ func TestResolveFromContent_MVSSelection(t *testing.T) {
 func TestResolveFromContent_EmptyModule(t *testing.T) {
 	content := `module(name = "empty_project", version = "1.0.0")`
 
-	list, err := ResolveDependenciesFromContent(content, "https://bcr.bazel.build", false)
+	list, err := Resolve(context.Background(), content, ResolutionOptions{
+		Registries:     []string{"https://bcr.bazel.build"},
+		IncludeDevDeps: false,
+	})
 
 	if err != nil {
-		t.Fatalf("ResolveDependenciesFromContent() error = %v", err)
+		t.Fatalf("Resolve() error = %v", err)
 	}
 
 	if len(list.Modules) != 0 {
@@ -386,9 +427,12 @@ func BenchmarkResolveFromContent_Simple(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := ResolveDependenciesFromContent(content, server.URL, false)
+		_, err := Resolve(context.Background(), content, ResolutionOptions{
+			Registries:     []string{server.URL},
+			IncludeDevDeps: false,
+		})
 		if err != nil {
-			b.Fatalf("ResolveDependenciesFromContent() error = %v", err)
+			b.Fatalf("Resolve() error = %v", err)
 		}
 	}
 }
@@ -417,9 +461,12 @@ func BenchmarkResolveFromContent_Complex(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := ResolveDependenciesFromContent(content, server.URL, false)
+		_, err := Resolve(context.Background(), content, ResolutionOptions{
+			Registries:     []string{server.URL},
+			IncludeDevDeps: false,
+		})
 		if err != nil {
-			b.Fatalf("ResolveDependenciesFromContent() error = %v", err)
+			b.Fatalf("Resolve() error = %v", err)
 		}
 	}
 }
@@ -961,9 +1008,9 @@ func TestRegistryFromOptions_EmptyRegistries(t *testing.T) {
 	}
 
 	// Should be a registry chain with default registries
-	chain, ok := reg.(*RegistryChain)
+	chain, ok := reg.(*registryChain)
 	if !ok {
-		t.Fatalf("Expected *RegistryChain, got %T", reg)
+		t.Fatalf("Expected *registryChain, got %T", reg)
 	}
 
 	if len(chain.clients) != len(DefaultRegistries) {
@@ -985,9 +1032,9 @@ func TestRegistryFromOptions_SingleRegistry(t *testing.T) {
 	}
 
 	// Single registry should return a direct client, not a chain
-	client, ok := reg.(*RegistryClient)
+	client, ok := reg.(*registryClient)
 	if !ok {
-		t.Fatalf("Expected *RegistryClient for single URL, got %T", reg)
+		t.Fatalf("Expected *registryClient for single URL, got %T", reg)
 	}
 
 	if client.BaseURL() != "https://example.com" {
@@ -1006,9 +1053,9 @@ func TestRegistryFromOptions_MultipleRegistries(t *testing.T) {
 
 	reg := registryFromOptions(opts)
 
-	chain, ok := reg.(*RegistryChain)
+	chain, ok := reg.(*registryChain)
 	if !ok {
-		t.Fatalf("Expected *RegistryChain for multiple URLs, got %T", reg)
+		t.Fatalf("Expected *registryChain for multiple URLs, got %T", reg)
 	}
 
 	if len(chain.clients) != 2 {
@@ -1031,9 +1078,9 @@ func TestRegistryFromOptions_FileURL(t *testing.T) {
 		t.Fatal("Expected non-nil registry for file:// URL")
 	}
 
-	local, ok := reg.(*LocalRegistry)
+	local, ok := reg.(*localRegistry)
 	if !ok {
-		t.Fatalf("Expected *LocalRegistry for file:// URL, got %T", reg)
+		t.Fatalf("Expected *localRegistry for file:// URL, got %T", reg)
 	}
 
 	if local == nil {
@@ -1055,9 +1102,9 @@ func TestRegistryFromOptions_MixedURLs(t *testing.T) {
 
 	reg := registryFromOptions(opts)
 
-	chain, ok := reg.(*RegistryChain)
+	chain, ok := reg.(*registryChain)
 	if !ok {
-		t.Fatalf("Expected *RegistryChain for mixed URLs, got %T", reg)
+		t.Fatalf("Expected *registryChain for mixed URLs, got %T", reg)
 	}
 
 	if len(chain.clients) != 2 {
@@ -1065,13 +1112,13 @@ func TestRegistryFromOptions_MixedURLs(t *testing.T) {
 	}
 
 	// First should be LocalRegistry
-	if _, ok := chain.clients[0].(*LocalRegistry); !ok {
-		t.Errorf("First client should be *LocalRegistry, got %T", chain.clients[0])
+	if _, ok := chain.clients[0].(*localRegistry); !ok {
+		t.Errorf("First client should be *localRegistry, got %T", chain.clients[0])
 	}
 
 	// Second should be RegistryClient
-	if _, ok := chain.clients[1].(*RegistryClient); !ok {
-		t.Errorf("Second client should be *RegistryClient, got %T", chain.clients[1])
+	if _, ok := chain.clients[1].(*registryClient); !ok {
+		t.Errorf("Second client should be *registryClient, got %T", chain.clients[1])
 	}
 }
 

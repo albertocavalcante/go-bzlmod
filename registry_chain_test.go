@@ -107,24 +107,24 @@ func TestNewRegistryChain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			chain, err := NewRegistryChain(tt.registryURLs)
+			chain, err := newRegistryChain(tt.registryURLs)
 
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("NewRegistryChain() error = nil, want error")
+					t.Errorf("newRegistryChain() error = nil, want error")
 				}
 				if chain != nil {
-					t.Errorf("NewRegistryChain() returned non-nil chain with error")
+					t.Errorf("newRegistryChain() returned non-nil chain with error")
 				}
 				return
 			}
 
 			if err != nil {
-				t.Fatalf("NewRegistryChain() unexpected error: %v", err)
+				t.Fatalf("newRegistryChain() unexpected error: %v", err)
 			}
 
 			if chain == nil {
-				t.Fatal("NewRegistryChain() = nil, want non-nil")
+				t.Fatal("newRegistryChain() = nil, want non-nil")
 			}
 
 			if len(chain.clients) != tt.wantClients {
@@ -140,9 +140,9 @@ func TestRegistryChain_GetModuleFile_FirstRegistryMatch(t *testing.T) {
 	defer reg2.Close()
 	defer reg3.Close()
 
-	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 	ctx := context.Background()
 
@@ -207,9 +207,9 @@ func TestRegistryChain_ModuleStickiness(t *testing.T) {
 	defer reg1.Close()
 	defer reg2.Close()
 
-	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 	ctx := context.Background()
 
@@ -242,9 +242,9 @@ func TestRegistryChain_NotFound(t *testing.T) {
 	defer reg2.Close()
 	defer reg3.Close()
 
-	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL, reg3.URL})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 	ctx := context.Background()
 
@@ -266,9 +266,9 @@ func TestRegistryChain_GetModuleMetadata(t *testing.T) {
 	defer reg1.Close()
 	defer reg2.Close()
 
-	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 	ctx := context.Background()
 
@@ -290,9 +290,9 @@ func TestRegistryChain_GetModuleMetadata(t *testing.T) {
 }
 
 func TestRegistryChain_BaseURL(t *testing.T) {
-	chain, err := NewRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
+	chain, err := newRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 
 	// BaseURL should return the first registry
@@ -302,9 +302,9 @@ func TestRegistryChain_BaseURL(t *testing.T) {
 }
 
 func TestRegistryChain_GetRegistryForModule_NotFound(t *testing.T) {
-	chain, err := NewRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
+	chain, err := newRegistryChain([]string{"https://reg1.example.com", "https://reg2.example.com"})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 
 	// Should return empty string for modules not yet looked up
@@ -314,9 +314,9 @@ func TestRegistryChain_GetRegistryForModule_NotFound(t *testing.T) {
 }
 
 func TestRegistryInterface_Implementation(t *testing.T) {
-	// Verify that both RegistryClient and RegistryChain implement RegistryInterface
-	var _ RegistryInterface = (*RegistryClient)(nil)
-	var _ RegistryInterface = (*RegistryChain)(nil)
+	// Verify that both registryClient and registryChain implement registryInterface
+	var _ registryInterface = (*registryClient)(nil)
+	var _ registryInterface = (*registryChain)(nil)
 }
 
 func TestRegistryChain_ConcurrentAccess(t *testing.T) {
@@ -325,9 +325,9 @@ func TestRegistryChain_ConcurrentAccess(t *testing.T) {
 	defer reg1.Close()
 	defer reg2.Close()
 
-	chain, err := NewRegistryChain([]string{reg1.URL, reg2.URL})
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 	ctx := context.Background()
 
@@ -377,9 +377,9 @@ func TestRegistryChain_FallbackOnError(t *testing.T) {
 	}))
 	defer successRegistry.Close()
 
-	chain, err := NewRegistryChain([]string{errorRegistry.URL, successRegistry.URL})
+	chain, err := newRegistryChain([]string{errorRegistry.URL, successRegistry.URL})
 	if err != nil {
-		t.Fatalf("NewRegistryChain() error = %v", err)
+		t.Fatalf("newRegistryChain() error = %v", err)
 	}
 	ctx := context.Background()
 

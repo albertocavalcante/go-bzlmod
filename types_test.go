@@ -211,7 +211,7 @@ func TestResolutionList_JSONSerialization(t *testing.T) {
 }
 
 func TestDepRequest_Creation(t *testing.T) {
-	req := &DepRequest{
+	req := &depRequest{
 		Version:       "1.0.0",
 		DevDependency: true,
 		RequiredBy:    []string{"module1", "module2"},

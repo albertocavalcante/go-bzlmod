@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+// resolveWithSelection is a test helper that mimics the old resolveWithSelection API.
+func resolveWithSelection(ctx context.Context, moduleContent string, opts ResolutionOptions) (*SelectionResult, error) {
+	moduleInfo, err := ParseModuleContent(moduleContent)
+	if err != nil {
+		return nil, fmt.Errorf("parse module content: %w", err)
+	}
+	reg := registryFromOptions(opts)
+	resolver := NewSelectionResolver(reg, opts)
+	return resolver.Resolve(ctx, moduleInfo)
+}
+
 func TestResolveWithSelection_Basic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -36,12 +47,13 @@ bazel_dep(name = "rules_go", version = "0.41.0")
 bazel_dep(name = "gazelle", version = "0.32.0")`
 
 	opts := ResolutionOptions{
+		Registries:     []string{server.URL},
 		IncludeDevDeps: false,
 	}
 
-	result, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+	result, err := resolveWithSelection(context.Background(), moduleContent, opts)
 	if err != nil {
-		t.Fatalf("ResolveWithSelection() error = %v", err)
+		t.Fatalf("resolveWithSelection() error = %v", err)
 	}
 
 	// Should have resolved modules
@@ -96,8 +108,11 @@ bazel_dep(name = "rules_go", version = "0.41.0")
 bazel_dep(name = "rules_testing", version = "0.1.0", dev_dependency = True)`
 
 	t.Run("without dev deps", func(t *testing.T) {
-		opts := ResolutionOptions{IncludeDevDeps: false}
-		result, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
+			IncludeDevDeps: false,
+		}
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -110,8 +125,11 @@ bazel_dep(name = "rules_testing", version = "0.1.0", dev_dependency = True)`
 	})
 
 	t.Run("with dev deps", func(t *testing.T) {
-		opts := ResolutionOptions{IncludeDevDeps: true}
-		result, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
+			IncludeDevDeps: true,
+		}
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -149,8 +167,11 @@ bazel_dep(name = "bazel_skylib", version = "1.4.0")`)
 bazel_dep(name = "rules_go", version = "0.41.0")
 single_version_override(module_name = "bazel_skylib", version = "1.5.0")`
 
-		opts := ResolutionOptions{IncludeDevDeps: false}
-		result, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
+			IncludeDevDeps: false,
+		}
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -171,8 +192,11 @@ single_version_override(module_name = "bazel_skylib", version = "1.5.0")`
 bazel_dep(name = "rules_go", version = "0.41.0")
 git_override(module_name = "bazel_skylib", remote = "https://github.com/bazelbuild/bazel-skylib.git", commit = "abc123")`
 
-		opts := ResolutionOptions{IncludeDevDeps: false}
-		result, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
+			IncludeDevDeps: false,
+		}
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -208,12 +232,13 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 
 	t.Run("error on yanked version", func(t *testing.T) {
 		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 			CheckYanked:    true,
 			YankedBehavior: YankedVersionError,
 		}
 
-		_, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+		_, err := resolveWithSelection(context.Background(), moduleContent, opts)
 		if err == nil {
 			t.Fatal("expected error for yanked version")
 		}
@@ -226,12 +251,13 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 
 	t.Run("warn on yanked version", func(t *testing.T) {
 		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 			CheckYanked:    true,
 			YankedBehavior: YankedVersionWarn,
 		}
 
-		result, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -266,8 +292,11 @@ bazel_dep(name = "b", version = "1.0.0")`)
 	moduleContent := `module(name = "test", version = "1.0.0")
 bazel_dep(name = "a", version = "2.0.0")`
 
-	opts := ResolutionOptions{IncludeDevDeps: false}
-	result, err := ResolveWithSelection(context.Background(), moduleContent, server.URL, opts)
+	opts := ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: false,
+	}
+	result, err := resolveWithSelection(context.Background(), moduleContent, opts)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
