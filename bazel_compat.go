@@ -59,26 +59,31 @@ func (c *bazelCompatConstraint) check(bazelVersion string) bool {
 }
 
 // checkBazelCompatibility checks if a Bazel version satisfies all bazel_compatibility constraints.
-// Returns (compatible, reason) where reason explains why it's incompatible.
+// Returns (compatible, reason, invalidConstraints) where:
+//   - compatible: true if all valid constraints are satisfied
+//   - reason: explanation of why it's incompatible (empty if compatible)
+//   - invalidConstraints: list of constraints that couldn't be parsed (for warning purposes)
 //
 // Reference: BazelModuleResolutionFunction.java lines 298-333
-func checkBazelCompatibility(bazelVersion string, constraints []string) (bool, string) {
+func checkBazelCompatibility(bazelVersion string, constraints []string) (bool, string, []string) {
 	if len(constraints) == 0 {
-		return true, ""
+		return true, "", nil
 	}
 
 	if bazelVersion == "" {
-		return true, "" // No Bazel version specified, skip validation
+		return true, "", nil // No Bazel version specified, skip validation
 	}
 
 	// Normalize the Bazel version (strip any prerelease/build metadata for comparison)
 	normalizedBazel := normalizeBazelVersion(bazelVersion)
 
 	var failedConstraints []string
+	var invalidConstraints []string
 	for _, constraintStr := range constraints {
 		constraint, err := parseBazelCompatConstraint(constraintStr)
 		if err != nil {
-			// Invalid constraint format, skip it
+			// Track invalid constraints for warning purposes
+			invalidConstraints = append(invalidConstraints, constraintStr)
 			continue
 		}
 
@@ -88,14 +93,14 @@ func checkBazelCompatibility(bazelVersion string, constraints []string) (bool, s
 	}
 
 	if len(failedConstraints) == 0 {
-		return true, ""
+		return true, "", invalidConstraints
 	}
 
 	// Build explanation
 	if len(failedConstraints) == 1 {
-		return false, fmt.Sprintf("requires %s", failedConstraints[0])
+		return false, fmt.Sprintf("requires %s", failedConstraints[0]), invalidConstraints
 	}
-	return false, fmt.Sprintf("requires %s", strings.Join(failedConstraints, " and "))
+	return false, fmt.Sprintf("requires %s", strings.Join(failedConstraints, " and ")), invalidConstraints
 }
 
 // normalizeBazelVersion strips prerelease and build metadata from a Bazel version.
@@ -131,7 +136,8 @@ func checkModuleBazelCompatibility(modules []ModuleToResolve, moduleInfoCache ma
 		key := m.Name + "@" + m.Version
 		if info, ok := moduleInfoCache[key]; ok && len(info.BazelCompatibility) > 0 {
 			m.BazelCompatibility = info.BazelCompatibility
-			compatible, reason := checkBazelCompatibility(bazelVersion, info.BazelCompatibility)
+			compatible, reason, _ := checkBazelCompatibility(bazelVersion, info.BazelCompatibility)
+			// Note: invalidConstraints are ignored here as they were already validated during parsing
 			if !compatible {
 				m.IsBazelIncompatible = true
 				m.BazelIncompatibilityReason = reason

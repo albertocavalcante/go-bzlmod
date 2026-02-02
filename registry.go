@@ -378,12 +378,18 @@ func registryWithOptions(httpClient *http.Client, cache ModuleCache, timeout tim
 // If timeout is positive, it overrides the httpClient's timeout.
 // If logger is nil, logging is disabled.
 func registryWithAllOptions(httpClient *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, urls ...string) Registry {
+	log := logger
+	if log == nil {
+		log = slog.New(discardHandler{})
+	}
+
 	if len(urls) == 0 {
 		// Use BCR + GitHub mirror for resilience
 		chain, err := newRegistryChainWithAllOptions(DefaultRegistries, httpClient, cache, timeout, logger)
 		if err != nil {
-			// This should never happen with DefaultRegistries
-			panic(fmt.Sprintf("failed to create default registry chain: %v", err))
+			// This should never happen with DefaultRegistries, but fall back to BCR only
+			log.Warn("failed to create default registry chain, falling back to BCR only", "error", err)
+			return newRegistryClientWithAllOptions(DefaultRegistry, httpClient, cache, timeout, logger)
 		}
 		return chain
 	}
@@ -397,8 +403,9 @@ func registryWithAllOptions(httpClient *http.Client, cache ModuleCache, timeout 
 	}
 	chain, err := newRegistryChainWithAllOptions(urls, httpClient, cache, timeout, logger)
 	if err != nil {
-		// Panic on invalid URLs - caller should validate URLs before calling
-		panic(fmt.Sprintf("failed to create registry chain: %v", err))
+		// Fall back to treating URLs as remote registries without chain validation
+		log.Warn("failed to create registry chain, using first URL only", "error", err, "urls", urls)
+		return newRegistryClientWithAllOptions(urls[0], httpClient, cache, timeout, logger)
 	}
 	return chain
 }

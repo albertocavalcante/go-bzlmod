@@ -123,11 +123,12 @@ func TestBazelCompatConstraintCheck(t *testing.T) {
 
 func TestCheckBazelCompatibility(t *testing.T) {
 	tests := []struct {
-		name         string
-		bazelVersion string
-		constraints  []string
-		wantCompat   bool
-		wantReason   string
+		name            string
+		bazelVersion    string
+		constraints     []string
+		wantCompat      bool
+		wantReason      string
+		wantInvalidCnt  int
 	}{
 		{
 			name:         "empty constraints",
@@ -200,11 +201,26 @@ func TestCheckBazelCompatibility(t *testing.T) {
 			constraints:  []string{">=7.0.0"},
 			wantCompat:   true,
 		},
+		{
+			name:            "invalid constraint is reported",
+			bazelVersion:    "7.0.0",
+			constraints:     []string{">=7.0.0", "invalid", "also-invalid"},
+			wantCompat:      true,
+			wantInvalidCnt:  2,
+		},
+		{
+			name:            "mix of valid and invalid constraints",
+			bazelVersion:    "6.0.0",
+			constraints:     []string{">=7.0.0", "bad-format"},
+			wantCompat:      false,
+			wantReason:      "requires >=7.0.0",
+			wantInvalidCnt:  1,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotCompat, gotReason := checkBazelCompatibility(tt.bazelVersion, tt.constraints)
+			gotCompat, gotReason, gotInvalid := checkBazelCompatibility(tt.bazelVersion, tt.constraints)
 			if gotCompat != tt.wantCompat {
 				t.Errorf("checkBazelCompatibility(%q, %v) compatible = %v, want %v",
 					tt.bazelVersion, tt.constraints, gotCompat, tt.wantCompat)
@@ -212,6 +228,10 @@ func TestCheckBazelCompatibility(t *testing.T) {
 			if gotReason != tt.wantReason {
 				t.Errorf("checkBazelCompatibility(%q, %v) reason = %q, want %q",
 					tt.bazelVersion, tt.constraints, gotReason, tt.wantReason)
+			}
+			if len(gotInvalid) != tt.wantInvalidCnt {
+				t.Errorf("checkBazelCompatibility(%q, %v) invalidConstraints count = %d, want %d (got: %v)",
+					tt.bazelVersion, tt.constraints, len(gotInvalid), tt.wantInvalidCnt, gotInvalid)
 			}
 		})
 	}

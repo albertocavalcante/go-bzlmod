@@ -60,7 +60,8 @@ func buildModuleFileURL(registryURL, moduleName, version string) string {
 	if registryURL == "" {
 		registryURL = "https://bcr.bazel.build"
 	}
-	if registryURL[len(registryURL)-1] == '/' {
+	// Strip trailing slash if present (and URL is non-empty after default assignment)
+	if len(registryURL) > 0 && registryURL[len(registryURL)-1] == '/' {
 		registryURL = registryURL[:len(registryURL)-1]
 	}
 
