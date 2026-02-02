@@ -3,8 +3,8 @@
 package ast
 
 import (
-	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 	"github.com/albertocavalcante/go-bzlmod/label"
+	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 )
 
 // Position represents a source position for diagnostics.

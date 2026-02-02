@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/albertocavalcante/go-bzlmod/internal/buildutil"
-	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 	"github.com/albertocavalcante/go-bzlmod/label"
+	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 )
 
 // ParseError represents a parsing error with position information.
