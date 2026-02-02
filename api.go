@@ -56,6 +56,7 @@ package gobzlmod
 import (
 	"context"
 	"fmt"
+	"sort"
 )
 
 // Resolve resolves dependencies from MODULE.bazel content.
@@ -85,6 +86,85 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 	reg := registryFromOptions(opts)
 	resolver := newDependencyResolverWithOptions(reg, opts)
 	return resolver.ResolveDependencies(ctx, moduleInfo)
+}
+
+// ResolveModule resolves a module from the registry and returns its complete dependency graph.
+//
+// Unlike Resolve/ResolveFile which resolve dependencies OF a root module (excluding the root),
+// ResolveModule resolves a specific module BY its coordinate and includes it in the result.
+//
+// The target module appears first with Depth=0. Its direct dependencies have Depth=1, etc.
+//
+// This is useful for:
+//   - Exploring what a module will bring into your project
+//   - Pre-fetching all modules needed before adding a dependency
+//   - Analyzing the complete dependency tree of any BCR module
+//
+// Example:
+//
+//	result, err := gobzlmod.ResolveModule(ctx, "rules_go", "0.50.0", opts)
+//	// result.Modules[0] is rules_go@0.50.0 (Depth=0)
+//	// result.Modules[1:] are its transitive dependencies (Depth>=1)
+func ResolveModule(ctx context.Context, name, version string, opts ResolutionOptions) (*ResolutionList, error) {
+	reg := registryFromOptions(opts)
+
+	// Fetch the module's MODULE.bazel from registry
+	moduleInfo, err := reg.GetModuleFile(ctx, name, version)
+	if err != nil {
+		return nil, fmt.Errorf("fetch module %s@%s: %w", name, version, err)
+	}
+
+	// Ensure the module info has the correct name/version
+	// (Some MODULE.bazel files may not have module() directive)
+	if moduleInfo.Name == "" {
+		moduleInfo.Name = name
+	}
+	if moduleInfo.Version == "" {
+		moduleInfo.Version = version
+	}
+
+	// Resolve dependencies (treats moduleInfo as root)
+	resolver := newDependencyResolverWithOptions(reg, opts)
+	result, err := resolver.ResolveDependencies(ctx, moduleInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine the registry URL for the target module
+	registryURL := reg.BaseURL()
+	if chain, ok := reg.(*registryChain); ok {
+		if moduleReg := chain.GetRegistryForModule(name); moduleReg != "" {
+			registryURL = moduleReg
+		}
+	}
+
+	// Build the target module's direct dependencies list (modules with Depth=1)
+	var directDeps []string
+	for _, m := range result.Modules {
+		if m.Depth == 1 {
+			directDeps = append(directDeps, m.Name)
+		}
+	}
+	sort.Strings(directDeps)
+
+	// Create the target module entry
+	targetModule := ModuleToResolve{
+		Name:         name,
+		Version:      version,
+		Registry:     registryURL,
+		Depth:        0,
+		Dependencies: directDeps,
+		RequiredBy:   nil, // Root module isn't required by anything
+	}
+
+	// Prepend target module to the list
+	result.Modules = append([]ModuleToResolve{targetModule}, result.Modules...)
+
+	// Update summary
+	result.Summary.TotalModules++
+	result.Summary.ProductionModules++
+
+	return result, nil
 }
 
 // registryFromOptions creates a registry from ResolutionOptions.

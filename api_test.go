@@ -1341,3 +1341,356 @@ bazel_dep(name = "dep", version = "1.0.0")`
 	// This tests module stickiness behavior
 	_ = result
 }
+
+// =============================================================================
+// Tests for ResolveModule API
+// =============================================================================
+
+// TestResolveModule_Basic tests basic ResolveModule functionality
+func TestResolveModule_Basic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/rules_go/0.50.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_go", version = "0.50.0")
+bazel_dep(name = "bazel_skylib", version = "1.4.1")
+bazel_dep(name = "platforms", version = "0.0.8")`)
+		case "/modules/bazel_skylib/1.4.1/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bazel_skylib", version = "1.4.1")`)
+		case "/modules/platforms/0.0.8/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "platforms", version = "0.0.8")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "rules_go", "0.50.0", ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("ResolveModule() error = %v", err)
+	}
+
+	// Should have 3 modules: rules_go (target) + bazel_skylib + platforms
+	if len(result.Modules) != 3 {
+		t.Errorf("Expected 3 modules, got %d", len(result.Modules))
+	}
+
+	// First module should be the target with Depth=0
+	if result.Modules[0].Name != "rules_go" {
+		t.Errorf("Expected first module to be rules_go, got %s", result.Modules[0].Name)
+	}
+	if result.Modules[0].Version != "0.50.0" {
+		t.Errorf("Expected version 0.50.0, got %s", result.Modules[0].Version)
+	}
+	if result.Modules[0].Depth != 0 {
+		t.Errorf("Expected target module to have Depth=0, got %d", result.Modules[0].Depth)
+	}
+
+	// Target module should list its direct dependencies
+	deps := result.Modules[0].Dependencies
+	if len(deps) != 2 {
+		t.Errorf("Expected 2 direct dependencies, got %d", len(deps))
+	}
+	// Dependencies should be sorted
+	if len(deps) == 2 && (deps[0] != "bazel_skylib" || deps[1] != "platforms") {
+		t.Errorf("Expected sorted deps [bazel_skylib, platforms], got %v", deps)
+	}
+
+	// Other modules should have Depth=1 (direct deps of target)
+	for i := 1; i < len(result.Modules); i++ {
+		if result.Modules[i].Depth != 1 {
+			t.Errorf("Expected module %s to have Depth=1, got %d",
+				result.Modules[i].Name, result.Modules[i].Depth)
+		}
+	}
+
+	// Summary should include the target module
+	if result.Summary.TotalModules != 3 {
+		t.Errorf("Expected TotalModules=3, got %d", result.Summary.TotalModules)
+	}
+}
+
+// TestResolveModule_TargetIncludedFirst tests that target is always first
+func TestResolveModule_TargetIncludedFirst(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/my_module/1.0.0/MODULE.bazel":
+			// Module with many deps that sort before "my_module"
+			fmt.Fprint(w, `module(name = "my_module", version = "1.0.0")
+bazel_dep(name = "aaa_first", version = "1.0.0")
+bazel_dep(name = "zzz_last", version = "1.0.0")`)
+		case "/modules/aaa_first/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "aaa_first", version = "1.0.0")`)
+		case "/modules/zzz_last/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "zzz_last", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "my_module", "1.0.0", ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("ResolveModule() error = %v", err)
+	}
+
+	// Target should be first, regardless of alphabetical order
+	if result.Modules[0].Name != "my_module" {
+		t.Errorf("Expected target 'my_module' to be first, got %s", result.Modules[0].Name)
+	}
+}
+
+// TestResolveModule_TransitiveDeps tests correct depth calculation
+func TestResolveModule_TransitiveDeps(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/top/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "top", version = "1.0.0")
+bazel_dep(name = "middle", version = "1.0.0")`)
+		case "/modules/middle/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "middle", version = "1.0.0")
+bazel_dep(name = "bottom", version = "1.0.0")`)
+		case "/modules/bottom/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bottom", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "top", "1.0.0", ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("ResolveModule() error = %v", err)
+	}
+
+	// Verify depths: top=0, middle=1, bottom=2
+	depths := make(map[string]int)
+	for _, m := range result.Modules {
+		depths[m.Name] = m.Depth
+	}
+
+	if depths["top"] != 0 {
+		t.Errorf("Expected top Depth=0, got %d", depths["top"])
+	}
+	if depths["middle"] != 1 {
+		t.Errorf("Expected middle Depth=1, got %d", depths["middle"])
+	}
+	if depths["bottom"] != 2 {
+		t.Errorf("Expected bottom Depth=2, got %d", depths["bottom"])
+	}
+}
+
+// TestResolveModule_NoDependencies tests module with no dependencies
+func TestResolveModule_NoDependencies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/standalone/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(name = "standalone", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "standalone", "1.0.0", ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("ResolveModule() error = %v", err)
+	}
+
+	// Should have just the target module
+	if len(result.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(result.Modules))
+	}
+
+	if result.Modules[0].Name != "standalone" {
+		t.Errorf("Expected standalone, got %s", result.Modules[0].Name)
+	}
+	if result.Modules[0].Depth != 0 {
+		t.Errorf("Expected Depth=0, got %d", result.Modules[0].Depth)
+	}
+	if len(result.Modules[0].Dependencies) != 0 {
+		t.Errorf("Expected no dependencies, got %v", result.Modules[0].Dependencies)
+	}
+
+	if result.Summary.TotalModules != 1 {
+		t.Errorf("Expected TotalModules=1, got %d", result.Summary.TotalModules)
+	}
+}
+
+// TestResolveModule_ModuleNotFound tests error handling for non-existent module
+func TestResolveModule_ModuleNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := ResolveModule(ctx, "nonexistent", "1.0.0", ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err == nil {
+		t.Error("Expected error for non-existent module")
+	}
+
+	// Error should mention the module name and version
+	if !strings.Contains(err.Error(), "nonexistent") || !strings.Contains(err.Error(), "1.0.0") {
+		t.Errorf("Error should mention module name and version, got: %v", err)
+	}
+}
+
+// TestResolveModule_MultipleRegistries tests module resolution with registry chain
+func TestResolveModule_MultipleRegistries(t *testing.T) {
+	// Server 1 has the target module
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/target/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(name = "target", version = "1.0.0")
+bazel_dep(name = "dep_from_s2", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server1.Close()
+
+	// Server 2 has the dependency
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/dep_from_s2/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(name = "dep_from_s2", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server2.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "target", "1.0.0", ResolutionOptions{
+		Registries: []string{server1.URL, server2.URL},
+	})
+
+	if err != nil {
+		t.Fatalf("ResolveModule() error = %v", err)
+	}
+
+	// Should have 2 modules
+	if len(result.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(result.Modules))
+	}
+
+	// Target should come from server1
+	if result.Modules[0].Registry != server1.URL {
+		t.Errorf("Expected target registry %s, got %s", server1.URL, result.Modules[0].Registry)
+	}
+
+	// Dependency should come from server2
+	for _, m := range result.Modules {
+		if m.Name == "dep_from_s2" && m.Registry != server2.URL {
+			t.Errorf("Expected dep_from_s2 registry %s, got %s", server2.URL, m.Registry)
+		}
+	}
+}
+
+// TestResolveModule_ContextCancellation tests context cancellation
+func TestResolveModule_ContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		fmt.Fprint(w, `module(name = "slow", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := ResolveModule(ctx, "slow", "1.0.0", ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	if err == nil {
+		t.Error("Expected error when context is cancelled")
+	}
+}
+
+// TestResolveModule_IncludesDevDeps tests that dev deps are handled correctly
+func TestResolveModule_IncludesDevDeps(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/lib/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib", version = "1.0.0")
+bazel_dep(name = "prod_dep", version = "1.0.0")
+bazel_dep(name = "test_dep", version = "1.0.0", dev_dependency = True)`)
+		case "/modules/prod_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_dep", version = "1.0.0")`)
+		case "/modules/test_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "test_dep", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+
+	// Without dev deps
+	resultNoDev, err := ResolveModule(ctx, "lib", "1.0.0", ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: false,
+	})
+	if err != nil {
+		t.Fatalf("ResolveModule() error = %v", err)
+	}
+
+	// Should have 2 modules: lib (target) + prod_dep
+	if len(resultNoDev.Modules) != 2 {
+		t.Errorf("Without dev deps: expected 2 modules, got %d", len(resultNoDev.Modules))
+	}
+
+	// With dev deps
+	resultWithDev, err := ResolveModule(ctx, "lib", "1.0.0", ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: true,
+	})
+	if err != nil {
+		t.Fatalf("ResolveModule() error = %v", err)
+	}
+
+	// Should have 3 modules: lib (target) + prod_dep + test_dep
+	if len(resultWithDev.Modules) != 3 {
+		t.Errorf("With dev deps: expected 3 modules, got %d", len(resultWithDev.Modules))
+	}
+}
+
+// TestResolveModule_MissingModuleDirective tests handling of MODULE.bazel without module() call
+func TestResolveModule_MissingModuleDirective(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/no_module/1.0.0/MODULE.bazel" {
+			// MODULE.bazel with just deps, no module() call
+			fmt.Fprint(w, `bazel_dep(name = "some_dep", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := ResolveModule(ctx, "no_module", "1.0.0", ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+
+	// The parser requires a module() directive, so this should fail
+	if err == nil {
+		t.Error("Expected error for MODULE.bazel without module() directive")
+	}
+}
