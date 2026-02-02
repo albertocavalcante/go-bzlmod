@@ -181,7 +181,7 @@ func compareSuffix(a, b string) int {
 	aParts := strings.Split(strings.TrimPrefix(a, "."), ".")
 	bParts := strings.Split(strings.TrimPrefix(b, "."), ".")
 
-	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+	for i := range min(len(aParts), len(bParts)) {
 		aNum, aIsNum := tryParseInt(aParts[i])
 		bNum, bIsNum := tryParseInt(bParts[i])
 
@@ -194,8 +194,8 @@ func compareSuffix(a, b string) int {
 		} else if bIsNum {
 			return 1
 		} else {
-			if cmp := strings.Compare(aParts[i], bParts[i]); cmp != 0 {
-				return cmp
+			if c := strings.Compare(aParts[i], bParts[i]); c != 0 {
+				return c
 			}
 		}
 	}
@@ -222,7 +222,7 @@ func comparePrerelease(a, b string) int {
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
 
-	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+	for i := range min(len(aParts), len(bParts)) {
 		aNum, aIsNum := tryParseInt(aParts[i])
 		bNum, bIsNum := tryParseInt(bParts[i])
 
@@ -235,8 +235,8 @@ func comparePrerelease(a, b string) int {
 		} else if bIsNum {
 			return 1
 		} else {
-			if cmp := strings.Compare(aParts[i], bParts[i]); cmp != 0 {
-				return cmp
+			if c := strings.Compare(aParts[i], bParts[i]); c != 0 {
+				return c
 			}
 		}
 	}

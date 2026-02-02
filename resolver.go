@@ -1,12 +1,14 @@
 package gobzlmod
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/albertocavalcante/go-bzlmod/bazeltools"
@@ -164,11 +166,7 @@ func (r *dependencyResolver) overrideModuleSnapshot() map[string]*ModuleInfo {
 	if len(r.overrideModules) == 0 {
 		return nil
 	}
-	snapshot := make(map[string]*ModuleInfo, len(r.overrideModules))
-	for name, info := range r.overrideModules {
-		snapshot[name] = info
-	}
-	return snapshot
+	return maps.Clone(r.overrideModules)
 }
 
 // emitProgress safely calls the OnProgress callback if configured.
@@ -293,10 +291,7 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 
 	// Use a larger buffer to prevent deadlocks when many deps are added at once
 	// (e.g., MODULE.tools injection can add 8-14 dependencies depending on Bazel version)
-	bufferSize := len(module.Dependencies) * taskBufferMultiplier
-	if bufferSize < minTaskBufferSize {
-		bufferSize = minTaskBufferSize
-	}
+	bufferSize := max(len(module.Dependencies)*taskBufferMultiplier, minTaskBufferSize)
 	tasks := make(chan depTask, bufferSize)
 	var tasksWG sync.WaitGroup
 	var workersWG sync.WaitGroup
@@ -485,7 +480,7 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 		}
 	}
 
-	for i := 0; i < defaultMaxConcurrency; i++ {
+	for range defaultMaxConcurrency {
 		workersWG.Add(1)
 		go worker()
 	}
@@ -653,8 +648,8 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		})
 	}
 
-	sort.Slice(list.Modules, func(i, j int) bool {
-		return list.Modules[i].Name < list.Modules[j].Name
+	slices.SortFunc(list.Modules, func(a, b ModuleToResolve) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	// Check for yanked/deprecated versions if enabled

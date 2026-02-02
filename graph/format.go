@@ -2,9 +2,10 @@ package graph
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -118,7 +119,7 @@ func (g *Graph) ToDOT() string {
 		if node.DevDependency {
 			attrs += ", style=dashed"
 		}
-		buf.WriteString(fmt.Sprintf("  %q [%s];\n", key.String(), attrs))
+		fmt.Fprintf(&buf, "  %q [%s];\n", key.String(), attrs)
 	}
 
 	buf.WriteString("\n")
@@ -126,7 +127,7 @@ func (g *Graph) ToDOT() string {
 	// Add edges
 	for key, node := range g.Modules {
 		for _, dep := range node.Dependencies {
-			buf.WriteString(fmt.Sprintf("  %q -> %q;\n", key.String(), dep.String()))
+			fmt.Fprintf(&buf, "  %q -> %q;\n", key.String(), dep.String())
 		}
 	}
 
@@ -138,17 +139,17 @@ func (g *Graph) ToDOT() string {
 func (g *Graph) ToText() string {
 	var buf bytes.Buffer
 
-	buf.WriteString(fmt.Sprintf("Dependency Graph (root: %s)\n", g.Root.String()))
+	fmt.Fprintf(&buf, "Dependency Graph (root: %s)\n", g.Root.String())
 	buf.WriteString(strings.Repeat("=", separatorWidth) + "\n\n")
 
 	// Get stats
 	stats := g.Stats()
-	buf.WriteString(fmt.Sprintf("Total modules: %d\n", stats.TotalModules))
-	buf.WriteString(fmt.Sprintf("Direct dependencies: %d\n", stats.DirectDependencies))
-	buf.WriteString(fmt.Sprintf("Transitive dependencies: %d\n", stats.TransitiveDependencies))
-	buf.WriteString(fmt.Sprintf("Max depth: %d\n", stats.MaxDepth))
+	fmt.Fprintf(&buf, "Total modules: %d\n", stats.TotalModules)
+	fmt.Fprintf(&buf, "Direct dependencies: %d\n", stats.DirectDependencies)
+	fmt.Fprintf(&buf, "Transitive dependencies: %d\n", stats.TransitiveDependencies)
+	fmt.Fprintf(&buf, "Max depth: %d\n", stats.MaxDepth)
 	if stats.DevDependencies > 0 {
-		buf.WriteString(fmt.Sprintf("Dev dependencies: %d\n", stats.DevDependencies))
+		fmt.Fprintf(&buf, "Dev dependencies: %d\n", stats.DevDependencies)
 	}
 	buf.WriteString("\n")
 
@@ -157,11 +158,11 @@ func (g *Graph) ToText() string {
 	for key := range g.Modules {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Name != keys[j].Name {
-			return keys[i].Name < keys[j].Name
+	slices.SortFunc(keys, func(a, b ModuleKey) int {
+		if c := cmp.Compare(a.Name, b.Name); c != 0 {
+			return c
 		}
-		return keys[i].Version < keys[j].Version
+		return cmp.Compare(a.Version, b.Version)
 	})
 
 	// Print tree from root
@@ -226,15 +227,15 @@ func (g *Graph) ToExplainText(moduleName string) (string, error) {
 
 	var buf bytes.Buffer
 
-	buf.WriteString(fmt.Sprintf("Explanation for: %s\n", explanation.Module.String()))
+	fmt.Fprintf(&buf, "Explanation for: %s\n", explanation.Module.String())
 	buf.WriteString(strings.Repeat("=", separatorWidth) + "\n\n")
 
 	// Version selection info
 	if explanation.Selection != nil {
 		buf.WriteString("Version Selection:\n")
-		buf.WriteString(fmt.Sprintf("  Selected version: %s\n", explanation.Selection.SelectedVersion))
-		buf.WriteString(fmt.Sprintf("  Strategy: %s\n", explanation.Selection.Strategy))
-		buf.WriteString(fmt.Sprintf("  Deciding factor: %s\n", explanation.Selection.DecidingFactor))
+		fmt.Fprintf(&buf, "  Selected version: %s\n", explanation.Selection.SelectedVersion)
+		fmt.Fprintf(&buf, "  Strategy: %s\n", explanation.Selection.Strategy)
+		fmt.Fprintf(&buf, "  Deciding factor: %s\n", explanation.Selection.DecidingFactor)
 
 		if len(explanation.Selection.Candidates) > 0 {
 			buf.WriteString("\n  Candidates considered:\n")
@@ -247,10 +248,10 @@ func (g *Graph) ToExplainText(moduleName string) (string, error) {
 				for i, r := range c.RequestedBy {
 					requesters[i] = r.String()
 				}
-				buf.WriteString(fmt.Sprintf("    %s%s - requested by: %s\n",
-					status, c.Version, strings.Join(requesters, ", ")))
+				fmt.Fprintf(&buf, "    %s%s - requested by: %s\n",
+					status, c.Version, strings.Join(requesters, ", "))
 				if !c.Selected && c.RejectionReason != "" {
-					buf.WriteString(fmt.Sprintf("      Reason not selected: %s\n", c.RejectionReason))
+					fmt.Fprintf(&buf, "      Reason not selected: %s\n", c.RejectionReason)
 				}
 			}
 		}
@@ -260,7 +261,7 @@ func (g *Graph) ToExplainText(moduleName string) (string, error) {
 	if len(explanation.DependencyChains) > 0 {
 		buf.WriteString("\nDependency Chains (paths from root):\n")
 		for i, chain := range explanation.DependencyChains {
-			buf.WriteString(fmt.Sprintf("  %d. %s\n", i+1, chain.String()))
+			fmt.Fprintf(&buf, "  %d. %s\n", i+1, chain.String())
 		}
 	}
 
@@ -290,8 +291,8 @@ func (g *Graph) ToModuleList() []ModuleInfo {
 	}
 
 	// Sort by name for deterministic output
-	sort.Slice(modules, func(i, j int) bool {
-		return modules[i].Name < modules[j].Name
+	slices.SortFunc(modules, func(a, b ModuleInfo) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	return modules

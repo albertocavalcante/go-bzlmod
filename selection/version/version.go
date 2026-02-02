@@ -13,8 +13,9 @@
 package version
 
 import (
+	"cmp"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -209,33 +210,22 @@ func Compare(a, b string) int {
 //
 // Reference: Version.java line 184 uses lexicographical(Identifier.COMPARATOR)
 func compareIdentifierLists(a, b []Identifier) int {
-	minLen := len(a)
-	if len(b) < minLen {
-		minLen = len(b)
-	}
+	minLen := min(len(a), len(b))
 
-	for i := 0; i < minLen; i++ {
-		cmp := CompareIdentifiers(a[i], b[i])
-		if cmp != 0 {
-			return cmp
+	for i := range minLen {
+		c := CompareIdentifiers(a[i], b[i])
+		if c != 0 {
+			return c
 		}
 	}
 
 	// Shorter list is less (lexicographic)
-	if len(a) < len(b) {
-		return -1
-	}
-	if len(a) > len(b) {
-		return 1
-	}
-	return 0
+	return cmp.Compare(len(a), len(b))
 }
 
 // Sort sorts a slice of version strings in ascending order.
 func Sort(versions []string) {
-	sort.Slice(versions, func(i, j int) bool {
-		return Compare(versions[i], versions[j]) < 0
-	})
+	slices.SortFunc(versions, Compare)
 }
 
 // Max returns the higher of two versions.

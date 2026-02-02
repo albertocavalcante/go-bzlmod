@@ -1,9 +1,10 @@
 package gobzlmod
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/albertocavalcante/go-bzlmod/selection"
@@ -344,8 +345,8 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		_ = module.CompatLevel
 	}
 
-	sort.Slice(resolved.Modules, func(i, j int) bool {
-		return resolved.Modules[i].Name < resolved.Modules[j].Name
+	slices.SortFunc(resolved.Modules, func(a, b ModuleToResolve) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	// Check yanked/deprecated versions if enabled
@@ -415,8 +416,8 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 			Version: key.Version,
 		})
 	}
-	sort.Slice(unpruned.Modules, func(i, j int) bool {
-		return unpruned.Modules[i].Name < unpruned.Modules[j].Name
+	slices.SortFunc(unpruned.Modules, func(a, b ModuleToResolve) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 	unpruned.Summary.TotalModules = len(unpruned.Modules)
 

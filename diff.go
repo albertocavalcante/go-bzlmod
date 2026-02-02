@@ -1,7 +1,8 @@
 package gobzlmod
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
@@ -156,14 +157,14 @@ func DiffResolutions(old, new *ResolutionList) *ResolutionDiff {
 
 // sortModuleChanges sorts a slice of ModuleChange by name.
 func sortModuleChanges(changes []ModuleChange) {
-	sort.Slice(changes, func(i, j int) bool {
-		return changes[i].Name < changes[j].Name
+	slices.SortFunc(changes, func(a, b ModuleChange) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 }
 
 // sortModuleUpgrades sorts a slice of ModuleUpgrade by name.
 func sortModuleUpgrades(upgrades []ModuleUpgrade) {
-	sort.Slice(upgrades, func(i, j int) bool {
-		return upgrades[i].Name < upgrades[j].Name
+	slices.SortFunc(upgrades, func(a, b ModuleUpgrade) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 }

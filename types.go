@@ -495,7 +495,7 @@ func (e *YankedVersionsError) Error() string {
 		return "selected yanked version " + m.Name + "@" + m.Version + ": " + m.YankReason
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("selected %d yanked versions:", len(e.Modules)))
+	fmt.Fprintf(&sb, "selected %d yanked versions:", len(e.Modules))
 	for _, m := range e.Modules {
 		sb.WriteString("\n  - ")
 		sb.WriteString(m.Name)
@@ -531,7 +531,7 @@ func (e *DirectDepsMismatchError) Error() string {
 			m.Name, m.DeclaredVersion, m.ResolvedVersion)
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%d direct dependencies don't match resolved versions:", len(e.Mismatches)))
+	fmt.Fprintf(&sb, "%d direct dependencies don't match resolved versions:", len(e.Mismatches))
 	for _, m := range e.Mismatches {
 		sb.WriteString("\n  - ")
 		sb.WriteString(m.Name)
