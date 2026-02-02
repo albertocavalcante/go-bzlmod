@@ -125,6 +125,11 @@ type ModuleToResolve struct {
 	DeprecationReason string `json:"deprecation_reason,omitempty"`
 }
 
+// Key returns a unique identifier for this module in "name@version" format.
+func (m ModuleToResolve) Key() string {
+	return m.Name + "@" + m.Version
+}
+
 // ResolutionSummary provides statistics about the dependency resolution result.
 type ResolutionSummary struct {
 	// TotalModules is the total count of resolved modules.

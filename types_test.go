@@ -5,6 +5,62 @@ import (
 	"testing"
 )
 
+// TestModuleToResolve_Key tests the Key() method returns "name@version" format.
+func TestModuleToResolve_Key(t *testing.T) {
+	tests := []struct {
+		name    string
+		module  ModuleToResolve
+		wantKey string
+	}{
+		{
+			name:    "basic module",
+			module:  ModuleToResolve{Name: "rules_go", Version: "0.41.0"},
+			wantKey: "rules_go@0.41.0",
+		},
+		{
+			name:    "with bcr suffix",
+			module:  ModuleToResolve{Name: "protobuf", Version: "21.7.bcr.1"},
+			wantKey: "protobuf@21.7.bcr.1",
+		},
+		{
+			name:    "prerelease version",
+			module:  ModuleToResolve{Name: "experimental", Version: "1.0.0-rc1"},
+			wantKey: "experimental@1.0.0-rc1",
+		},
+		{
+			name:    "empty version",
+			module:  ModuleToResolve{Name: "local_mod", Version: ""},
+			wantKey: "local_mod@",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.module.Key()
+			if got != tt.wantKey {
+				t.Errorf("Key() = %q, want %q", got, tt.wantKey)
+			}
+		})
+	}
+}
+
+// TestModuleToResolve_KeyMatchesYankedErrorFormat verifies Key() matches
+// the format used in YankedVersionsError.Error() for consistency.
+func TestModuleToResolve_KeyMatchesYankedErrorFormat(t *testing.T) {
+	module := ModuleToResolve{
+		Name:       "example_module",
+		Version:    "1.2.3",
+		YankReason: "test reason",
+	}
+
+	key := module.Key()
+	expectedKey := module.Name + "@" + module.Version
+
+	if key != expectedKey {
+		t.Errorf("Key() = %q, want %q (should match name@version format)", key, expectedKey)
+	}
+}
+
 func TestModuleInfo_JSONSerialization(t *testing.T) {
 	original := &ModuleInfo{
 		Name:               "test_module",
