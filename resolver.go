@@ -49,13 +49,19 @@ const (
 
 // dependencyResolver resolves Bazel module dependencies using Minimal Version Selection (MVS).
 //
-// The resolution algorithm proceeds in three phases:
-//  1. Graph construction: Recursively fetches MODULE.bazel files from the registry
-//     to build a complete dependency graph with all requested versions.
-//  2. Override application: Applies single_version overrides to pin versions and
-//     preserves git/local_path/archive overrides without fetching from the registry.
-//  3. MVS selection: For each module, selects the highest version requested by
-//     any dependent module.
+// This implementation follows Bazel's bzlmod resolution algorithm as defined in:
+//   - Discovery: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java
+//   - Selection: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+//
+// The resolution algorithm proceeds in two phases (matching Bazel's architecture):
+//
+// Phase 1 - Discovery (see buildDependencyGraph):
+// Recursively fetches MODULE.bazel files from the registry to build a complete
+// dependency graph with all requested versions. Applies overrides during traversal.
+//
+// Phase 2 - Selection (see applyMVS):
+// For each module, selects the highest version requested by any dependent module
+// using Minimal Version Selection.
 //
 // The resolver fetches dependencies concurrently (up to 5 at a time) and caches
 // results to avoid redundant network requests.
@@ -266,6 +272,15 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 
 // buildDependencyGraph constructs the dependency graph by recursively fetching
 // and processing MODULE.bazel files. Uses bc (graphBuildContext) to accumulate state.
+//
+// Reference: Discovery.java lines 47-79
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java#L47-L79
+//
+// KNOWN LIMITATION: Bazel's Discovery runs multiple rounds to handle "nodep" edges
+// (dependencies that become fulfillable after other modules are discovered). This
+// implementation performs single-pass discovery, which is sufficient for most use
+// cases but may not handle complex inter-module extension dependencies that require
+// multiple discovery rounds.
 func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *ModuleInfo, bc *graphBuildContext, path []string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -538,6 +553,13 @@ func (r *dependencyResolver) applyOverrides(depGraph map[string]map[string]*depR
 
 // applyMVS implements Minimal Version Selection: for each module, select the
 // highest version requested by any dependent.
+//
+// Reference: Selection.java lines 285-291 (mergeWithMax logic)
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L285-L291
+//
+// This implements the core MVS algorithm: iterate through all requested versions
+// for each module and select the maximum version. This matches Bazel's behavior
+// where the highest requested version wins.
 func (r *dependencyResolver) applyMVS(depGraph map[string]map[string]*depRequest) map[string]*depRequest {
 	selected := make(map[string]*depRequest)
 

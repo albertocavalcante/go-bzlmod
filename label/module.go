@@ -19,6 +19,11 @@
 // Module names must match: [a-z]([a-z0-9._-]*[a-z0-9])?
 // Repository names must match: [a-zA-Z][a-zA-Z0-9._-]*
 // Starlark identifiers must match: [a-zA-Z_][a-zA-Z0-9_]*
+//
+// # Reference
+//
+// Module name validation follows Bazel's ModuleFileGlobals.java (lines 68-77):
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
 package label
 
 import (
@@ -33,6 +38,11 @@ type Module struct {
 	name string
 }
 
+// moduleNameRegex matches Bazel's VALID_MODULE_NAME pattern from ModuleFileGlobals.java.
+// Valid names must:
+//  1. only contain lowercase letters (a-z), digits (0-9), dots (.), hyphens (-), and underscores (_)
+//  2. begin with a lowercase letter
+//  3. end with a lowercase letter or digit
 var moduleNameRegex = regexp.MustCompile(`^[a-z]([a-z0-9._-]*[a-z0-9])?$`)
 
 // NewModule creates a validated Module from a string.
@@ -41,7 +51,7 @@ func NewModule(name string) (Module, error) {
 		return Module{}, fmt.Errorf("module name cannot be empty")
 	}
 	if !moduleNameRegex.MatchString(name) {
-		return Module{}, fmt.Errorf("invalid module name %q: must match pattern [a-z]([a-z0-9._-]*[a-z0-9])?", name)
+		return Module{}, fmt.Errorf("invalid module name %q: valid names must 1) only contain lowercase letters (a-z), digits (0-9), dots (.), hyphens (-), and underscores (_); 2) begin with a lowercase letter; 3) end with a lowercase letter or digit", name)
 	}
 	return Module{name: name}, nil
 }
@@ -162,31 +172,30 @@ func ParseApparentLabel(s string) (ApparentLabel, error) {
 
 	// Handle @repo//pkg:target
 	if strings.HasPrefix(s, "@") {
-		idx := strings.Index(s, "//")
-		if idx == -1 {
+		repoName, rest, found := strings.Cut(s[1:], "//")
+		if !found {
 			return ApparentLabel{}, fmt.Errorf("invalid label %q: missing //", s)
 		}
-		repoName := s[1:idx]
 		repo, err := NewApparentRepo(repoName)
 		if err != nil {
 			return ApparentLabel{}, fmt.Errorf("invalid label %q: %w", s, err)
 		}
 		label.repo = repo
-		s = s[idx:]
+		s = "//" + rest
 	}
 
 	// Handle //pkg:target
 	if strings.HasPrefix(s, "//") {
 		s = s[2:]
-		idx := strings.Index(s, ":")
-		if idx == -1 {
+		pkg, target, found := strings.Cut(s, ":")
+		if !found {
 			// //pkg means //pkg:pkg
 			label.pkg = s
 			parts := strings.Split(s, "/")
 			label.target = parts[len(parts)-1]
 		} else {
-			label.pkg = s[:idx]
-			label.target = s[idx+1:]
+			label.pkg = pkg
+			label.target = target
 		}
 	} else if strings.HasPrefix(s, ":") {
 		// :target (relative)

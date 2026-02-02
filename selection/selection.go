@@ -9,6 +9,7 @@ import (
 // Run executes module selection (version resolution).
 //
 // This implements Bazel's Selection.run() from Selection.java lines 266-353.
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L266
 //
 // The algorithm:
 // 1. Compute allowed version sets for multiple-version overrides
@@ -17,11 +18,37 @@ import (
 // 4. Walk graph from root, removing unreachable modules
 //
 // Reference: Selection.java lines 44-84 describes the algorithm in detail.
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L44
+//
+// KNOWN LIMITATION: Strategy Enumeration Not Implemented
+//
+// Bazel's Selection.java lines 249-264 implements enumerateStrategies() which computes
+// the cartesian product of all possible resolutions when max_compatibility_level allows
+// multiple valid versions. This is done via computePossibleResolutionResultsForOneDepSpec()
+// (lines 182-228) which returns ALL valid versions for a DepSpec, not just the highest one.
+//
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L249
+//
+// This implementation does NOT enumerate strategies - it validates constraints but doesn't
+// try alternative valid versions. Specifically:
+//
+//   - Bazel: For each DepSpec with max_compatibility_level, computes all modules where
+//     version >= dep.version AND compatLevel <= max_compatibility_level, then enumerates
+//     the cartesian product of all these possibilities across all deps.
+//
+//   - This implementation: Simply selects the highest version in each selection group and
+//     validates that max_compatibility_level constraints are satisfied. If constraints fail,
+//     an error is returned without attempting alternative valid versions.
+//
+// Impact: This implementation may fail with a max_compatibility_level error in cases where
+// Bazel would succeed by trying an alternative resolution strategy. This is an acceptable
+// trade-off for simplicity in most real-world use cases.
 func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// Step 1: For any multiple-version overrides, build a mapping from
 	// (moduleName, compatibilityLevel) to the set of allowed versions.
 	//
 	// Reference: Selection.java lines 271-274
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L271
 	allowedVersionSets, err := computeAllowedVersionSets(overrides, graph)
 	if err != nil {
 		return nil, err
@@ -33,6 +60,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// targetAllowedVersion.
 	//
 	// Reference: Selection.java lines 276-283
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L276
 	selectionGroups := make(map[ModuleKey]SelectionGroup)
 	for key, module := range graph.Modules {
 		selectionGroups[key] = computeSelectionGroup(module, allowedVersionSets)
@@ -42,6 +70,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// This is the core of MVS: select the HIGHEST version in each group.
 	//
 	// Reference: Selection.java lines 285-291
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L285
 	// "selectedVersions.merge(selectionGroup, key.version(), Comparators::max)"
 	selectedVersions := make(map[SelectionGroup]string)
 	for key, group := range selectionGroups {
@@ -54,6 +83,17 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// Step 4: Compute the resolution strategy - how each DepSpec resolves to a version.
 	//
 	// Reference: Selection.java lines 293-316
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L293
+	//
+	// NOTE: This is a simplified single-strategy approach. Bazel's actual implementation
+	// uses computePossibleResolutionResultsForOneDepSpec() (lines 182-228) to compute
+	// ALL valid versions for each DepSpec when max_compatibility_level is involved,
+	// then enumerates the cartesian product via enumerateStrategies() (lines 249-264).
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L182
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L249
+	//
+	// This implementation only tries the highest version, which may fail in edge cases
+	// where Bazel would succeed by trying an alternative valid version.
 	resolutionStrategy := func(depSpec DepSpec) string {
 		depKey := depSpec.ToModuleKey()
 		group, ok := selectionGroups[depKey]
@@ -71,6 +111,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// but doesn't include them in the final resolved graph.
 	//
 	// Reference: Selection.java lines 317-353, 397-403
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L317
 	walkerPhase1 := &depGraphWalker{
 		oldGraph:        graph,
 		overrides:       overrides,
@@ -139,6 +180,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 // to the set of allowed versions for modules with multiple-version overrides.
 //
 // Reference: Selection.java lines 117-152
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L117
 func computeAllowedVersionSets(overrides map[string]Override, graph *DepGraph) (map[moduleNameAndCompatLevel][]string, error) {
 	result := make(map[moduleNameAndCompatLevel][]string)
 
@@ -185,6 +227,7 @@ type moduleNameAndCompatLevel struct {
 // computeSelectionGroup computes the SelectionGroup for a module.
 //
 // Reference: Selection.java lines 154-180
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L154
 // "If the module has a multiple-version override, information in there will be
 // used to compute its targetAllowedVersion."
 func computeSelectionGroup(module *Module, allowedVersionSets map[moduleNameAndCompatLevel][]string) SelectionGroup {
@@ -206,6 +249,7 @@ func computeSelectionGroup(module *Module, allowedVersionSets map[moduleNameAndC
 	// Find the lowest allowed version >= module's version (ceiling).
 	//
 	// Reference: Selection.java lines 174-179
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L174
 	// "We use the ceiling method here to quickly locate the lowest allowed version
 	// that's still no lower than this module's version."
 	targetVersion := ""
@@ -226,6 +270,7 @@ func computeSelectionGroup(module *Module, allowedVersionSets map[moduleNameAndC
 // depGraphWalker walks the dependency graph from the root, collecting reachable nodes.
 //
 // Reference: Selection.java lines 355-479, DepGraphWalker class
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L355
 type depGraphWalker struct {
 	oldGraph        *DepGraph
 	overrides       map[string]Override
@@ -240,6 +285,7 @@ type depGraphWalker struct {
 // Returns the resolved graph, BFS order, and any error.
 //
 // Reference: Selection.java lines 374-408
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L374
 func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[ModuleKey]*Module, []ModuleKey, error) {
 	moduleByName := make(map[string]existingModule)
 	newGraph := make(map[ModuleKey]*Module)
@@ -275,6 +321,8 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 
 			// Validate MaxCompatibilityLevel constraint
 			// Reference: Bazel enforces that resolved module's compat level <= max_compatibility_level
+			// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L182
+			// See computePossibleResolutionResultsForOneDepSpec() for the full constraint logic.
 			if dep.MaxCompatibilityLevel >= 0 {
 				resolvedKey := ModuleKey{Name: dep.Name, Version: resolvedVersion}
 				if resolvedModule, ok := w.oldGraph.Modules[resolvedKey]; ok {
@@ -373,6 +421,7 @@ type existingModule struct {
 // visit checks for conflicts when adding a module to the resolved graph.
 //
 // Reference: Selection.java lines 410-472
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L410
 func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, moduleByName map[string]existingModule) error {
 	// Check for multiple-version override conflicts
 	if override, ok := w.overrides[key.Name].(*MultipleVersionOverride); ok {
@@ -381,6 +430,7 @@ func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, m
 			// No valid target allowed version - error
 			//
 			// Reference: Selection.java lines 416-429
+			// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L416
 			return &SelectionError{
 				Code: "VERSION_RESOLUTION_ERROR",
 				Message: fmt.Sprintf(
@@ -393,6 +443,7 @@ func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, m
 		// Check for compatibility level conflicts
 		//
 		// Reference: Selection.java lines 431-451
+		// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L431
 		// "This has to mean that a module with the same name but a different
 		// compatibility level was also selected."
 		existing, ok := moduleByName[module.Key.Name]

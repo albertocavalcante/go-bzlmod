@@ -384,6 +384,16 @@ func moduleInfoEqual(a, b *ModuleInfo) bool {
 		return false
 	}
 
+	// Compare BazelCompatibility
+	if len(a.BazelCompatibility) != len(b.BazelCompatibility) {
+		return false
+	}
+	for i := range a.BazelCompatibility {
+		if a.BazelCompatibility[i] != b.BazelCompatibility[i] {
+			return false
+		}
+	}
+
 	if len(a.Dependencies) != len(b.Dependencies) {
 		return false
 	}
@@ -460,4 +470,196 @@ single_version_override(module_name = "valid_override", version = "1.0.0")`,
 			}
 		})
 	}
+}
+
+func TestParseModuleContent_ModuleValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		wantErr    bool
+		errMessage string
+	}{
+		{
+			name: "module called twice",
+			content: `module(name = "test", version = "1.0.0")
+module(name = "test2", version = "2.0.0")`,
+			wantErr:    true,
+			errMessage: "the module() directive can only be called once",
+		},
+		{
+			name: "module called after bazel_dep",
+			content: `bazel_dep(name = "rules_go", version = "0.41.0")
+module(name = "test", version = "1.0.0")`,
+			wantErr:    true,
+			errMessage: "if module() is called, it must be called before any other functions",
+		},
+		{
+			name: "module called after single_version_override",
+			content: `single_version_override(module_name = "foo", version = "1.0.0")
+module(name = "test", version = "1.0.0")`,
+			wantErr:    true,
+			errMessage: "if module() is called, it must be called before any other functions",
+		},
+		{
+			name: "module called after use_extension",
+			content: `use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+module(name = "test", version = "1.0.0")`,
+			wantErr:    true,
+			errMessage: "if module() is called, it must be called before any other functions",
+		},
+		{
+			name:    "module called first is valid",
+			content: `module(name = "test", version = "1.0.0")`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseModuleContent(tt.content)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseModuleContent() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.wantErr && err != nil {
+				if err.Error() != tt.errMessage {
+					t.Errorf("ParseModuleContent() error = %q, want %q", err.Error(), tt.errMessage)
+				}
+			}
+		})
+	}
+}
+
+func TestParseModuleContent_BazelCompatibility(t *testing.T) {
+	tests := []struct {
+		name               string
+		content            string
+		wantErr            bool
+		errContains        string
+		wantCompatibility  []string
+	}{
+		{
+			name: "valid bazel_compatibility with >=",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+				bazel_compatibility = [">=7.0.0"],
+			)`,
+			wantErr:           false,
+			wantCompatibility: []string{">=7.0.0"},
+		},
+		{
+			name: "valid bazel_compatibility with multiple entries",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+				bazel_compatibility = [">=7.0.0", "<8.0.0"],
+			)`,
+			wantErr:           false,
+			wantCompatibility: []string{">=7.0.0", "<8.0.0"},
+		},
+		{
+			name: "valid bazel_compatibility with all operators",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+				bazel_compatibility = [">=7.0.0", "<=8.0.0", ">6.0.0", "<9.0.0", "-7.1.0"],
+			)`,
+			wantErr:           false,
+			wantCompatibility: []string{">=7.0.0", "<=8.0.0", ">6.0.0", "<9.0.0", "-7.1.0"},
+		},
+		{
+			name: "invalid bazel_compatibility missing operator",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+				bazel_compatibility = ["7.0.0"],
+			)`,
+			wantErr:     true,
+			errContains: "invalid bazel_compatibility value",
+		},
+		{
+			name: "invalid bazel_compatibility wrong version format",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+				bazel_compatibility = [">=7.0"],
+			)`,
+			wantErr:     true,
+			errContains: "invalid bazel_compatibility value",
+		},
+		{
+			name: "invalid bazel_compatibility with text",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+				bazel_compatibility = [">=latest"],
+			)`,
+			wantErr:     true,
+			errContains: "invalid bazel_compatibility value",
+		},
+		{
+			name: "empty bazel_compatibility is valid",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+				bazel_compatibility = [],
+			)`,
+			wantErr:           false,
+			wantCompatibility: nil,
+		},
+		{
+			name: "no bazel_compatibility is valid",
+			content: `module(
+				name = "test",
+				version = "1.0.0",
+			)`,
+			wantErr:           false,
+			wantCompatibility: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseModuleContent(tt.content)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseModuleContent() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.wantErr {
+				if tt.errContains != "" && err != nil {
+					if !contains(err.Error(), tt.errContains) {
+						t.Errorf("error = %q, want to contain %q", err.Error(), tt.errContains)
+					}
+				}
+				return
+			}
+
+			if len(got.BazelCompatibility) != len(tt.wantCompatibility) {
+				t.Errorf("BazelCompatibility = %v, want %v", got.BazelCompatibility, tt.wantCompatibility)
+				return
+			}
+
+			for i := range got.BazelCompatibility {
+				if got.BazelCompatibility[i] != tt.wantCompatibility[i] {
+					t.Errorf("BazelCompatibility[%d] = %q, want %q", i, got.BazelCompatibility[i], tt.wantCompatibility[i])
+				}
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
+}
+
+func containsAt(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

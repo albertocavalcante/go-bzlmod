@@ -123,6 +123,78 @@ func TestVersionCompare(t *testing.T) {
 	}
 }
 
+// TestVersionCompareEmpty tests that empty versions compare as HIGHEST.
+// This matches Bazel's behavior where empty version signals NonRegistryOverride.
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Version.java#L183
+func TestVersionCompareEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want int
+	}{
+		{
+			name: "empty vs non-empty: empty is HIGHEST",
+			a:    "",
+			b:    "1.0.0",
+			want: 1, // empty > non-empty
+		},
+		{
+			name: "non-empty vs empty: non-empty is lower",
+			a:    "1.0.0",
+			b:    "",
+			want: -1, // non-empty < empty
+		},
+		{
+			name: "empty vs empty: equal",
+			a:    "",
+			b:    "",
+			want: 0,
+		},
+		{
+			name: "empty vs high version: empty still highest",
+			a:    "",
+			b:    "999.999.999",
+			want: 1, // empty > any version
+		},
+		{
+			name: "empty vs prerelease: empty still highest",
+			a:    "",
+			b:    "1.0.0-alpha",
+			want: 1, // empty > prerelease
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := MustVersion(tt.a)
+			b := MustVersion(tt.b)
+			got := a.Compare(b)
+			if got != tt.want {
+				t.Errorf("Version(%q).Compare(%q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestVersionsSortWithEmpty tests that empty versions sort to the end (highest).
+func TestVersionsSortWithEmpty(t *testing.T) {
+	input := []string{"2.0.0", "", "1.0.0", "1.0.0-alpha"}
+	want := []string{"1.0.0-alpha", "1.0.0", "2.0.0", ""} // Empty sorts last (highest)
+
+	versions := make(Versions, len(input))
+	for i, s := range input {
+		versions[i] = MustVersion(s)
+	}
+
+	sort.Sort(versions)
+
+	for i, v := range versions {
+		if v.String() != want[i] {
+			t.Errorf("sorted[%d] = %q, want %q", i, v.String(), want[i])
+		}
+	}
+}
+
 func TestVersionLess(t *testing.T) {
 	tests := []struct {
 		a, b string

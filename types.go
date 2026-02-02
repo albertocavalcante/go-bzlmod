@@ -14,6 +14,10 @@ import (
 // ModuleInfo represents the information extracted from a MODULE.bazel file.
 // It contains the module's identity, version, and all its direct dependencies
 // and overrides.
+//
+// Reference: This corresponds to Bazel's InterimModule, which represents a module
+// during the dependency resolution phase before final selection.
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/InterimModule.java
 type ModuleInfo struct {
 	// Name is the module name as declared in module(name = "...").
 	Name string `json:"name"`
@@ -25,6 +29,14 @@ type ModuleInfo struct {
 	// compatibility levels are considered incompatible.
 	CompatibilityLevel int `json:"compatibility_level"`
 
+	// BazelCompatibility specifies Bazel version constraints for this module.
+	// Each entry must match the pattern: (>=|<=|>|<|-)X.Y.Z
+	// Examples: ">=7.0.0", "<8.0.0", "-7.1.0" (excludes specific version)
+	//
+	// Reference: ModuleFileGlobals.java lines 65-66
+	// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
+	BazelCompatibility []string `json:"bazel_compatibility,omitempty"`
+
 	// Dependencies lists all bazel_dep declarations in the module file.
 	Dependencies []Dependency `json:"dependencies"`
 
@@ -34,6 +46,13 @@ type ModuleInfo struct {
 
 // Dependency represents a bazel_dep declaration in a MODULE.bazel file.
 // It declares a direct dependency on another Bazel module.
+//
+// Reference: This corresponds to Bazel's InterimModule.DepSpec (lines 59-81),
+// which represents a dependency specification before resolution.
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/InterimModule.java
+//
+// MaxCompatibilityLevel corresponds to DepSpec.maxCompatibilityLevel(), which
+// constrains the maximum compatibility level allowed for the resolved version.
 type Dependency struct {
 	// Name is the module name being depended upon.
 	Name string `json:"name"`
@@ -58,6 +77,12 @@ type Dependency struct {
 
 // Override represents version or source overrides for a module dependency.
 // Override types include: single_version, git, local_path, archive.
+//
+// Reference: Bazel's override hierarchy includes:
+//   - SingleVersionOverride: Pins a module to a specific version within the registry.
+//     See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/SingleVersionOverride.java
+//   - NonRegistryOverride: Base for overrides that bypass the registry (git, local_path, archive).
+//     See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/NonRegistryOverride.java
 type Override struct {
 	// Type is the override type: "single_version", "git", "local_path", or "archive".
 	Type string `json:"type"`
@@ -73,6 +98,10 @@ type Override struct {
 }
 
 // ResolutionList contains the final resolved dependency set after MVS.
+//
+// Reference: This corresponds to Bazel's Selection.Result (lines 88-100),
+// which holds the outcome of the module version selection algorithm.
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
 type ResolutionList struct {
 	// Modules is the list of all resolved modules, sorted by name.
 	Modules []ModuleToResolve `json:"modules"`
@@ -215,6 +244,10 @@ type ResolutionSummary struct {
 }
 
 // YankedVersionBehavior controls how yanked versions are handled during resolution.
+//
+// Reference: Bazel handles yanked versions through YankedVersionsUtil, which provides
+// utilities for checking and substituting yanked module versions.
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/YankedVersionsUtil.java
 type YankedVersionBehavior int
 
 const (

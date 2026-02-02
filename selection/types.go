@@ -3,11 +3,15 @@
 // This is a Go port of Bazel's Selection.java, implementing the Minimal Version Selection
 // algorithm with Bazel-specific extensions for compatibility levels and overrides.
 //
-// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+// Reference implementations:
+//   - Selection.java: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java
+//   - InterimModule.java: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/InterimModule.java
+//   - ModuleKey.java: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleKey.java
 package selection
 
 // ModuleKey uniquely identifies a module in the dependency graph.
-// Corresponds to Bazel's ModuleKey.java.
+//
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleKey.java
 type ModuleKey struct {
 	Name    string
 	Version string
@@ -22,15 +26,14 @@ func (k ModuleKey) String() string {
 }
 
 // DepSpec represents a dependency specification.
-// Corresponds to Bazel's InterimModule.DepSpec.
 //
-// Reference: InterimModule.java lines 59-81
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/InterimModule.java#L59
 type DepSpec struct {
 	Name    string
 	Version string
 	// MaxCompatibilityLevel allows depending on modules with compatibility levels
 	// up to this value. -1 means no max (use the dep's own compat level).
-	// Reference: InterimModule.java line 61
+	// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/InterimModule.java#L61
 	MaxCompatibilityLevel int
 }
 
@@ -40,7 +43,8 @@ func (d DepSpec) ToModuleKey() ModuleKey {
 }
 
 // Module represents a node in the dependency graph during resolution.
-// Corresponds to Bazel's InterimModule.java.
+//
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/InterimModule.java
 type Module struct {
 	Key         ModuleKey
 	Deps        []DepSpec
@@ -50,7 +54,7 @@ type Module struct {
 	// create transitive dependency edges during graph pruning. Modules reachable
 	// only via NodepDeps are not included in the final resolved graph.
 	// Introduced in Bazel 7.6+.
-	// Reference: Selection.java lines 397-403
+	// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L397-L403
 	NodepDeps []DepSpec
 }
 
@@ -66,7 +70,8 @@ type Override interface {
 }
 
 // SingleVersionOverride forces a specific version for a module.
-// Corresponds to Bazel's SingleVersionOverride.java.
+//
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/SingleVersionOverride.java
 type SingleVersionOverride struct {
 	Version  string
 	Registry string
@@ -76,11 +81,13 @@ type SingleVersionOverride struct {
 func (o *SingleVersionOverride) isOverride() {}
 
 // MultipleVersionOverride allows multiple versions of the same module.
-// Corresponds to Bazel's MultipleVersionOverride.java.
 //
-// Reference: Selection.java lines 64-73
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/MultipleVersionOverride.java
+//
+// From Selection.java lines 64-73:
 // "If module foo has a multiple-version override which allows versions [1.3, 1.5, 2.0],
 // then we further split the selection groups by the target allowed version."
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L64-L73
 type MultipleVersionOverride struct {
 	Versions []string
 	Registry string
@@ -90,6 +97,8 @@ func (o *MultipleVersionOverride) isOverride() {}
 
 // NonRegistryOverride represents git_override, local_path_override, or archive_override.
 // These override the module source entirely, so version becomes empty.
+//
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/NonRegistryOverride.java
 type NonRegistryOverride struct {
 	// Type is "git", "local_path", or "archive"
 	Type string
@@ -99,7 +108,7 @@ func (o *NonRegistryOverride) isOverride() {}
 
 // Result contains the output of the selection algorithm.
 //
-// Reference: Selection.java lines 88-100
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L88-L100
 type Result struct {
 	// ResolvedGraph is the final dep graph with unused modules removed.
 	// Sorted in BFS iteration order.
@@ -116,8 +125,8 @@ type Result struct {
 // SelectionGroup identifies a group of module versions that compete for selection.
 // One version is selected per SelectionGroup.
 //
-// Reference: Selection.java lines 102-107
 // "During selection, a version is selected for each distinct 'selection group'."
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L102-L107
 type SelectionGroup struct {
 	ModuleName  string
 	CompatLevel int
