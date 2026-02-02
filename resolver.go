@@ -107,10 +107,10 @@ func newDependencyResolverWithOptions(registry registryInterface, opts Resolutio
 
 	// Registries in options takes precedence
 	if len(opts.Registries) > 0 {
-		reg = registryWithHTTPClient(opts.HTTPClient, opts.Timeout, opts.Registries...)
+		reg = registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Registries...)
 	} else if reg == nil {
 		// No registry provided and no Registries in options, use BCR default
-		reg = registryWithHTTPClient(opts.HTTPClient, opts.Timeout)
+		reg = registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout)
 	}
 
 	return &dependencyResolver{

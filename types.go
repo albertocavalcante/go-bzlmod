@@ -1,6 +1,7 @@
 package gobzlmod
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -353,6 +354,100 @@ type ResolutionOptions struct {
 	//	result, _ := Resolve(ctx, content, ResolutionOptions{HTTPClient: client})
 	//
 	HTTPClient *http.Client
+
+	// Cache provides external caching for MODULE.bazel file contents.
+	//
+	// When set, the resolver checks the cache before fetching from registries
+	// and stores fetched content in the cache for future use. This enables:
+	//   - Faster repeated resolutions (avoid redundant network requests)
+	//   - Offline resolution after initial cache population
+	//   - Shared caching across multiple processes or machines
+	//
+	// Cache errors are handled gracefully: if Get fails, the resolver fetches
+	// from the registry; if Put fails, resolution continues without caching.
+	// This ensures caching issues never break dependency resolution.
+	//
+	// If nil, no external caching is used. Note that in-memory caching within
+	// a single resolution is always active regardless of this setting.
+	//
+	// Implementations must be safe for concurrent use from multiple goroutines.
+	Cache ModuleCache
+}
+
+// ModuleCache provides external caching for MODULE.bazel file contents.
+//
+// This interface enables persistent caching across resolutions. Common
+// implementations include file-based caches, Redis, memcached, or any
+// key-value store. The library does not provide a built-in implementation;
+// users should implement this interface based on their infrastructure.
+//
+// # Thread Safety
+//
+// Implementations MUST be safe for concurrent use. Multiple goroutines
+// will call Get and Put simultaneously during parallel module fetching.
+//
+// # Error Handling
+//
+// Cache operations should not fail resolution. The resolver treats cache
+// errors as cache misses and continues with registry fetches. Implementations
+// may log errors internally but should avoid returning errors for transient
+// issues like network timeouts to cache backends.
+//
+// # Content Format
+//
+// The content parameter in Get/Put is the raw MODULE.bazel file content
+// as fetched from the registry (UTF-8 text). Implementations should store
+// this content verbatim without modification.
+//
+// # Example Implementation
+//
+// A minimal file-based cache:
+//
+//	type FileCache struct {
+//	    dir string
+//	}
+//
+//	func (c *FileCache) Get(ctx context.Context, name, version string) ([]byte, bool, error) {
+//	    path := filepath.Join(c.dir, name, version, "MODULE.bazel")
+//	    data, err := os.ReadFile(path)
+//	    if os.IsNotExist(err) {
+//	        return nil, false, nil // Cache miss, not an error
+//	    }
+//	    if err != nil {
+//	        return nil, false, err
+//	    }
+//	    return data, true, nil
+//	}
+//
+//	func (c *FileCache) Put(ctx context.Context, name, version string, content []byte) error {
+//	    path := filepath.Join(c.dir, name, version, "MODULE.bazel")
+//	    if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+//	        return err
+//	    }
+//	    return os.WriteFile(path, content, 0644)
+//	}
+type ModuleCache interface {
+	// Get retrieves cached MODULE.bazel content for a module version.
+	//
+	// Returns:
+	//   - (content, true, nil)  - Cache hit: content found
+	//   - (nil, false, nil)     - Cache miss: content not in cache (normal condition)
+	//   - (nil, false, err)     - Cache error: failed to access cache
+	//
+	// A cache miss (found=false) is a normal condition, not an error.
+	// Implementations should only return errors for actual failures like
+	// I/O errors or connection failures to cache backends.
+	Get(ctx context.Context, name, version string) (content []byte, found bool, err error)
+
+	// Put stores MODULE.bazel content for a module version.
+	//
+	// The operation should be idempotent: storing the same content multiple
+	// times for the same module version should succeed without error.
+	//
+	// Implementations should handle the content as opaque bytes and store
+	// it verbatim. The content is the raw MODULE.bazel file as fetched
+	// from the registry.
+	Put(ctx context.Context, name, version string, content []byte) error
 }
 
 // YankedVersionsError is returned when resolution selects yanked versions

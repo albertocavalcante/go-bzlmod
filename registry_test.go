@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -585,6 +586,227 @@ func TestHTTPClient_TimeoutOverridesCustomClient(t *testing.T) {
 	_, err := reg.GetModuleFile(ctx, "test", "1.0.0")
 	if err == nil {
 		t.Error("Expected timeout error, got nil")
+	}
+}
+
+// mockCache implements ModuleCache for testing.
+type mockCache struct {
+	store     map[string][]byte
+	mu        sync.Mutex
+	getCount  int
+	putCount  int
+	failGet   bool
+	failPut   bool
+}
+
+func newMockCache() *mockCache {
+	return &mockCache{store: make(map[string][]byte)}
+}
+
+func (c *mockCache) Get(ctx context.Context, name, version string) ([]byte, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.getCount++
+	if c.failGet {
+		return nil, false, fmt.Errorf("simulated cache error")
+	}
+	key := name + "@" + version
+	data, ok := c.store[key]
+	return data, ok, nil
+}
+
+func (c *mockCache) Put(ctx context.Context, name, version string, content []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.putCount++
+	if c.failPut {
+		return fmt.Errorf("simulated cache error")
+	}
+	key := name + "@" + version
+	c.store[key] = content
+	return nil
+}
+
+// TestCache_HitSkipsHTTPFetch verifies that a cache hit skips the HTTP fetch.
+func TestCache_HitSkipsHTTPFetch(t *testing.T) {
+	httpCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpCalled = true
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	cache := newMockCache()
+	// Pre-populate cache
+	cache.store["test@1.0.0"] = []byte(`module(name = "test", version = "1.0.0")`)
+
+	reg := registryWithOptions(nil, cache, 0, server.URL)
+
+	ctx := context.Background()
+	info, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+
+	if httpCalled {
+		t.Error("HTTP should not have been called on cache hit")
+	}
+	if info.Name != "test" {
+		t.Errorf("Module name = %q, want %q", info.Name, "test")
+	}
+	if cache.getCount != 1 {
+		t.Errorf("Cache Get called %d times, want 1", cache.getCount)
+	}
+}
+
+// TestCache_MissFetchesAndStores verifies that a cache miss fetches and stores.
+func TestCache_MissFetchesAndStores(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	cache := newMockCache()
+	reg := registryWithOptions(nil, cache, 0, server.URL)
+
+	ctx := context.Background()
+	info, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+
+	if info.Name != "test" {
+		t.Errorf("Module name = %q, want %q", info.Name, "test")
+	}
+	if cache.getCount != 1 {
+		t.Errorf("Cache Get called %d times, want 1", cache.getCount)
+	}
+	if cache.putCount != 1 {
+		t.Errorf("Cache Put called %d times, want 1", cache.putCount)
+	}
+	// Verify content was stored
+	if _, ok := cache.store["test@1.0.0"]; !ok {
+		t.Error("Content was not stored in cache")
+	}
+}
+
+// TestCache_NilCacheDoesNotBreak verifies that nil cache works fine.
+func TestCache_NilCacheDoesNotBreak(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	reg := registryWithOptions(nil, nil, 0, server.URL)
+
+	ctx := context.Background()
+	info, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+	if info.Name != "test" {
+		t.Errorf("Module name = %q, want %q", info.Name, "test")
+	}
+}
+
+// TestCache_GetErrorDoesNotBreakResolution verifies graceful degradation on Get errors.
+func TestCache_GetErrorDoesNotBreakResolution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	cache := newMockCache()
+	cache.failGet = true // Simulate cache failure
+
+	reg := registryWithOptions(nil, cache, 0, server.URL)
+
+	ctx := context.Background()
+	info, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() should succeed despite cache error, got: %v", err)
+	}
+	if info.Name != "test" {
+		t.Errorf("Module name = %q, want %q", info.Name, "test")
+	}
+}
+
+// TestCache_PutErrorDoesNotBreakResolution verifies graceful degradation on Put errors.
+func TestCache_PutErrorDoesNotBreakResolution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	cache := newMockCache()
+	cache.failPut = true // Simulate cache write failure
+
+	reg := registryWithOptions(nil, cache, 0, server.URL)
+
+	ctx := context.Background()
+	info, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() should succeed despite cache Put error, got: %v", err)
+	}
+	if info.Name != "test" {
+		t.Errorf("Module name = %q, want %q", info.Name, "test")
+	}
+	// Put should have been attempted
+	if cache.putCount != 1 {
+		t.Errorf("Cache Put should have been attempted, count = %d", cache.putCount)
+	}
+}
+
+// TestCache_ResolveWithCache tests the full Resolve function with cache.
+func TestCache_ResolveWithCache(t *testing.T) {
+	var httpCallCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpCallCount++
+		switch r.URL.Path {
+		case "/modules/dep_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dep_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cache := newMockCache()
+
+	ctx := context.Background()
+	moduleContent := `
+module(name = "root", version = "1.0.0")
+bazel_dep(name = "dep_a", version = "1.0.0")
+`
+
+	// First resolve - should fetch from HTTP and store in cache
+	result1, err := Resolve(ctx, moduleContent, ResolutionOptions{
+		Registries: []string{server.URL},
+		Cache:      cache,
+	})
+	if err != nil {
+		t.Fatalf("First Resolve() error = %v", err)
+	}
+	if len(result1.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(result1.Modules))
+	}
+
+	firstHTTPCalls := httpCallCount
+
+	// Second resolve - should use cache, no HTTP calls
+	result2, err := Resolve(ctx, moduleContent, ResolutionOptions{
+		Registries: []string{server.URL},
+		Cache:      cache,
+	})
+	if err != nil {
+		t.Fatalf("Second Resolve() error = %v", err)
+	}
+	if len(result2.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(result2.Modules))
+	}
+
+	if httpCallCount != firstHTTPCalls {
+		t.Errorf("Second resolve should not make HTTP calls, but made %d more", httpCallCount-firstHTTPCalls)
 	}
 }
 

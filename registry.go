@@ -63,15 +63,18 @@ func (e *RegistryError) Error() string {
 // The client is optimized for high-throughput concurrent access with:
 //   - Connection pooling (up to 50 idle connections, 20 per host)
 //   - Thread-safe in-memory caching (module files are cached by name@version)
+//   - Optional external caching (user-provided ModuleCache implementation)
 //   - Configurable timeouts (15 second default)
 //
-// The cache is unbounded and lives for the lifetime of the client. For long-running
-// processes, consider creating a new client periodically to clear the cache.
+// The in-memory cache is unbounded and lives for the lifetime of the client.
+// For long-running processes, consider creating a new client periodically
+// to clear the cache, or use an external cache with TTL/eviction policies.
 type registryClient struct {
 	baseURL       string
 	client        *http.Client
-	cache         sync.Map // map[string]*ModuleInfo keyed by "name@version"
-	metadataCache sync.Map // map[string]*registry.Metadata keyed by module name
+	cache         sync.Map    // map[string]*ModuleInfo keyed by "name@version" (in-memory)
+	metadataCache sync.Map    // map[string]*registry.Metadata keyed by module name
+	externalCache ModuleCache // optional external cache for persistence across resolutions
 }
 
 // BaseURL returns the base URL of the registry (e.g., "https://bcr.bazel.build").
@@ -130,9 +133,17 @@ func registryWithTimeout(timeout time.Duration, urls ...string) registryInterfac
 // If httpClient is nil, creates default clients with connection pooling.
 // If timeout is positive, it overrides the httpClient's timeout.
 func registryWithHTTPClient(httpClient *http.Client, timeout time.Duration, urls ...string) registryInterface {
+	return registryWithOptions(httpClient, nil, timeout, urls...)
+}
+
+// registryWithOptions creates a registry with all optional parameters.
+// If httpClient is nil, creates default clients with connection pooling.
+// If cache is nil, no external caching is used.
+// If timeout is positive, it overrides the httpClient's timeout.
+func registryWithOptions(httpClient *http.Client, cache ModuleCache, timeout time.Duration, urls ...string) registryInterface {
 	if len(urls) == 0 {
 		// Use BCR + GitHub mirror for resilience
-		chain, err := newRegistryChainWithHTTPClient(DefaultRegistries, httpClient, timeout)
+		chain, err := newRegistryChainWithOptions(DefaultRegistries, httpClient, cache, timeout)
 		if err != nil {
 			// This should never happen with DefaultRegistries
 			panic(fmt.Sprintf("failed to create default registry chain: %v", err))
@@ -140,14 +151,14 @@ func registryWithHTTPClient(httpClient *http.Client, timeout time.Duration, urls
 		return chain
 	}
 	if len(urls) == 1 {
-		reg, err := createRegistryClientWithHTTPClient(urls[0], httpClient, timeout)
+		reg, err := createRegistryClientWithOptions(urls[0], httpClient, cache, timeout)
 		if err != nil {
 			// Fall back to treating it as a remote URL if parsing fails
-			return newRegistryClientWithHTTPClient(urls[0], httpClient, timeout)
+			return newRegistryClientWithOptions(urls[0], httpClient, cache, timeout)
 		}
 		return reg
 	}
-	chain, err := newRegistryChainWithHTTPClient(urls, httpClient, timeout)
+	chain, err := newRegistryChainWithOptions(urls, httpClient, cache, timeout)
 	if err != nil {
 		// Panic on invalid URLs - caller should validate URLs before calling
 		panic(fmt.Sprintf("failed to create registry chain: %v", err))
@@ -170,6 +181,14 @@ func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *regist
 // If client is nil, creates a default client with connection pooling.
 // If timeout is positive, it overrides the client's timeout.
 func newRegistryClientWithHTTPClient(baseURL string, client *http.Client, timeout time.Duration) *registryClient {
+	return newRegistryClientWithOptions(baseURL, client, nil, timeout)
+}
+
+// newRegistryClientWithOptions creates a registryClient with all optional parameters.
+// If client is nil, creates a default client with connection pooling.
+// If cache is nil, no external caching is used.
+// If timeout is positive, it overrides the client's timeout.
+func newRegistryClientWithOptions(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration) *registryClient {
 	if client == nil {
 		// Create default pooled client
 		transport := &http.Transport{
@@ -199,21 +218,42 @@ func newRegistryClientWithHTTPClient(baseURL string, client *http.Client, timeou
 	}
 
 	return &registryClient{
-		baseURL: strings.TrimSuffix(baseURL, "/"),
-		client:  client,
+		baseURL:       strings.TrimSuffix(baseURL, "/"),
+		client:        client,
+		externalCache: cache,
 	}
 }
 
 // GetModuleFile fetches and parses a MODULE.bazel file from the registry.
-// Results are cached, so repeated calls for the same module@version are fast.
+// Results are cached in memory, and optionally in an external cache if configured.
+// Repeated calls for the same module@version are fast.
 //
 // Returns an error if the module doesn't exist, the network fails, or parsing fails.
+// External cache errors are handled gracefully and do not cause resolution to fail.
 func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
 	cacheKey := moduleName + "@" + version
+
+	// 1. Check in-memory cache first (fastest)
 	if cached, ok := r.cache.Load(cacheKey); ok {
 		return cached.(*ModuleInfo), nil
 	}
 
+	// 2. Check external cache if configured
+	if r.externalCache != nil {
+		if data, found, err := r.externalCache.Get(ctx, moduleName, version); err == nil && found {
+			// Parse and validate the cached content
+			moduleInfo, err := ParseModuleContent(string(data))
+			if err == nil {
+				// Store in in-memory cache for faster subsequent access
+				r.cache.Store(cacheKey, moduleInfo)
+				return moduleInfo, nil
+			}
+			// Cache contained invalid content, fall through to fetch
+		}
+		// External cache error or miss, continue with registry fetch
+	}
+
+	// 3. Fetch from registry
 	url := fmt.Sprintf("%s/modules/%s/%s/MODULE.bazel", r.baseURL, moduleName, version)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
@@ -245,6 +285,13 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 		return nil, err
 	}
 
+	// 4. Store in external cache (errors ignored - don't break resolution)
+	if r.externalCache != nil {
+		// Best effort - don't fail resolution if cache write fails
+		_ = r.externalCache.Put(ctx, moduleName, version, data)
+	}
+
+	// 5. Store in in-memory cache
 	r.cache.Store(cacheKey, moduleInfo)
 	return moduleInfo, nil
 }

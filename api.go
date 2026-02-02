@@ -91,7 +91,7 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 // Uses BCR if no registries are specified.
 func registryFromOptions(opts ResolutionOptions) registryInterface {
 	if len(opts.Registries) == 0 {
-		return registryWithHTTPClient(opts.HTTPClient, opts.Timeout)
+		return registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout)
 	}
-	return registryWithHTTPClient(opts.HTTPClient, opts.Timeout, opts.Registries...)
+	return registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Registries...)
 }

@@ -75,13 +75,21 @@ func newRegistryChainWithTimeout(registryURLs []string, timeout time.Duration) (
 // If httpClient is nil, creates default clients with connection pooling.
 // If timeout is positive, it overrides the httpClient's timeout.
 func newRegistryChainWithHTTPClient(registryURLs []string, httpClient *http.Client, timeout time.Duration) (*registryChain, error) {
+	return newRegistryChainWithOptions(registryURLs, httpClient, nil, timeout)
+}
+
+// newRegistryChainWithOptions creates a chain of registries with all optional parameters.
+// If httpClient is nil, creates default clients with connection pooling.
+// If cache is nil, no external caching is used.
+// If timeout is positive, it overrides the httpClient's timeout.
+func newRegistryChainWithOptions(registryURLs []string, httpClient *http.Client, cache ModuleCache, timeout time.Duration) (*registryChain, error) {
 	if len(registryURLs) == 0 {
 		return nil, errors.New("no registry URLs provided")
 	}
 
 	clients := make([]registryInterface, 0, len(registryURLs))
 	for _, url := range registryURLs {
-		client, err := createRegistryClientWithHTTPClient(url, httpClient, timeout)
+		client, err := createRegistryClientWithOptions(url, httpClient, cache, timeout)
 		if err != nil {
 			// Log error but continue with other registries
 			// In production, consider adding a warning mechanism
