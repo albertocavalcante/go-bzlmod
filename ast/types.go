@@ -1,10 +1,10 @@
 // Package ast provides AST types for MODULE.bazel files.
-// It wraps github.com/bazelbuild/buildtools/build with higher-level types.
+// It wraps the vendored buildtools parser with higher-level types.
 package ast
 
 import (
+	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 	"github.com/albertocavalcante/go-bzlmod/label"
-	"github.com/bazelbuild/buildtools/build"
 )
 
 // Position represents a source position for diagnostics.

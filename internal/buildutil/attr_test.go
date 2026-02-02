@@ -3,7 +3,7 @@ package buildutil
 import (
 	"testing"
 
-	"github.com/bazelbuild/buildtools/build"
+	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 )
 
 func parseCall(t *testing.T, content string) *build.CallExpr {

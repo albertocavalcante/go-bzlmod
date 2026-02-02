@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/albertocavalcante/go-bzlmod/internal/buildutil"
-	"github.com/bazelbuild/buildtools/build"
+	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 )
 
 // ParseModuleFile reads and parses a MODULE.bazel file from disk.

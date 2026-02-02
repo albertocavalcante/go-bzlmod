@@ -8,7 +8,7 @@ package buildutil
 import (
 	"strconv"
 
-	"github.com/bazelbuild/buildtools/build"
+	"github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
 )
 
 // String extracts a string attribute from a function call by name.
