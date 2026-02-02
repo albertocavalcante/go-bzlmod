@@ -3,8 +3,10 @@ package gobzlmod
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -46,6 +48,7 @@ type RegistryError struct {
 	ModuleName string
 	Version    string
 	URL        string
+	Retryable  bool
 }
 
 func (e *RegistryError) Error() string {
@@ -56,6 +59,22 @@ func (e *RegistryError) Error() string {
 		return fmt.Sprintf("registry returned status %d for %s", e.StatusCode, e.URL)
 	}
 	return fmt.Sprintf("registry returned status %d", e.StatusCode)
+}
+
+// Is implements errors.Is by mapping HTTP status codes to sentinel errors.
+func (e *RegistryError) Is(target error) bool {
+	switch e.StatusCode {
+	case 404:
+		if e.Version == "" {
+			return target == ErrModuleNotFound
+		}
+		return target == ErrVersionNotFound
+	case 429:
+		return target == ErrRateLimited
+	case 401, 403:
+		return target == ErrUnauthorized
+	}
+	return false
 }
 
 // registryClient fetches Bazel module metadata from a registry (typically BCR).
@@ -75,6 +94,15 @@ type registryClient struct {
 	cache         sync.Map    // map[string]*ModuleInfo keyed by "name@version" (in-memory)
 	metadataCache sync.Map    // map[string]*registry.Metadata keyed by module name
 	externalCache ModuleCache // optional external cache for persistence across resolutions
+	logger        *slog.Logger
+}
+
+// log returns the configured logger, or a no-op logger if none was set.
+func (r *registryClient) log() *slog.Logger {
+	if r.logger != nil {
+		return r.logger
+	}
+	return slog.New(discardHandler{})
 }
 
 // BaseURL returns the base URL of the registry (e.g., "https://bcr.bazel.build").
@@ -82,7 +110,70 @@ func (r *registryClient) BaseURL() string {
 	return r.baseURL
 }
 
-// Registry creates a registry client for dependency resolution.
+// RegistryOption configures a Registry.
+type RegistryOption func(*registryConfig)
+
+type registryConfig struct {
+	httpClient *http.Client
+	cache      ModuleCache
+	timeout    time.Duration
+	logger     *slog.Logger
+}
+
+// WithRegistryHTTPClient sets a custom HTTP client for registry requests.
+func WithRegistryHTTPClient(c *http.Client) RegistryOption {
+	return func(cfg *registryConfig) {
+		cfg.httpClient = c
+	}
+}
+
+// WithRegistryCache sets an external cache for MODULE.bazel files.
+func WithRegistryCache(c ModuleCache) RegistryOption {
+	return func(cfg *registryConfig) {
+		cfg.cache = c
+	}
+}
+
+// WithRegistryTimeout sets the HTTP request timeout.
+func WithRegistryTimeout(d time.Duration) RegistryOption {
+	return func(cfg *registryConfig) {
+		cfg.timeout = d
+	}
+}
+
+// WithRegistryLogger sets a structured logger for registry diagnostics.
+func WithRegistryLogger(l *slog.Logger) RegistryOption {
+	return func(cfg *registryConfig) {
+		cfg.logger = l
+	}
+}
+
+// NewRegistry creates a Registry that queries the given URLs in order.
+// If multiple URLs are provided, the registry will try each in order until
+// a module is found (registry chain behavior).
+//
+// Example:
+//
+//	reg, err := NewRegistry([]string{"https://bcr.bazel.build"})
+//	reg, err := NewRegistry(DefaultRegistries, WithRegistryTimeout(30*time.Second))
+func NewRegistry(urls []string, opts ...RegistryOption) (Registry, error) {
+	cfg := &registryConfig{
+		timeout: 15 * time.Second, // default
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	if len(urls) == 0 {
+		return nil, errors.New("at least one registry URL is required")
+	}
+
+	return newRegistryChainWithAllOptions(urls, cfg.httpClient, cfg.cache, cfg.timeout, cfg.logger)
+}
+
+// RegistryClient creates a registry client for dependency resolution.
+//
+// Deprecated: Use NewRegistry instead.
 //
 // With no arguments, uses BCR with GitHub mirror fallback for resilience.
 // With one URL, creates a single registry client (no fallback).
@@ -106,33 +197,33 @@ func (r *registryClient) BaseURL() string {
 // Examples:
 //
 //	// Use BCR with GitHub mirror fallback (recommended)
-//	reg := Registry()
+//	reg := RegistryClient()
 //
 //	// Use a private registry only (no fallback)
-//	reg := Registry("https://registry.example.com")
+//	reg := RegistryClient("https://registry.example.com")
 //
 //	// Private registry with BCR fallback
-//	reg := Registry("https://registry.example.com", DefaultRegistry)
+//	reg := RegistryClient("https://registry.example.com", DefaultRegistry)
 //
 //	// Local/airgap registry
-//	reg := Registry("file:///opt/bazel-registry")
+//	reg := RegistryClient("file:///opt/bazel-registry")
 //
 //	// Mixed: local first, then remote fallback
-//	reg := Registry("file:///opt/local-modules", DefaultRegistry)
-func Registry(urls ...string) registryInterface {
+//	reg := RegistryClient("file:///opt/local-modules", DefaultRegistry)
+func RegistryClient(urls ...string) Registry {
 	return registryWithTimeout(0, urls...)
 }
 
 // registryWithTimeout creates a registry with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
-func registryWithTimeout(timeout time.Duration, urls ...string) registryInterface {
+func registryWithTimeout(timeout time.Duration, urls ...string) Registry {
 	return registryWithHTTPClient(nil, timeout, urls...)
 }
 
 // registryWithHTTPClient creates a registry with an optional custom HTTP client.
 // If httpClient is nil, creates default clients with connection pooling.
 // If timeout is positive, it overrides the httpClient's timeout.
-func registryWithHTTPClient(httpClient *http.Client, timeout time.Duration, urls ...string) registryInterface {
+func registryWithHTTPClient(httpClient *http.Client, timeout time.Duration, urls ...string) Registry {
 	return registryWithOptions(httpClient, nil, timeout, urls...)
 }
 
@@ -140,10 +231,19 @@ func registryWithHTTPClient(httpClient *http.Client, timeout time.Duration, urls
 // If httpClient is nil, creates default clients with connection pooling.
 // If cache is nil, no external caching is used.
 // If timeout is positive, it overrides the httpClient's timeout.
-func registryWithOptions(httpClient *http.Client, cache ModuleCache, timeout time.Duration, urls ...string) registryInterface {
+func registryWithOptions(httpClient *http.Client, cache ModuleCache, timeout time.Duration, urls ...string) Registry {
+	return registryWithAllOptions(httpClient, cache, timeout, nil, urls...)
+}
+
+// registryWithAllOptions creates a registry with all optional parameters including logger.
+// If httpClient is nil, creates default clients with connection pooling.
+// If cache is nil, no external caching is used.
+// If timeout is positive, it overrides the httpClient's timeout.
+// If logger is nil, logging is disabled.
+func registryWithAllOptions(httpClient *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, urls ...string) Registry {
 	if len(urls) == 0 {
 		// Use BCR + GitHub mirror for resilience
-		chain, err := newRegistryChainWithOptions(DefaultRegistries, httpClient, cache, timeout)
+		chain, err := newRegistryChainWithAllOptions(DefaultRegistries, httpClient, cache, timeout, logger)
 		if err != nil {
 			// This should never happen with DefaultRegistries
 			panic(fmt.Sprintf("failed to create default registry chain: %v", err))
@@ -151,14 +251,14 @@ func registryWithOptions(httpClient *http.Client, cache ModuleCache, timeout tim
 		return chain
 	}
 	if len(urls) == 1 {
-		reg, err := createRegistryClientWithOptions(urls[0], httpClient, cache, timeout)
+		reg, err := createRegistryClientWithAllOptions(urls[0], httpClient, cache, timeout, logger)
 		if err != nil {
 			// Fall back to treating it as a remote URL if parsing fails
-			return newRegistryClientWithOptions(urls[0], httpClient, cache, timeout)
+			return newRegistryClientWithAllOptions(urls[0], httpClient, cache, timeout, logger)
 		}
 		return reg
 	}
-	chain, err := newRegistryChainWithOptions(urls, httpClient, cache, timeout)
+	chain, err := newRegistryChainWithAllOptions(urls, httpClient, cache, timeout, logger)
 	if err != nil {
 		// Panic on invalid URLs - caller should validate URLs before calling
 		panic(fmt.Sprintf("failed to create registry chain: %v", err))
@@ -189,9 +289,19 @@ func newRegistryClientWithHTTPClient(baseURL string, client *http.Client, timeou
 // If cache is nil, no external caching is used.
 // If timeout is positive, it overrides the client's timeout.
 func newRegistryClientWithOptions(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration) *registryClient {
+	return newRegistryClientWithAllOptions(baseURL, client, cache, timeout, nil)
+}
+
+// newRegistryClientWithAllOptions creates a registryClient with all optional parameters including logger.
+// If client is nil, creates a default client with connection pooling.
+// If cache is nil, no external caching is used.
+// If timeout is positive, it overrides the client's timeout.
+// If logger is nil, logging is disabled.
+func newRegistryClientWithAllOptions(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) *registryClient {
 	if client == nil {
-		// Create default pooled client
+		// Create default pooled client that honors HTTP_PROXY/HTTPS_PROXY env vars
 		transport := &http.Transport{
+			Proxy:               http.ProxyFromEnvironment,
 			MaxIdleConns:        defaultMaxIdleConns,
 			MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
 			IdleConnTimeout:     defaultIdleConnTimeout,
@@ -221,6 +331,7 @@ func newRegistryClientWithOptions(baseURL string, client *http.Client, cache Mod
 		baseURL:       strings.TrimSuffix(baseURL, "/"),
 		client:        client,
 		externalCache: cache,
+		logger:        logger,
 	}
 }
 
@@ -232,9 +343,11 @@ func newRegistryClientWithOptions(baseURL string, client *http.Client, cache Mod
 // External cache errors are handled gracefully and do not cause resolution to fail.
 func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
 	cacheKey := moduleName + "@" + version
+	logger := r.log()
 
 	// 1. Check in-memory cache first (fastest)
 	if cached, ok := r.cache.Load(cacheKey); ok {
+		logger.Debug("module cache hit (memory)", "name", moduleName, "version", version)
 		return cached.(*ModuleInfo), nil
 	}
 
@@ -244,10 +357,12 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 			// Parse and validate the cached content
 			moduleInfo, err := ParseModuleContent(string(data))
 			if err == nil {
+				logger.Debug("module cache hit (external)", "name", moduleName, "version", version)
 				// Store in in-memory cache for faster subsequent access
 				r.cache.Store(cacheKey, moduleInfo)
 				return moduleInfo, nil
 			}
+			logger.Debug("external cache contained invalid content", "name", moduleName, "version", version, "error", err)
 			// Cache contained invalid content, fall through to fetch
 		}
 		// External cache error or miss, continue with registry fetch
@@ -255,6 +370,8 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 
 	// 3. Fetch from registry
 	url := fmt.Sprintf("%s/modules/%s/%s/MODULE.bazel", r.baseURL, moduleName, version)
+	logger.Debug("fetching module from registry", "name", moduleName, "version", version, "url", url)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
@@ -262,28 +379,33 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, err
+		logger.Debug("registry request failed", "name", moduleName, "version", version, "error", err)
+		return nil, fmt.Errorf("fetch module %s@%s: %w", moduleName, version, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		logger.Debug("registry returned error status", "name", moduleName, "version", version, "status", resp.StatusCode)
 		return nil, &RegistryError{
 			StatusCode: resp.StatusCode,
 			ModuleName: moduleName,
 			Version:    version,
 			URL:        url,
+			Retryable:  resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode == 504,
 		}
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read module %s@%s response: %w", moduleName, version, err)
 	}
 
 	moduleInfo, err := ParseModuleContent(string(data))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse module %s@%s: %w", moduleName, version, err)
 	}
+
+	logger.Debug("fetched module from registry", "name", moduleName, "version", version, "bytes", len(data))
 
 	// 4. Store in external cache (errors ignored - don't break resolution)
 	if r.externalCache != nil {
@@ -307,12 +429,12 @@ func (r *registryClient) GetModuleMetadata(ctx context.Context, moduleName strin
 	url := fmt.Sprintf("%s/modules/%s/metadata.json", r.baseURL, moduleName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create request for %s metadata: %w", moduleName, err)
 	}
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch metadata for %s: %w", moduleName, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -321,12 +443,13 @@ func (r *registryClient) GetModuleMetadata(ctx context.Context, moduleName strin
 			StatusCode: resp.StatusCode,
 			ModuleName: moduleName,
 			URL:        url,
+			Retryable:  resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode == 504,
 		}
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read metadata response for %s: %w", moduleName, err)
 	}
 
 	var metadata registry.Metadata

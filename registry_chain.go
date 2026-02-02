@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +43,7 @@ import (
 //
 // By always falling back, we provide better resilience than Bazel itself.
 type registryChain struct {
-	clients []registryInterface
+	clients []Registry
 
 	// moduleRegistry tracks which registry provides each module (by module name)
 	// Once a module is found in a registry, all versions come from that registry
@@ -83,13 +85,22 @@ func newRegistryChainWithHTTPClient(registryURLs []string, httpClient *http.Clie
 // If cache is nil, no external caching is used.
 // If timeout is positive, it overrides the httpClient's timeout.
 func newRegistryChainWithOptions(registryURLs []string, httpClient *http.Client, cache ModuleCache, timeout time.Duration) (*registryChain, error) {
+	return newRegistryChainWithAllOptions(registryURLs, httpClient, cache, timeout, nil)
+}
+
+// newRegistryChainWithAllOptions creates a chain of registries with all optional parameters including logger.
+// If httpClient is nil, creates default clients with connection pooling.
+// If cache is nil, no external caching is used.
+// If timeout is positive, it overrides the httpClient's timeout.
+// If logger is nil, logging is disabled.
+func newRegistryChainWithAllOptions(registryURLs []string, httpClient *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) (*registryChain, error) {
 	if len(registryURLs) == 0 {
 		return nil, errors.New("no registry URLs provided")
 	}
 
-	clients := make([]registryInterface, 0, len(registryURLs))
+	clients := make([]Registry, 0, len(registryURLs))
 	for _, url := range registryURLs {
-		client, err := createRegistryClientWithOptions(url, httpClient, cache, timeout)
+		client, err := createRegistryClientWithAllOptions(url, httpClient, cache, timeout, logger)
 		if err != nil {
 			// Log error but continue with other registries
 			// In production, consider adding a warning mechanism
@@ -158,8 +169,8 @@ func (rc *registryChain) GetModuleFile(ctx context.Context, moduleName, version 
 	if len(notFoundErrors) == 1 {
 		return nil, fmt.Errorf("module %s@%s not found: %s", moduleName, version, notFoundErrors[0])
 	}
-	return nil, fmt.Errorf("module %s@%s not found in any registry:\n  %v",
-		moduleName, version, notFoundErrors)
+	return nil, fmt.Errorf("module %s@%s not found in any registry:\n  - %s",
+		moduleName, version, strings.Join(notFoundErrors, "\n  - "))
 }
 
 // GetModuleMetadata fetches metadata using the registry that provides this module.
@@ -227,14 +238,22 @@ func (rc *registryChain) GetRegistryForModule(moduleName string) string {
 	return ""
 }
 
-// registryInterface defines the minimal interface needed by dependencyResolver.
-// Both registryClient and registryChain implement this interface.
-type registryInterface interface {
+// Registry provides access to Bazel module registries.
+// Implementations fetch MODULE.bazel files and module metadata from registries.
+//
+// This interface is exported to allow users to implement custom registries
+// or create mocks for testing.
+type Registry interface {
+	// GetModuleFile fetches and parses a MODULE.bazel file for the given module version.
 	GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error)
+
+	// GetModuleMetadata fetches metadata for a module (available versions, yanked info, etc).
 	GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error)
+
+	// BaseURL returns the base URL of this registry.
 	BaseURL() string
 }
 
 // Verify that both types implement the interface
-var _ registryInterface = (*registryClient)(nil)
-var _ registryInterface = (*registryChain)(nil)
+var _ Registry = (*registryClient)(nil)
+var _ Registry = (*registryChain)(nil)

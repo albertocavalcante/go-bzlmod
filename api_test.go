@@ -178,12 +178,12 @@ func TestResolveFromContent_Success(t *testing.T) {
 
 	bazel_dep(name = "rules_go", version = "0.41.0")`
 
-	list, err := Resolve(context.Background(), content, ResolutionOptions{
+	list, err := ResolveContent(context.Background(), content, ResolutionOptions{
 		Registries:     []string{server.URL},
 		IncludeDevDeps: false,
 	})
 	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
+		t.Fatalf("ResolveContent() error = %v", err)
 	}
 
 	if len(list.Modules) != 1 {
@@ -201,7 +201,7 @@ func TestResolveFromContent_Success(t *testing.T) {
 func TestResolveFromContent_ParseError(t *testing.T) {
 	content := `invalid syntax here (`
 
-	list, err := Resolve(context.Background(), content, ResolutionOptions{
+	list, err := ResolveContent(context.Background(), content, ResolutionOptions{
 		Registries:     []string{"https://bcr.bazel.build"},
 		IncludeDevDeps: false,
 	})
@@ -220,7 +220,7 @@ func TestResolveFromContent_NetworkError(t *testing.T) {
 	bazel_dep(name = "nonexistent", version = "1.0.0")`
 
 	// Use invalid registry URL
-	list, err := Resolve(context.Background(), content, ResolutionOptions{
+	list, err := ResolveContent(context.Background(), content, ResolutionOptions{
 		Registries:     []string{"http://invalid-registry.com"},
 		IncludeDevDeps: false,
 	})
@@ -256,12 +256,12 @@ func TestResolveFromContent_WithOverrides(t *testing.T) {
 		registry = "` + server.URL + `",
 	)`
 
-	list, err := Resolve(context.Background(), content, ResolutionOptions{
+	list, err := ResolveContent(context.Background(), content, ResolutionOptions{
 		Registries:     []string{server.URL},
 		IncludeDevDeps: false,
 	})
 	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
+		t.Fatalf("ResolveContent() error = %v", err)
 	}
 
 	if len(list.Modules) != 1 {
@@ -308,7 +308,7 @@ func TestResolveFromContent_WithOverrideModules(t *testing.T) {
 		t.Fatalf("ParseModuleContent() error = %v", err)
 	}
 
-	reg := Registry(server.URL)
+	reg := RegistryClient(server.URL)
 	resolver := newDependencyResolver(reg, false)
 	for moduleName, moduleContent := range overrideModules {
 		if err := resolver.AddOverrideModuleContent(moduleName, moduleContent); err != nil {
@@ -363,12 +363,12 @@ func TestResolveFromContent_MVSSelection(t *testing.T) {
 	bazel_dep(name = "dep_a", version = "1.0.0")
 	bazel_dep(name = "dep_b", version = "1.0.0")`
 
-	list, err := Resolve(context.Background(), content, ResolutionOptions{
+	list, err := ResolveContent(context.Background(), content, ResolutionOptions{
 		Registries:     []string{server.URL},
 		IncludeDevDeps: false,
 	})
 	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
+		t.Fatalf("ResolveContent() error = %v", err)
 	}
 
 	// Should have 3 modules: dep_a, dep_b, shared_dep
@@ -397,13 +397,13 @@ func TestResolveFromContent_MVSSelection(t *testing.T) {
 func TestResolveFromContent_EmptyModule(t *testing.T) {
 	content := `module(name = "empty_project", version = "1.0.0")`
 
-	list, err := Resolve(context.Background(), content, ResolutionOptions{
+	list, err := ResolveContent(context.Background(), content, ResolutionOptions{
 		Registries:     []string{"https://bcr.bazel.build"},
 		IncludeDevDeps: false,
 	})
 
 	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
+		t.Fatalf("ResolveContent() error = %v", err)
 	}
 
 	if len(list.Modules) != 0 {
@@ -427,12 +427,12 @@ func BenchmarkResolveFromContent_Simple(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := Resolve(context.Background(), content, ResolutionOptions{
+		_, err := ResolveContent(context.Background(), content, ResolutionOptions{
 			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 		})
 		if err != nil {
-			b.Fatalf("Resolve() error = %v", err)
+			b.Fatalf("ResolveContent() error = %v", err)
 		}
 	}
 }
@@ -461,12 +461,12 @@ func BenchmarkResolveFromContent_Complex(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := Resolve(context.Background(), content, ResolutionOptions{
+		_, err := ResolveContent(context.Background(), content, ResolutionOptions{
 			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
 		})
 		if err != nil {
-			b.Fatalf("Resolve() error = %v", err)
+			b.Fatalf("ResolveContent() error = %v", err)
 		}
 	}
 }
@@ -480,7 +480,7 @@ func TestResolve_EmptyContent(t *testing.T) {
 	ctx := context.Background()
 
 	// Empty string should fail parsing (no module() call)
-	_, err := Resolve(ctx, "", ResolutionOptions{})
+	_, err := ResolveContent(ctx, "", ResolutionOptions{})
 	if err == nil {
 		t.Error("Expected error for empty content, got nil")
 	}
@@ -499,7 +499,7 @@ func TestResolve_WhitespaceOnlyContent(t *testing.T) {
 	}
 
 	for _, content := range testCases {
-		_, err := Resolve(ctx, content, ResolutionOptions{})
+		_, err := ResolveContent(ctx, content, ResolutionOptions{})
 		if err == nil {
 			t.Errorf("Expected error for whitespace-only content %q, got nil", content)
 		}
@@ -523,7 +523,7 @@ bazel_dep(name = "slow_dep", version = "1.0.0")`
 	// Cancel immediately
 	cancel()
 
-	_, err := Resolve(ctx, content, ResolutionOptions{
+	_, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 
@@ -547,7 +547,7 @@ func TestResolve_ContextTimeout(t *testing.T) {
 	content := `module(name = "test", version = "1.0.0")
 bazel_dep(name = "slow_dep", version = "1.0.0")`
 
-	_, err := Resolve(ctx, content, ResolutionOptions{
+	_, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 
@@ -562,7 +562,7 @@ func TestResolve_NoDependencies(t *testing.T) {
 
 	content := `module(name = "standalone", version = "1.0.0")`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{})
+	result, err := ResolveContent(ctx, content, ResolutionOptions{})
 	if err != nil {
 		t.Fatalf("Unexpected error for module with no deps: %v", err)
 	}
@@ -592,7 +592,7 @@ func TestResolve_DefaultRegistry(t *testing.T) {
 bazel_dep(name = "definitely_nonexistent_module_xyz_123", version = "0.0.0")`
 
 	// With empty registries, should use default (BCR)
-	_, err := Resolve(ctx, content, ResolutionOptions{
+	_, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: nil, // Should default to BCR
 	})
 
@@ -617,7 +617,7 @@ func TestResolve_CustomSingleRegistry(t *testing.T) {
 	content := `module(name = "test", version = "1.0.0")
 bazel_dep(name = "custom_dep", version = "1.0.0")`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{
+	result, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 
@@ -661,7 +661,7 @@ func TestResolve_MultipleRegistries(t *testing.T) {
 bazel_dep(name = "module_a", version = "1.0.0")
 bazel_dep(name = "module_b", version = "1.0.0")`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{
+	result, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: []string{server1.URL, server2.URL},
 	})
 
@@ -703,7 +703,7 @@ bazel_dep(name = "some_dep", version = "1.0.0")`
 	}
 
 	for _, url := range testCases {
-		_, err := Resolve(ctx, content, ResolutionOptions{
+		_, err := ResolveContent(ctx, content, ResolutionOptions{
 			Registries: []string{url},
 		})
 
@@ -722,7 +722,7 @@ func TestResolve_UnicodeModuleName(t *testing.T) {
 	// Unicode should be rejected at parse time
 	content := `module(name = "模块", version = "1.0.0")`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{})
+	result, err := ResolveContent(ctx, content, ResolutionOptions{})
 
 	// The parser may accept this but it's invalid per Bazel spec
 	// At minimum, it shouldn't panic
@@ -746,7 +746,7 @@ func TestResolve_SpecialCharactersInVersion(t *testing.T) {
 
 	for _, tc := range testCases {
 		content := fmt.Sprintf(`module(name = "test", version = "%s")`, tc.version)
-		_, err := Resolve(ctx, content, ResolutionOptions{})
+		_, err := ResolveContent(ctx, content, ResolutionOptions{})
 
 		if tc.shouldErr && err == nil {
 			t.Errorf("Expected error for version %q", tc.version)
@@ -763,7 +763,7 @@ func TestResolve_WindowsLineEndings(t *testing.T) {
 
 	content := "module(name = \"test\", version = \"1.0.0\")\r\n"
 
-	result, err := Resolve(ctx, content, ResolutionOptions{})
+	result, err := ResolveContent(ctx, content, ResolutionOptions{})
 	if err != nil {
 		t.Fatalf("Failed to parse content with CRLF: %v", err)
 	}
@@ -779,7 +779,7 @@ func TestResolve_MixedLineEndings(t *testing.T) {
 
 	content := "module(\r\n  name = \"test\",\n  version = \"1.0.0\"\r\n)"
 
-	result, err := Resolve(ctx, content, ResolutionOptions{})
+	result, err := ResolveContent(ctx, content, ResolutionOptions{})
 	if err != nil {
 		t.Fatalf("Failed to parse content with mixed line endings: %v", err)
 	}
@@ -796,7 +796,7 @@ func TestResolve_TrailingWhitespace(t *testing.T) {
 	content := `module(name = "test", version = "1.0.0")
 	`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{})
+	result, err := ResolveContent(ctx, content, ResolutionOptions{})
 	if err != nil {
 		t.Fatalf("Failed to parse content with trailing whitespace: %v", err)
 	}
@@ -824,7 +824,7 @@ func TestResolve_LargeContent(t *testing.T) {
 	}
 
 	// Should not panic or timeout quickly
-	result, err := Resolve(ctx, content.String(), ResolutionOptions{
+	result, err := ResolveContent(ctx, content.String(), ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 
@@ -1150,7 +1150,7 @@ bazel_dep(name = "cycle_a", version = "1.0.0")`)
 bazel_dep(name = "cycle_a", version = "1.0.0")`
 
 	// Should not infinite loop or crash - mutual dependencies are allowed
-	list, err := Resolve(ctx, content, ResolutionOptions{
+	list, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 
@@ -1200,7 +1200,7 @@ bazel_dep(name = "bottom", version = "2.0.0")`)
 bazel_dep(name = "left", version = "1.0.0")
 bazel_dep(name = "right", version = "1.0.0")`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{
+	result, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 
@@ -1242,7 +1242,7 @@ bazel_dep(name = "prod_dep", version = "1.0.0")
 bazel_dep(name = "dev_dep", version = "1.0.0", dev_dependency = True)`
 
 	// Default: exclude dev deps
-	result, err := Resolve(ctx, content, ResolutionOptions{
+	result, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries:     []string{server.URL},
 		IncludeDevDeps: false,
 	})
@@ -1279,7 +1279,7 @@ func TestResolve_DevDependencyInclusion(t *testing.T) {
 bazel_dep(name = "prod_dep", version = "1.0.0")
 bazel_dep(name = "dev_dep", version = "1.0.0", dev_dependency = True)`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{
+	result, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries:     []string{server.URL},
 		IncludeDevDeps: true,
 	})
@@ -1328,7 +1328,7 @@ bazel_dep(name = "dep", version = "2.0.0")`)
 bazel_dep(name = "top", version = "1.0.0")
 bazel_dep(name = "dep", version = "1.0.0")`
 
-	result, err := Resolve(ctx, content, ResolutionOptions{
+	result, err := ResolveContent(ctx, content, ResolutionOptions{
 		Registries: []string{server1.URL, server2.URL},
 	})
 

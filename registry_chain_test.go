@@ -65,43 +65,43 @@ bazel_dep(name = "shared_dep", version = "1.0.0")`)
 
 func TestNewRegistryChain(t *testing.T) {
 	tests := []struct {
-		name        string
+		name         string
 		registryURLs []string
-		wantErr     bool
-		wantClients int
+		wantErr      bool
+		wantClients  int
 	}{
 		{
-			name:        "empty URLs",
+			name:         "empty URLs",
 			registryURLs: []string{},
-			wantErr:     true,
+			wantErr:      true,
 		},
 		{
-			name:        "nil URLs",
+			name:         "nil URLs",
 			registryURLs: nil,
-			wantErr:     true,
+			wantErr:      true,
 		},
 		{
-			name:        "all invalid file URLs",
+			name:         "all invalid file URLs",
 			registryURLs: []string{"file:///nonexistent/path1", "file:///nonexistent/path2"},
-			wantErr:     true,
+			wantErr:      true,
 		},
 		{
-			name:        "single registry",
+			name:         "single registry",
 			registryURLs: []string{"https://bcr.bazel.build"},
-			wantErr:     false,
-			wantClients: 1,
+			wantErr:      false,
+			wantClients:  1,
 		},
 		{
-			name:        "multiple registries",
+			name:         "multiple registries",
 			registryURLs: []string{"https://registry1.example.com", "https://bcr.bazel.build"},
-			wantErr:     false,
-			wantClients: 2,
+			wantErr:      false,
+			wantClients:  2,
 		},
 		{
-			name:        "mixed valid and invalid file URLs",
+			name:         "mixed valid and invalid file URLs",
 			registryURLs: []string{"file:///nonexistent/path", "https://bcr.bazel.build"},
-			wantErr:     false,
-			wantClients: 1,
+			wantErr:      false,
+			wantClients:  1,
 		},
 	}
 
@@ -314,9 +314,9 @@ func TestRegistryChain_GetRegistryForModule_NotFound(t *testing.T) {
 }
 
 func TestRegistryInterface_Implementation(t *testing.T) {
-	// Verify that both registryClient and registryChain implement registryInterface
-	var _ registryInterface = (*registryClient)(nil)
-	var _ registryInterface = (*registryChain)(nil)
+	// Verify that both registryClient and registryChain implement Registry
+	var _ Registry = (*registryClient)(nil)
+	var _ Registry = (*registryChain)(nil)
 }
 
 func TestRegistryChain_ConcurrentAccess(t *testing.T) {

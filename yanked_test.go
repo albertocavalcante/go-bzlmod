@@ -20,13 +20,13 @@ func TestYankedVersionDetection(t *testing.T) {
 		case "/modules/bazel_skylib/1.4.0/MODULE.bazel":
 			fmt.Fprint(w, `module(name = "bazel_skylib", version = "1.4.0")`)
 		case "/modules/rules_go/metadata.json":
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"versions":        []string{"0.40.0", "0.41.0"},
 				"yanked_versions": map[string]string{},
 			}
 			json.NewEncoder(w).Encode(metadata)
 		case "/modules/bazel_skylib/metadata.json":
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"versions": []string{"1.3.0", "1.4.0", "1.5.0"},
 				"yanked_versions": map[string]string{
 					"1.4.0": "Critical bug in skylib 1.4.0, upgrade to 1.5.0",
@@ -49,7 +49,7 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 			CheckYanked:    false,
 		}
 
-		list, err := Resolve(context.Background(), moduleContent, opts)
+		list, err := ResolveContent(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -69,7 +69,7 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 			YankedBehavior: YankedVersionAllow,
 		}
 
-		list, err := Resolve(context.Background(), moduleContent, opts)
+		list, err := ResolveContent(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -108,7 +108,7 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 			YankedBehavior: YankedVersionWarn,
 		}
 
-		list, err := Resolve(context.Background(), moduleContent, opts)
+		list, err := ResolveContent(context.Background(), moduleContent, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -137,7 +137,7 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 			YankedBehavior: YankedVersionError,
 		}
 
-		_, err := Resolve(context.Background(), moduleContent, opts)
+		_, err := ResolveContent(context.Background(), moduleContent, opts)
 		if err == nil {
 			t.Fatal("expected error for yanked version, got nil")
 		}
@@ -193,10 +193,10 @@ func TestYankedVersionsError_Message(t *testing.T) {
 func TestRegistryClient_GetModuleMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/modules/rules_go/metadata.json" {
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"homepage":    "https://github.com/bazelbuild/rules_go",
 				"versions":    []string{"0.40.0", "0.41.0", "0.42.0"},
-				"maintainers": []map[string]interface{}{{"github": "maintainer1"}},
+				"maintainers": []map[string]any{{"github": "maintainer1"}},
 				"yanked_versions": map[string]string{
 					"0.40.0": "Critical bug",
 				},

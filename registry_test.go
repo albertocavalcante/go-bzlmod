@@ -448,15 +448,15 @@ func BenchmarkGetModuleFile_Uncached(b *testing.B) {
 
 func TestRegistry_Default(t *testing.T) {
 	// Test zero-config - should default to BCR with GitHub mirror fallback
-	reg := Registry()
+	reg := RegistryClient()
 	if reg == nil {
-		t.Fatal("Registry() returned nil")
+		t.Fatal("RegistryClient() returned nil")
 	}
 
 	// Should be a RegistryChain for resilience
 	chain, ok := reg.(*registryChain)
 	if !ok {
-		t.Fatal("Expected RegistryChain for default Registry()")
+		t.Fatal("Expected RegistryChain for default RegistryClient()")
 	}
 
 	// First registry should be BCR
@@ -477,9 +477,9 @@ func TestRegistry_Default(t *testing.T) {
 }
 
 func TestRegistry_SingleURL(t *testing.T) {
-	reg := Registry("https://custom.registry.com")
+	reg := RegistryClient("https://custom.registry.com")
 	if reg == nil {
-		t.Fatal("Registry() returned nil")
+		t.Fatal("RegistryClient() returned nil")
 	}
 	if reg.BaseURL() != "https://custom.registry.com" {
 		t.Errorf("Registry URL = %q, want %q", reg.BaseURL(), "https://custom.registry.com")
@@ -487,9 +487,9 @@ func TestRegistry_SingleURL(t *testing.T) {
 }
 
 func TestRegistry_MultipleURLs(t *testing.T) {
-	reg := Registry("https://private.example.com", DefaultRegistry)
+	reg := RegistryClient("https://private.example.com", DefaultRegistry)
 	if reg == nil {
-		t.Fatal("Registry() returned nil")
+		t.Fatal("RegistryClient() returned nil")
 	}
 	// First registry in chain should be the base URL
 	if reg.BaseURL() != "https://private.example.com" {
@@ -591,12 +591,12 @@ func TestHTTPClient_TimeoutOverridesCustomClient(t *testing.T) {
 
 // mockCache implements ModuleCache for testing.
 type mockCache struct {
-	store     map[string][]byte
-	mu        sync.Mutex
-	getCount  int
-	putCount  int
-	failGet   bool
-	failPut   bool
+	store    map[string][]byte
+	mu       sync.Mutex
+	getCount int
+	putCount int
+	failGet  bool
+	failPut  bool
 }
 
 func newMockCache() *mockCache {
@@ -780,12 +780,12 @@ bazel_dep(name = "dep_a", version = "1.0.0")
 `
 
 	// First resolve - should fetch from HTTP and store in cache
-	result1, err := Resolve(ctx, moduleContent, ResolutionOptions{
+	result1, err := ResolveContent(ctx, moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 		Cache:      cache,
 	})
 	if err != nil {
-		t.Fatalf("First Resolve() error = %v", err)
+		t.Fatalf("First ResolveContent() error = %v", err)
 	}
 	if len(result1.Modules) != 1 {
 		t.Errorf("Expected 1 module, got %d", len(result1.Modules))
@@ -794,12 +794,12 @@ bazel_dep(name = "dep_a", version = "1.0.0")
 	firstHTTPCalls := httpCallCount
 
 	// Second resolve - should use cache, no HTTP calls
-	result2, err := Resolve(ctx, moduleContent, ResolutionOptions{
+	result2, err := ResolveContent(ctx, moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 		Cache:      cache,
 	})
 	if err != nil {
-		t.Fatalf("Second Resolve() error = %v", err)
+		t.Fatalf("Second ResolveContent() error = %v", err)
 	}
 	if len(result2.Modules) != 1 {
 		t.Errorf("Expected 1 module, got %d", len(result2.Modules))
@@ -839,12 +839,12 @@ module(name = "root", version = "1.0.0")
 bazel_dep(name = "dep_a", version = "1.0.0")
 `
 
-	result, err := Resolve(ctx, moduleContent, ResolutionOptions{
+	result, err := ResolveContent(ctx, moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 		HTTPClient: &http.Client{Transport: customTransport},
 	})
 	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
+		t.Fatalf("ResolveContent() error = %v", err)
 	}
 
 	if len(result.Modules) != 1 {

@@ -38,7 +38,7 @@ func resolveDependenciesWithBazelVersion(content, registry string, includeDevDep
 		BazelVersion:     bazelVersion,
 	}
 	ctx := context.Background()
-	resolutionList, err := gobzlmod.Resolve(ctx, content, opts)
+	resolutionList, err := gobzlmod.ResolveContent(ctx, content, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve dependencies: %v", err)
 	}

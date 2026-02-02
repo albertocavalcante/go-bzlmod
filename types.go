@@ -3,6 +3,7 @@ package gobzlmod
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -136,6 +137,65 @@ func (m ModuleToResolve) Key() string {
 	return m.Name + "@" + m.Version
 }
 
+// ProductionModules returns all non-dev dependency modules.
+func (r *ResolutionList) ProductionModules() []ModuleToResolve {
+	var result []ModuleToResolve
+	for _, m := range r.Modules {
+		if !m.DevDependency {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// DevModules returns all dev dependency modules.
+func (r *ResolutionList) DevModules() []ModuleToResolve {
+	var result []ModuleToResolve
+	for _, m := range r.Modules {
+		if m.DevDependency {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// Module returns the module with the given name, or nil if not found.
+func (r *ResolutionList) Module(name string) *ModuleToResolve {
+	for i := range r.Modules {
+		if r.Modules[i].Name == name {
+			return &r.Modules[i]
+		}
+	}
+	return nil
+}
+
+// DirectDeps returns all direct dependencies (modules at depth 1).
+func (r *ResolutionList) DirectDeps() []ModuleToResolve {
+	var result []ModuleToResolve
+	for _, m := range r.Modules {
+		if m.Depth == 1 {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// TransitiveDeps returns all transitive dependencies (modules at depth > 1).
+func (r *ResolutionList) TransitiveDeps() []ModuleToResolve {
+	var result []ModuleToResolve
+	for _, m := range r.Modules {
+		if m.Depth > 1 {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+// HasModule returns true if a module with the given name is in the resolution.
+func (r *ResolutionList) HasModule(name string) bool {
+	return r.Module(name) != nil
+}
+
 // ResolutionSummary provides statistics about the dependency resolution result.
 type ResolutionSummary struct {
 	// TotalModules is the total count of resolved modules.
@@ -181,26 +241,6 @@ const (
 
 	// DirectDepsError fails resolution if direct deps don't match resolved versions.
 	DirectDepsError
-)
-
-// NetworkMode controls network access during resolution.
-// This enables airgap and restricted network environments.
-type NetworkMode int
-
-const (
-	// NetworkOnline allows unrestricted network access (default).
-	// All configured registries can be accessed.
-	NetworkOnline NetworkMode = iota
-
-	// NetworkOffline disables all network access.
-	// Only cached data and file:// registries can be used.
-	// Useful for fully airgapped environments.
-	NetworkOffline
-
-	// NetworkAllowlist restricts network access to allowed domains only.
-	// Use with AllowedDomains to specify permitted hosts.
-	// Useful for environments with network egress restrictions.
-	NetworkAllowlist
 )
 
 // ProgressEventType identifies the type of progress event.
@@ -291,18 +331,6 @@ type ResolutionOptions struct {
 	// Airgap:  []string{"file:///opt/bazel-registry"}
 	Registries []string
 
-	// Network controls network access mode for resolution.
-	// Default is NetworkOnline (unrestricted access).
-	//
-	// For airgapped environments, use NetworkOffline with file:// registries.
-	// For restricted networks, use NetworkAllowlist with AllowedDomains.
-	Network NetworkMode
-
-	// AllowedDomains restricts network access to these domains only.
-	// Only used when Network is NetworkAllowlist.
-	// Example: []string{"bcr.bazel.build", "registry.example.com"}
-	AllowedDomains []string
-
 	// VendorDir specifies a directory containing vendored module files.
 	// When set, modules are first looked up in this directory before
 	// checking registries. This enables offline/airgap workflows.
@@ -372,6 +400,10 @@ type ResolutionOptions struct {
 	//
 	// Implementations must be safe for concurrent use from multiple goroutines.
 	Cache ModuleCache
+
+	// Logger is the structured logger for resolution diagnostics.
+	// If nil, logging is disabled. Uses log/slog for backend flexibility.
+	Logger *slog.Logger
 }
 
 // ModuleCache provides external caching for MODULE.bazel file contents.

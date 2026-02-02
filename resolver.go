@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"sync"
@@ -61,7 +62,7 @@ const (
 // the resolver searches registries in order. The first registry where a module is found
 // is used for ALL versions of that module.
 type dependencyResolver struct {
-	registry        registryInterface
+	registry        Registry
 	options         ResolutionOptions
 	overrideMu      sync.RWMutex
 	overrideModules map[string]*ModuleInfo
@@ -92,7 +93,7 @@ type graphBuildContext struct {
 
 // newDependencyResolver creates a new resolver with the given registry.
 // If includeDevDeps is false, dev_dependency=True modules are excluded from resolution.
-func newDependencyResolver(registry registryInterface, includeDevDeps bool) *dependencyResolver {
+func newDependencyResolver(registry Registry, includeDevDeps bool) *dependencyResolver {
 	return &dependencyResolver{
 		registry: registry,
 		options:  ResolutionOptions{IncludeDevDeps: includeDevDeps},
@@ -102,15 +103,15 @@ func newDependencyResolver(registry registryInterface, includeDevDeps bool) *dep
 // newDependencyResolverWithOptions creates a resolver with full configuration control.
 // The registry can be nil if opts.Registries is set, otherwise it's required.
 // When opts.Registries is set, it takes precedence over the registry parameter.
-func newDependencyResolverWithOptions(registry registryInterface, opts ResolutionOptions) *dependencyResolver {
+func newDependencyResolverWithOptions(registry Registry, opts ResolutionOptions) *dependencyResolver {
 	reg := registry
 
 	// Registries in options takes precedence
 	if len(opts.Registries) > 0 {
-		reg = registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Registries...)
+		reg = registryWithAllOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger, opts.Registries...)
 	} else if reg == nil {
 		// No registry provided and no Registries in options, use BCR default
-		reg = registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout)
+		reg = registryWithAllOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger)
 	}
 
 	return &dependencyResolver{
@@ -177,6 +178,16 @@ func (r *dependencyResolver) emitProgress(event ProgressEvent) {
 	}
 }
 
+// log returns the configured logger, or a no-op logger if none was set.
+// This allows internal code to call logging methods without nil checks.
+func (r *dependencyResolver) log() *slog.Logger {
+	if r.options.Logger != nil {
+		return r.options.Logger
+	}
+	// Return a logger that discards all output
+	return slog.New(discardHandler{})
+}
+
 // ResolveDependencies resolves all transitive dependencies for a root module.
 // It returns a ResolutionList containing all selected modules sorted by name.
 //
@@ -186,6 +197,12 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		return nil, fmt.Errorf("root module is nil")
 	}
 
+	logger := r.log()
+	logger.Info("starting dependency resolution",
+		"module", rootModule.Name,
+		"version", rootModule.Version,
+		"includeDevDeps", r.options.IncludeDevDeps)
+
 	// Emit resolve_start event
 	r.emitProgress(ProgressEvent{
 		Type:    ProgressResolveStart,
@@ -194,6 +211,7 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 
 	// Inject Bazel's MODULE.tools dependencies if a Bazel version is specified
 	if r.options.BazelVersion != "" {
+		logger.Debug("injecting MODULE.tools dependencies", "bazelVersion", r.options.BazelVersion)
 		injectBazelToolsDeps(rootModule, r.options.BazelVersion)
 	}
 
@@ -233,6 +251,11 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 	if err != nil {
 		return nil, err
 	}
+
+	logger.Info("resolution complete",
+		"totalModules", len(result.Modules),
+		"productionModules", result.Summary.ProductionModules,
+		"devModules", result.Summary.DevModules)
 
 	// Emit resolve_end event
 	r.emitProgress(ProgressEvent{
@@ -404,11 +427,14 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 
 	worker := func() {
 		defer workersWG.Done()
+		logger := r.log()
 		for task := range tasks {
 			if ctx.Err() != nil {
 				tasksWG.Done()
 				continue
 			}
+
+			logger.Debug("fetching module", "name", task.name, "version", task.version)
 
 			// Emit module_fetch_start event
 			r.emitProgress(ProgressEvent{
@@ -420,6 +446,7 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 			// Check if there's a registry override for this module
 			registryToUse := r.registry
 			if override, ok := bc.overrides[task.name]; ok && override.Registry != "" {
+				logger.Debug("using registry override", "name", task.name, "registry", override.Registry)
 				// Use the overridden registry for this specific module with the configured timeout
 				registryToUse = newRegistryClientWithTimeout(override.Registry, r.options.Timeout)
 			}
@@ -435,16 +462,21 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 
 			if err != nil {
 				if isNotFound(err) {
+					logger.Debug("module not found", "name", task.name, "version", task.version)
 					bc.mu.Lock()
 					removeDependency(bc.depGraph, task.name, task.version)
 					bc.mu.Unlock()
 					tasksWG.Done()
 					continue
 				}
+				logger.Debug("fetch error", "name", task.name, "version", task.version, "error", err)
 				setErr(fmt.Errorf("fetch module %s@%s: %w", task.name, task.version, err))
 				tasksWG.Done()
 				continue
 			}
+
+			logger.Debug("fetched module", "name", task.name, "version", task.version,
+				"dependencies", len(transitiveDep.Dependencies))
 
 			if err := processDeps(transitiveDep, task.path); err != nil {
 				setErr(err)

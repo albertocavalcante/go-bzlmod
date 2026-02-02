@@ -202,12 +202,12 @@ func TestRegistry_FileURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Test Registry() with file:// URL
+	// Test RegistryClient() with file:// URL
 	fileURL := "file://" + tmpDir
-	reg := Registry(fileURL)
+	reg := RegistryClient(fileURL)
 
 	if reg == nil {
-		t.Fatal("Registry() returned nil")
+		t.Fatal("RegistryClient() returned nil")
 	}
 
 	// Verify it's a LocalRegistry

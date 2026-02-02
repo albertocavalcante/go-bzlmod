@@ -38,9 +38,9 @@ func TestGetConfig_UnknownVersions(t *testing.T) {
 		"1.0.0",
 		"5.0.0",
 		"10.0.0",
-		"7.0",      // Missing patch
-		"7",        // Major only
-		"7.0.0.0",  // Too many segments
+		"7.0",     // Missing patch
+		"7",       // Major only
+		"7.0.0.0", // Too many segments
 		"invalid",
 		"abc.def.ghi",
 		"7.0.0-beta",
@@ -297,7 +297,7 @@ func TestClosestVersion_LongInput(t *testing.T) {
 // TestClosestVersion_UnicodeInput tests unicode characters
 func TestClosestVersion_UnicodeInput(t *testing.T) {
 	testCases := []string{
-		"７.０.０",  // Full-width digits
+		"７.０.０",   // Full-width digits
 		"7.０.0",   // Mixed
 		"7.0.0🎉",  // With emoji
 		"版本7.0.0", // Chinese prefix
@@ -435,11 +435,11 @@ func TestClosestVersion_RealWorldVersions(t *testing.T) {
 		{"7.1.1", true},
 		{"7.2.0", true},
 		{"7.2.1", true},
-		{"7.3.0", true},  // Should fallback to 7.0.0
-		{"7.3.1", true},  // Should fallback to 7.0.0
+		{"7.3.0", true}, // Should fallback to 7.0.0
+		{"7.3.1", true}, // Should fallback to 7.0.0
 		{"8.0.0", true},
 		{"8.0.1", true},
-		{"8.1.0", true},  // Should fallback to 8.0.0
+		{"8.1.0", true}, // Should fallback to 8.0.0
 		{"9.0.0", true},
 		{"9.0.1", true},
 		{"6.6.0", true},

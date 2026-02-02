@@ -35,7 +35,7 @@ bazel_dep(name = "c", version = "1.0.0")`)
 bazel_dep(name = "a", version = "1.0.0")
 bazel_dep(name = "b", version = "1.0.0")`
 
-	result, err := Resolve(context.Background(), moduleContent, ResolutionOptions{
+	result, err := ResolveContent(context.Background(), moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 	if err != nil {
@@ -91,7 +91,7 @@ bazel_dep(name = "b", version = "1.0.0")`)
 	moduleContent := `module(name = "root", version = "1.0.0")
 bazel_dep(name = "a", version = "1.0.0")`
 
-	result, err := Resolve(context.Background(), moduleContent, ResolutionOptions{
+	result, err := ResolveContent(context.Background(), moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 	if err != nil {
@@ -129,7 +129,7 @@ func TestResolutionList_Graph_ToJSON(t *testing.T) {
 	moduleContent := `module(name = "root", version = "1.0.0")
 bazel_dep(name = "a", version = "1.0.0")`
 
-	result, err := Resolve(context.Background(), moduleContent, ResolutionOptions{
+	result, err := ResolveContent(context.Background(), moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 	if err != nil {
@@ -175,7 +175,7 @@ bazel_dep(name = "c", version = "1.0.0")`)
 	moduleContent := `module(name = "root", version = "1.0.0")
 bazel_dep(name = "a", version = "1.0.0")`
 
-	result, err := Resolve(context.Background(), moduleContent, ResolutionOptions{
+	result, err := ResolveContent(context.Background(), moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 	if err != nil {
@@ -218,7 +218,7 @@ bazel_dep(name = "c", version = "1.0.0")`)
 	moduleContent := `module(name = "root", version = "1.0.0")
 bazel_dep(name = "a", version = "1.0.0")`
 
-	result, err := Resolve(context.Background(), moduleContent, ResolutionOptions{
+	result, err := ResolveContent(context.Background(), moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 	if err != nil {
@@ -276,7 +276,7 @@ bazel_dep(name = "b", version = "1.0.0")`)
 	moduleContent := `module(name = "root", version = "1.0.0")
 bazel_dep(name = "a", version = "1.0.0")`
 
-	result, err := Resolve(context.Background(), moduleContent, ResolutionOptions{
+	result, err := ResolveContent(context.Background(), moduleContent, ResolutionOptions{
 		Registries: []string{server.URL},
 	})
 	if err != nil {

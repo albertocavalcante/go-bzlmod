@@ -214,7 +214,7 @@ func TestResolveWithSelection_YankedVersions(t *testing.T) {
 		case "/modules/rules_go/0.41.0/MODULE.bazel":
 			fmt.Fprint(w, `module(name = "rules_go", version = "0.41.0")`)
 		case "/modules/rules_go/metadata.json":
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"versions": []string{"0.40.0", "0.41.0"},
 				"yanked_versions": map[string]string{
 					"0.41.0": "Security vulnerability in 0.41.0",

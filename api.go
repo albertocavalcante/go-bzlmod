@@ -17,36 +17,40 @@
 //
 // The simplest way to resolve dependencies:
 //
-//	// Zero-config: uses BCR by default
-//	result, err := gobzlmod.Resolve(ctx, moduleContent, gobzlmod.ResolutionOptions{})
+//	// From MODULE.bazel content
+//	result, err := gobzlmod.Resolve(ctx, gobzlmod.ContentSource(content), gobzlmod.WithDevDeps())
 //
 //	// From a file
-//	result, err := gobzlmod.ResolveFile(ctx, "MODULE.bazel", gobzlmod.ResolutionOptions{})
+//	result, err := gobzlmod.Resolve(ctx, gobzlmod.FileSource("MODULE.bazel"))
 //
-//	// With a private registry + BCR fallback
-//	result, err := gobzlmod.Resolve(ctx, moduleContent, gobzlmod.ResolutionOptions{
-//	    Registries: []string{"https://registry.example.com", gobzlmod.DefaultRegistry},
-//	})
+//	// From a registry module
+//	result, err := gobzlmod.Resolve(ctx, gobzlmod.RegistrySource{Name: "rules_go", Version: "0.50.0"})
+//
+//	// With options
+//	result, err := gobzlmod.Resolve(ctx, gobzlmod.ContentSource(content),
+//	    gobzlmod.WithRegistries("https://registry.example.com", gobzlmod.DefaultRegistry),
+//	    gobzlmod.WithTimeout(30*time.Second),
+//	)
 //
 // # Registry Configuration
 //
 // By default, the Bazel Central Registry (BCR) is used. For private registries:
 //
-//	opts := gobzlmod.ResolutionOptions{
-//	    Registries: []string{
+//	result, err := gobzlmod.Resolve(ctx, src,
+//	    gobzlmod.WithRegistries(
 //	        "https://private.example.com",  // Try first
 //	        gobzlmod.DefaultRegistry,        // Fall back to BCR
-//	    },
-//	}
+//	    ),
+//	)
 //
 // # Yanked Version Handling
 //
 // The library supports detecting and handling yanked versions:
 //
-//	opts := gobzlmod.ResolutionOptions{
-//	    CheckYanked:    true,                        // Enable yanked version checking
-//	    YankedBehavior: gobzlmod.YankedVersionError, // Fail if yanked versions selected
-//	}
+//	result, err := gobzlmod.Resolve(ctx, src,
+//	    gobzlmod.WithYankedCheck(true),
+//	    gobzlmod.WithYankedBehavior(gobzlmod.YankedVersionError),
+//	)
 //
 // # Thread Safety
 //
@@ -56,14 +60,82 @@ package gobzlmod
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 )
 
-// Resolve resolves dependencies from MODULE.bazel content.
+// ModuleSource represents a source of MODULE.bazel content for resolution.
+// This is a marker interface implemented by ContentSource, FileSource, and RegistrySource.
+type ModuleSource interface {
+	moduleSource() // marker method
+}
+
+// ContentSource resolves from MODULE.bazel content provided as a string.
+type ContentSource string
+
+func (ContentSource) moduleSource() {}
+
+// FileSource resolves from a MODULE.bazel file at the given path.
+type FileSource string
+
+func (FileSource) moduleSource() {}
+
+// RegistrySource resolves a module from a registry by name and version.
+type RegistrySource struct {
+	Name    string
+	Version string
+}
+
+func (RegistrySource) moduleSource() {}
+
+// Resolve resolves dependencies from the given module source.
+// This is the primary API for dependency resolution.
+//
+// Example usage:
+//
+//	// From MODULE.bazel content
+//	result, err := Resolve(ctx, ContentSource(content), WithDevDeps())
+//
+//	// From a file
+//	result, err := Resolve(ctx, FileSource("MODULE.bazel"), WithTimeout(30*time.Second))
+//
+//	// From a registry module
+//	result, err := Resolve(ctx, RegistrySource{Name: "rules_go", Version: "0.50.0"})
+func Resolve(ctx context.Context, src ModuleSource, opts ...Option) (*ResolutionList, error) {
+	cfg, err := newResolverConfig(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("invalid options: %w", err)
+	}
+
+	resOpts := cfg.toResolutionOptions()
+
+	switch s := src.(type) {
+	case ContentSource:
+		return resolveInternal(ctx, string(s), resOpts)
+	case FileSource:
+		content, err := os.ReadFile(string(s))
+		if err != nil {
+			return nil, fmt.Errorf("reading module file: %w", err)
+		}
+		return resolveInternal(ctx, string(content), resOpts)
+	case RegistrySource:
+		return resolveModuleInternal(ctx, s.Name, s.Version, resOpts)
+	default:
+		return nil, fmt.Errorf("unsupported module source type: %T", src)
+	}
+}
+
+// ResolveContent resolves dependencies from MODULE.bazel content.
+//
+// Deprecated: Use Resolve with ContentSource instead.
 //
 // Uses BCR by default if opts.Registries is empty.
-// This is the recommended entry point for dependency resolution.
-func Resolve(ctx context.Context, moduleContent string, opts ResolutionOptions) (*ResolutionList, error) {
+func ResolveContent(ctx context.Context, moduleContent string, opts ResolutionOptions) (*ResolutionList, error) {
+	return resolveInternal(ctx, moduleContent, opts)
+}
+
+// resolveInternal is the internal implementation for content-based resolution.
+func resolveInternal(ctx context.Context, moduleContent string, opts ResolutionOptions) (*ResolutionList, error) {
 	moduleInfo, err := ParseModuleContent(moduleContent)
 	if err != nil {
 		return nil, fmt.Errorf("parse module content: %w", err)
@@ -75,6 +147,8 @@ func Resolve(ctx context.Context, moduleContent string, opts ResolutionOptions) 
 }
 
 // ResolveFile resolves dependencies from a MODULE.bazel file.
+//
+// Deprecated: Use Resolve with FileSource instead.
 //
 // Uses BCR by default if opts.Registries is empty.
 func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOptions) (*ResolutionList, error) {
@@ -89,6 +163,8 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 }
 
 // ResolveModule resolves a module from the registry and returns its complete dependency graph.
+//
+// Deprecated: Use Resolve with RegistrySource instead.
 //
 // Unlike Resolve/ResolveFile which resolve dependencies OF a root module (excluding the root),
 // ResolveModule resolves a specific module BY its coordinate and includes it in the result.
@@ -106,6 +182,11 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 //	// result.Modules[0] is rules_go@0.50.0 (Depth=0)
 //	// result.Modules[1:] are its transitive dependencies (Depth>=1)
 func ResolveModule(ctx context.Context, name, version string, opts ResolutionOptions) (*ResolutionList, error) {
+	return resolveModuleInternal(ctx, name, version, opts)
+}
+
+// resolveModuleInternal is the internal implementation for registry-based resolution.
+func resolveModuleInternal(ctx context.Context, name, version string, opts ResolutionOptions) (*ResolutionList, error) {
 	reg := registryFromOptions(opts)
 
 	// Fetch the module's MODULE.bazel from registry
@@ -169,9 +250,9 @@ func ResolveModule(ctx context.Context, name, version string, opts ResolutionOpt
 
 // registryFromOptions creates a registry from ResolutionOptions.
 // Uses BCR if no registries are specified.
-func registryFromOptions(opts ResolutionOptions) registryInterface {
+func registryFromOptions(opts ResolutionOptions) Registry {
 	if len(opts.Registries) == 0 {
-		return registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout)
+		return registryWithAllOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger)
 	}
-	return registryWithOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Registries...)
+	return registryWithAllOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger, opts.Registries...)
 }

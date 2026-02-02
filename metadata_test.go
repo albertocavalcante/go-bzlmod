@@ -13,7 +13,7 @@ func TestCheckModuleMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/modules/yanked_module/metadata.json":
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"versions": []string{"1.0.0", "1.1.0"},
 				"yanked_versions": map[string]string{
 					"1.0.0": "Critical security issue",
@@ -21,13 +21,13 @@ func TestCheckModuleMetadata(t *testing.T) {
 			}
 			json.NewEncoder(w).Encode(metadata)
 		case "/modules/deprecated_module/metadata.json":
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"versions":   []string{"2.0.0"},
 				"deprecated": "Use new_module instead",
 			}
 			json.NewEncoder(w).Encode(metadata)
 		case "/modules/both_yanked_deprecated/metadata.json":
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"versions": []string{"3.0.0"},
 				"yanked_versions": map[string]string{
 					"3.0.0": "Broken build",
@@ -36,7 +36,7 @@ func TestCheckModuleMetadata(t *testing.T) {
 			}
 			json.NewEncoder(w).Encode(metadata)
 		case "/modules/normal_module/metadata.json":
-			metadata := map[string]interface{}{
+			metadata := map[string]any{
 				"versions": []string{"4.0.0"},
 			}
 			json.NewEncoder(w).Encode(metadata)

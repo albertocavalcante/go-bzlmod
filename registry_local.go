@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -185,8 +186,8 @@ func pathToFileURL(path string) string {
 	return "file://" + urlPath
 }
 
-// Verify localRegistry implements registryInterface
-var _ registryInterface = (*localRegistry)(nil)
+// Verify localRegistry implements Registry
+var _ Registry = (*localRegistry)(nil)
 
 // isFileURL checks if a URL is a file:// URL.
 func isFileURL(url string) bool {
@@ -195,7 +196,7 @@ func isFileURL(url string) bool {
 
 // createRegistryClientWithTimeout creates a registry client with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
-func createRegistryClientWithTimeout(url string, timeout time.Duration) (registryInterface, error) {
+func createRegistryClientWithTimeout(url string, timeout time.Duration) (Registry, error) {
 	return createRegistryClientWithHTTPClient(url, nil, timeout)
 }
 
@@ -203,7 +204,7 @@ func createRegistryClientWithTimeout(url string, timeout time.Duration) (registr
 // Handles file:// URLs for local registries and http(s):// for remote.
 // If client is nil, creates a default client with connection pooling.
 // If timeout is positive, it overrides the client's timeout (for remote registries).
-func createRegistryClientWithHTTPClient(url string, client *http.Client, timeout time.Duration) (registryInterface, error) {
+func createRegistryClientWithHTTPClient(url string, client *http.Client, timeout time.Duration) (Registry, error) {
 	return createRegistryClientWithOptions(url, client, nil, timeout)
 }
 
@@ -212,7 +213,17 @@ func createRegistryClientWithHTTPClient(url string, client *http.Client, timeout
 // If client is nil, creates a default client with connection pooling.
 // If cache is nil, no external caching is used (only applies to remote registries).
 // If timeout is positive, it overrides the client's timeout (for remote registries).
-func createRegistryClientWithOptions(url string, client *http.Client, cache ModuleCache, timeout time.Duration) (registryInterface, error) {
+func createRegistryClientWithOptions(url string, client *http.Client, cache ModuleCache, timeout time.Duration) (Registry, error) {
+	return createRegistryClientWithAllOptions(url, client, cache, timeout, nil)
+}
+
+// createRegistryClientWithAllOptions creates a registry client with all optional parameters including logger.
+// Handles file:// URLs for local registries and http(s):// for remote.
+// If client is nil, creates a default client with connection pooling.
+// If cache is nil, no external caching is used (only applies to remote registries).
+// If timeout is positive, it overrides the client's timeout (for remote registries).
+// If logger is nil, logging is disabled.
+func createRegistryClientWithAllOptions(url string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) (Registry, error) {
 	if isFileURL(url) {
 		path, err := parseFileURL(url)
 		if err != nil {
@@ -230,5 +241,5 @@ func createRegistryClientWithOptions(url string, client *http.Client, cache Modu
 	}
 
 	// Remote registry
-	return newRegistryClientWithOptions(url, client, cache, timeout), nil
+	return newRegistryClientWithAllOptions(url, client, cache, timeout, logger), nil
 }
