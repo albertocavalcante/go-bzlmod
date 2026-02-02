@@ -198,22 +198,8 @@ func (c *resolverConfig) validate() error {
 	return nil
 }
 
-// log returns the configured logger, or a no-op logger if none was set.
-// This allows internal code to call logging methods without nil checks.
-//
-// Design: Libraries should be silent by default. Users opt-in to logging
-// via WithLogger(). This avoids surprising output and respects the principle
-// that libraries shouldn't write to stdout/stderr without explicit consent.
-func (c *resolverConfig) log() *slog.Logger {
-	if c.logger != nil {
-		return c.logger
-	}
-	// Return a logger that discards all output
-	return slog.New(discardHandler{})
-}
-
 // discardHandler is a slog.Handler that discards all log records.
-// This is used when no logger is configured to avoid nil checks throughout the code.
+// Used by resolver and registry when no logger is configured.
 type discardHandler struct{}
 
 func (discardHandler) Enabled(context.Context, slog.Level) bool  { return false }

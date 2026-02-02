@@ -115,7 +115,7 @@ func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 	}
 
 	modulePath := filepath.Join(r.rootPath, "modules", moduleName, version, "MODULE.bazel")
-	data, err := os.ReadFile(modulePath)
+	data, err := os.ReadFile(modulePath) //nolint:gosec // G304: Local registry reads from user-configured path
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -151,7 +151,7 @@ func (r *localRegistry) GetModuleMetadata(ctx context.Context, moduleName string
 	}
 
 	metadataPath := filepath.Join(r.rootPath, "modules", moduleName, "metadata.json")
-	data, err := os.ReadFile(metadataPath)
+	data, err := os.ReadFile(metadataPath) //nolint:gosec // G304: Local registry reads from user-configured path
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -192,29 +192,6 @@ var _ Registry = (*localRegistry)(nil)
 // isFileURL checks if a URL is a file:// URL.
 func isFileURL(url string) bool {
 	return strings.HasPrefix(url, "file://")
-}
-
-// createRegistryClientWithTimeout creates a registry client with a custom timeout.
-// If timeout is zero or negative, uses the default timeout.
-func createRegistryClientWithTimeout(url string, timeout time.Duration) (Registry, error) {
-	return createRegistryClientWithHTTPClient(url, nil, timeout)
-}
-
-// createRegistryClientWithHTTPClient creates a registry client with an optional custom HTTP client.
-// Handles file:// URLs for local registries and http(s):// for remote.
-// If client is nil, creates a default client with connection pooling.
-// If timeout is positive, it overrides the client's timeout (for remote registries).
-func createRegistryClientWithHTTPClient(url string, client *http.Client, timeout time.Duration) (Registry, error) {
-	return createRegistryClientWithOptions(url, client, nil, timeout)
-}
-
-// createRegistryClientWithOptions creates a registry client with all optional parameters.
-// Handles file:// URLs for local registries and http(s):// for remote.
-// If client is nil, creates a default client with connection pooling.
-// If cache is nil, no external caching is used (only applies to remote registries).
-// If timeout is positive, it overrides the client's timeout (for remote registries).
-func createRegistryClientWithOptions(url string, client *http.Client, cache ModuleCache, timeout time.Duration) (Registry, error) {
-	return createRegistryClientWithAllOptions(url, client, cache, timeout, nil)
 }
 
 // createRegistryClientWithAllOptions creates a registry client with all optional parameters including logger.
