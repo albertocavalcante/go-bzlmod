@@ -202,9 +202,14 @@ func TestGetModuleFile_HTTPErrors(t *testing.T) {
 }
 
 func TestGetModuleFile_Caching(t *testing.T) {
-	requestCount := 0
+	moduleRequestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
+		// Handle bazel_registry.json request (for mirror config)
+		if strings.Contains(r.URL.Path, "bazel_registry.json") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		moduleRequestCount++
 		fmt.Fprint(w, `module(name = "cached_module", version = "1.0.0")`)
 	}))
 	defer server.Close()
@@ -224,14 +229,104 @@ func TestGetModuleFile_Caching(t *testing.T) {
 		t.Fatalf("Second GetModuleFile() error = %v", err)
 	}
 
-	// Should only have made one HTTP request
-	if requestCount != 1 {
-		t.Errorf("Expected 1 HTTP request, got %d", requestCount)
+	// Should only have made one HTTP request for the MODULE.bazel
+	if moduleRequestCount != 1 {
+		t.Errorf("Expected 1 module request, got %d", moduleRequestCount)
 	}
 
 	// Both results should be identical
 	if info1.Name != info2.Name || info1.Version != info2.Version {
 		t.Error("Cached result differs from original")
+	}
+}
+
+func TestGetModuleFile_MirrorFallback(t *testing.T) {
+	// Primary server that fails
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "bazel_registry.json") {
+			// Don't return mirrors in primary config
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer primaryServer.Close()
+	_ = primaryServer // Used for reference in comment
+
+	// Mirror server that succeeds
+	mirrorUsed := false
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "MODULE.bazel") {
+			mirrorUsed = true
+			fmt.Fprint(w, `module(name = "test_module", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mirrorServer.Close()
+
+	// Create a config server that returns the mirror
+	configServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "bazel_registry.json") {
+			fmt.Fprintf(w, `{"mirrors": ["%s"]}`, mirrorServer.URL)
+			return
+		}
+		if strings.Contains(r.URL.Path, "MODULE.bazel") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer configServer.Close()
+
+	client := newRegistryClient(configServer.URL)
+	ctx := context.Background()
+
+	info, err := client.GetModuleFile(ctx, "test_module", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+
+	if info.Name != "test_module" {
+		t.Errorf("Name = %q, want test_module", info.Name)
+	}
+
+	if !mirrorUsed {
+		t.Error("expected mirror to be used after primary failed")
+	}
+}
+
+func TestGetModuleFile_MirrorNotUsedFor404(t *testing.T) {
+	// Mirror that should NOT be called for 404 errors
+	mirrorCalled := false
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mirrorCalled = true
+		fmt.Fprint(w, `module(name = "test_module", version = "1.0.0")`)
+	}))
+	defer mirrorServer.Close()
+
+	// Primary server returns 404 (module doesn't exist)
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "bazel_registry.json") {
+			fmt.Fprintf(w, `{"mirrors": ["%s"]}`, mirrorServer.URL)
+			return
+		}
+		// Return 404 - module not found
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer primaryServer.Close()
+
+	client := newRegistryClient(primaryServer.URL)
+	ctx := context.Background()
+
+	_, err := client.GetModuleFile(ctx, "nonexistent_module", "1.0.0")
+	if err == nil {
+		t.Fatal("expected error for nonexistent module")
+	}
+
+	// Mirror should NOT be called for 404 errors
+	if mirrorCalled {
+		t.Error("mirror should not be called for 404 errors")
 	}
 }
 

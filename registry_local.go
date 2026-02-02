@@ -137,6 +137,43 @@ func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 	return moduleInfo, nil
 }
 
+// GetModuleSource reads source.json from the local registry.
+func (r *localRegistry) GetModuleSource(ctx context.Context, moduleName, version string) (*registry.Source, error) {
+	cacheKey := moduleName + "@" + version + ":source"
+	if cached, ok := r.cache.Load(cacheKey); ok {
+		return cached.(*registry.Source), nil
+	}
+
+	// Check for context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	sourcePath := filepath.Join(r.rootPath, "modules", moduleName, version, "source.json")
+	data, err := os.ReadFile(sourcePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, &RegistryError{
+				StatusCode: 404,
+				ModuleName: moduleName,
+				Version:    version,
+				URL:        pathToFileURL(sourcePath),
+			}
+		}
+		return nil, fmt.Errorf("read local source file %s: %w", sourcePath, err)
+	}
+
+	var source registry.Source
+	if err := json.Unmarshal(data, &source); err != nil {
+		return nil, fmt.Errorf("parse local source file %s: %w", sourcePath, err)
+	}
+
+	r.cache.Store(cacheKey, &source)
+	return &source, nil
+}
+
 // GetModuleMetadata reads metadata.json from the local registry.
 func (r *localRegistry) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
 	if cached, ok := r.metadataCache.Load(moduleName); ok {

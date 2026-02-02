@@ -13,20 +13,23 @@ type Option func(*resolverConfig) error
 
 // resolverConfig holds all resolution configuration.
 type resolverConfig struct {
-	includeDevDeps      bool
-	yankedBehavior      YankedVersionBehavior
-	checkYanked         bool
-	allowYankedVersions []string
-	warnDeprecated      bool
-	directDepsMode      DirectDepsCheckMode
-	substituteYanked    bool
-	bazelVersion        string
-	registries          []string
-	vendorDir           string
-	timeout             time.Duration
-	onProgress          func(ProgressEvent)
-	httpClient          *http.Client
-	cache               ModuleCache
+	includeDevDeps         bool
+	yankedBehavior         YankedVersionBehavior
+	checkYanked            bool
+	allowYankedVersions    []string
+	warnDeprecated         bool
+	directDepsMode         DirectDepsCheckMode
+	substituteYanked       bool
+	bazelCompatibilityMode BazelCompatibilityMode
+	bazelVersion           string
+	registries             []string
+	vendorDir              string
+	lockfileMode           LockfileMode
+	lockfilePath           string
+	timeout                time.Duration
+	onProgress             func(ProgressEvent)
+	httpClient             *http.Client
+	cache                  ModuleCache
 
 	// logger is the structured logger for debug/info output.
 	// If nil, logging is disabled (silent mode).
@@ -106,6 +109,17 @@ func WithSubstituteYanked(substitute bool) Option {
 	}
 }
 
+// WithBazelCompatibilityMode sets how Bazel compatibility constraints are validated.
+// When set to BazelCompatibilityWarn or BazelCompatibilityError, modules with
+// bazel_compatibility constraints that don't match the Bazel version will be flagged.
+// Requires WithBazelVersion to be set for validation to occur.
+func WithBazelCompatibilityMode(mode BazelCompatibilityMode) Option {
+	return func(c *resolverConfig) error {
+		c.bazelCompatibilityMode = mode
+		return nil
+	}
+}
+
 // WithBazelVersion sets a specific Bazel version to emulate.
 func WithBazelVersion(version string) Option {
 	return func(c *resolverConfig) error {
@@ -126,6 +140,29 @@ func WithRegistries(urls ...string) Option {
 func WithVendorDir(dir string) Option {
 	return func(c *resolverConfig) error {
 		c.vendorDir = dir
+		return nil
+	}
+}
+
+// WithLockfileMode sets how the lockfile is handled during resolution.
+//
+// Modes:
+//   - LockfileOff: Lockfile is neither read nor written (default)
+//   - LockfileUpdate: Read existing lockfile, update after resolution
+//   - LockfileError: Fail if resolution differs from lockfile
+//   - LockfileRefresh: Ignore existing lockfile, create fresh one
+func WithLockfileMode(mode LockfileMode) Option {
+	return func(c *resolverConfig) error {
+		c.lockfileMode = mode
+		return nil
+	}
+}
+
+// WithLockfilePath sets the path to the lockfile.
+// If not set and LockfileMode is enabled, defaults to "MODULE.bazel.lock".
+func WithLockfilePath(path string) Option {
+	return func(c *resolverConfig) error {
+		c.lockfilePath = path
 		return nil
 	}
 }
@@ -232,20 +269,23 @@ func newResolverConfig(opts ...Option) (*resolverConfig, error) {
 // ResolutionOptions struct for backward compatibility.
 func (c *resolverConfig) toResolutionOptions() ResolutionOptions {
 	return ResolutionOptions{
-		IncludeDevDeps:      c.includeDevDeps,
-		YankedBehavior:      c.yankedBehavior,
-		CheckYanked:         c.checkYanked,
-		AllowYankedVersions: c.allowYankedVersions,
-		WarnDeprecated:      c.warnDeprecated,
-		DirectDepsMode:      c.directDepsMode,
-		SubstituteYanked:    c.substituteYanked,
-		BazelVersion:        c.bazelVersion,
-		Registries:          c.registries,
-		VendorDir:           c.vendorDir,
-		Timeout:             c.timeout,
-		OnProgress:          c.onProgress,
-		HTTPClient:          c.httpClient,
-		Cache:               c.cache,
-		Logger:              c.logger,
+		IncludeDevDeps:         c.includeDevDeps,
+		YankedBehavior:         c.yankedBehavior,
+		CheckYanked:            c.checkYanked,
+		AllowYankedVersions:    c.allowYankedVersions,
+		WarnDeprecated:         c.warnDeprecated,
+		DirectDepsMode:         c.directDepsMode,
+		SubstituteYanked:       c.substituteYanked,
+		BazelCompatibilityMode: c.bazelCompatibilityMode,
+		BazelVersion:           c.bazelVersion,
+		Registries:             c.registries,
+		VendorDir:              c.vendorDir,
+		LockfileMode:           c.lockfileMode,
+		LockfilePath:           c.lockfilePath,
+		Timeout:                c.timeout,
+		OnProgress:             c.onProgress,
+		HTTPClient:             c.httpClient,
+		Cache:                  c.cache,
+		Logger:                 c.logger,
 	}
 }

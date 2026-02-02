@@ -46,8 +46,11 @@ type Maintainer struct {
 
 // Source represents the source.json file specifying how to fetch module source.
 // The Type field determines which other fields are relevant.
+//
+// Reference: IndexRegistry.java lines 264-295
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/IndexRegistry.java
 type Source struct {
-	// Type is the source type: "archive" (default) or "git_repository".
+	// Type is the source type: "archive" (default), "git_repository", or "local_path".
 	Type string `json:"type,omitempty"`
 
 	// --- Archive fields (Type == "" or "archive") ---
@@ -93,6 +96,12 @@ type Source struct {
 	// StripPrefixGit is the directory prefix to strip (for git_repository).
 	// Note: JSON field is same as StripPrefix, handled by Type context.
 
+	// --- Local path fields (Type == "local_path") ---
+
+	// Path is the local filesystem path for local_path sources.
+	// This path is relative to the registry root or absolute.
+	Path string `json:"path,omitempty"`
+
 	// --- Common optional fields ---
 
 	// DocsURL points to documentation for the module.
@@ -117,6 +126,11 @@ func (s *Source) IsArchive() bool {
 // IsGitRepository returns true if this source is a git_repository type.
 func (s *Source) IsGitRepository() bool {
 	return s.Type == "git_repository"
+}
+
+// IsLocalPath returns true if this source is a local_path type.
+func (s *Source) IsLocalPath() bool {
+	return s.Type == "local_path"
 }
 
 // LatestVersion returns the most recent version from the metadata.

@@ -395,8 +395,9 @@ func TestBuildResolutionList(t *testing.T) {
 		},
 	}
 
-	moduleDeps := make(map[string][]string) // Empty for this test
-	list, err := resolver.buildResolutionList(context.Background(), selectedVersions, moduleDeps, rootModule)
+	moduleDeps := make(map[string][]string)        // Empty for this test
+	moduleInfoCache := make(map[string]*ModuleInfo) // Empty for this test
+	list, err := resolver.buildResolutionList(context.Background(), selectedVersions, moduleDeps, moduleInfoCache, rootModule)
 	if err != nil {
 		t.Fatalf("buildResolutionList() error = %v", err)
 	}
@@ -1579,5 +1580,472 @@ func BenchmarkApplyMVS(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		_ = resolver.applyMVS(depGraph)
+	}
+}
+
+// TestMultiRoundNodepDiscovery_SingleRound tests that modules without nodep deps
+// complete in a single discovery round.
+func TestMultiRoundNodepDiscovery_SingleRound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_b", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Should have both modules resolved
+	if len(list.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(list.Modules))
+	}
+
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"module_a", "module_b"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
+	}
+}
+
+// TestMultiRoundNodepDiscovery_NodepFulfilledFirstRound tests that nodep deps
+// are included when they reference modules already in the graph.
+func TestMultiRoundNodepDiscovery_NodepFulfilledFirstRound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	// Root has both regular dep and nodep dep on modules that will exist
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+			{Name: "module_b", Version: "1.0.0"},
+		},
+		NodepDependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"}, // Will be fulfilled since module_a is a regular dep
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Should have both modules resolved
+	if len(list.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(list.Modules))
+	}
+
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"module_a", "module_b"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
+	}
+}
+
+// TestMultiRoundNodepDiscovery_UnfulfilledNodepIgnored tests that nodep deps
+// referencing non-existent modules are ignored (don't cause errors).
+func TestMultiRoundNodepDiscovery_UnfulfilledNodepIgnored(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	// Root has nodep dep on a module that doesn't exist in the graph
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+		NodepDependencies: []Dependency{
+			{Name: "nonexistent_module", Version: "1.0.0"}, // Won't be fulfilled
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Should only have module_a (nonexistent_module is ignored)
+	if len(list.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(list.Modules))
+	}
+
+	if list.Modules[0].Name != "module_a" {
+		t.Errorf("Expected module_a, got %s", list.Modules[0].Name)
+	}
+}
+
+// TestMultiRoundNodepDiscovery_MultipleRounds tests that nodep deps that become
+// fulfillable in subsequent rounds are correctly handled.
+func TestMultiRoundNodepDiscovery_MultipleRounds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			// module_a brings in module_b as a regular dep
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_b", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	// Root has a nodep dep on module_b, which doesn't exist yet but will be
+	// brought in transitively by module_a
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+		NodepDependencies: []Dependency{
+			{Name: "module_b", Version: "1.0.0"}, // Will be fulfilled in round 2
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Both modules should be resolved (module_b via both regular and nodep edge)
+	if len(list.Modules) != 2 {
+		t.Errorf("Expected 2 modules, got %d", len(list.Modules))
+	}
+
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"module_a", "module_b"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
+	}
+}
+
+// TestMultiRoundNodepDiscovery_TransitiveNodep tests nodep deps in transitive modules.
+func TestMultiRoundNodepDiscovery_TransitiveNodep(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")`)
+		case "/modules/module_c/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_c", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	// Create a scenario where:
+	// - Root has regular deps on a, b, c
+	// - Module A has a nodep dep on module_b (which exists)
+	// This simulates use_extension in module_a that uses module_b
+
+	// First we need to set up module_a with a nodep dependency
+	// Since the server returns static content, we'll use AddOverrideModuleContent
+	moduleAContent := `module(name = "module_a", version = "1.0.0")`
+	moduleAInfo, _ := ParseModuleContent(moduleAContent)
+	moduleAInfo.NodepDependencies = []Dependency{
+		{Name: "module_b", Version: "1.0.0"},
+	}
+
+	// Use override to inject our modified module info
+	if err := resolver.AddOverrideModuleInfo("module_a", moduleAInfo); err != nil {
+		t.Fatalf("AddOverrideModuleInfo() error = %v", err)
+	}
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+			{Name: "module_b", Version: "1.0.0"},
+			{Name: "module_c", Version: "1.0.0"},
+		},
+		Overrides: []Override{
+			{Type: "git", ModuleName: "module_a"}, // Use our override
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// All three modules should be resolved
+	if len(list.Modules) != 3 {
+		t.Errorf("Expected 3 modules, got %d", len(list.Modules))
+	}
+
+	moduleNames := make(map[string]bool)
+	for _, m := range list.Modules {
+		moduleNames[m.Name] = true
+	}
+
+	for _, expected := range []string{"module_a", "module_b", "module_c"} {
+		if !moduleNames[expected] {
+			t.Errorf("Expected module %s in resolution list", expected)
+		}
+	}
+}
+
+// TestIsNodepDep_FieldExists tests that the IsNodepDep field exists and works correctly.
+func TestIsNodepDep_FieldExists(t *testing.T) {
+	dep := Dependency{
+		Name:       "test",
+		Version:    "1.0.0",
+		IsNodepDep: true,
+	}
+
+	if !dep.IsNodepDep {
+		t.Error("IsNodepDep should be true")
+	}
+
+	dep2 := Dependency{
+		Name:    "test2",
+		Version: "2.0.0",
+	}
+
+	if dep2.IsNodepDep {
+		t.Error("IsNodepDep should be false by default")
+	}
+}
+
+// TestNodepDependencies_FieldExists tests that ModuleInfo has NodepDependencies field.
+func TestNodepDependencies_FieldExists(t *testing.T) {
+	module := &ModuleInfo{
+		Name:    "test",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "regular", Version: "1.0.0"},
+		},
+		NodepDependencies: []Dependency{
+			{Name: "nodep", Version: "1.0.0", IsNodepDep: true},
+		},
+	}
+
+	if len(module.NodepDependencies) != 1 {
+		t.Errorf("Expected 1 nodep dependency, got %d", len(module.NodepDependencies))
+	}
+
+	if module.NodepDependencies[0].Name != "nodep" {
+		t.Errorf("Expected nodep dependency name 'nodep', got %s", module.NodepDependencies[0].Name)
+	}
+}
+
+// TestMultiRoundNodepDiscovery_ComplexScenario tests a complex multi-round scenario
+// where nodep edges become fulfillable across multiple rounds.
+//
+// Scenario:
+// - Root has regular dep on A, nodep dep on D
+// - A has regular dep on B
+// - B has regular dep on C
+// - C has regular dep on D
+//
+// In this case:
+// - Round 1: Discover A, B, C, D (via regular deps)
+//   - Root's nodep on D is unfulfilled initially
+//   - But D gets discovered via C's regular dep
+// - Round 2: D is now in the graph, so root's nodep on D can be fulfilled
+//
+// The nodep should participate in version selection.
+func TestMultiRoundNodepDiscovery_ComplexScenario(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_b", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")
+			bazel_dep(name = "module_c", version = "1.0.0")`)
+		case "/modules/module_c/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_c", version = "1.0.0")
+			bazel_dep(name = "module_d", version = "1.0.0")`)
+		case "/modules/module_d/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_d", version = "1.0.0")`)
+		case "/modules/module_d/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_d", version = "2.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	// Root has regular dep on A and nodep dep on D@2.0.0
+	// D is also brought in via A->B->C at version 1.0.0
+	// With nodep fulfilled, both versions should participate in MVS
+	// and 2.0.0 should be selected as the highest
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+		NodepDependencies: []Dependency{
+			{Name: "module_d", Version: "2.0.0"}, // Will be fulfilled after D is discovered
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// All four modules should be resolved
+	if len(list.Modules) != 4 {
+		t.Errorf("Expected 4 modules, got %d", len(list.Modules))
+		for _, m := range list.Modules {
+			t.Logf("  - %s@%s", m.Name, m.Version)
+		}
+	}
+
+	// Check versions - module_d should be 2.0.0 due to nodep requiring higher version
+	for _, m := range list.Modules {
+		if m.Name == "module_d" {
+			if m.Version != "2.0.0" {
+				t.Errorf("Expected module_d@2.0.0 (from nodep), got module_d@%s", m.Version)
+			}
+			break
+		}
+	}
+}
+
+// TestMultiRoundNodepDiscovery_DevDependencyExcluded tests that nodep deps
+// respect the dev dependency filtering.
+func TestMultiRoundNodepDiscovery_DevDependencyExcluded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+		case "/modules/dev_module/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dev_module", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	// Create resolver WITHOUT dev deps
+	resolver := newDependencyResolverWithOptions(registry, ResolutionOptions{
+		IncludeDevDeps: false,
+	})
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+		NodepDependencies: []Dependency{
+			{Name: "dev_module", Version: "1.0.0", DevDependency: true}, // Should be excluded
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Only module_a should be resolved (dev_module excluded)
+	if len(list.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(list.Modules))
+		for _, m := range list.Modules {
+			t.Logf("  - %s@%s", m.Name, m.Version)
+		}
+	}
+
+	if list.Modules[0].Name != "module_a" {
+		t.Errorf("Expected module_a, got %s", list.Modules[0].Name)
 	}
 }

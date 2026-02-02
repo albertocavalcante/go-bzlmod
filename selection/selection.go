@@ -2,6 +2,7 @@ package selection
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
@@ -15,34 +16,25 @@ import (
 // 1. Compute allowed version sets for multiple-version overrides
 // 2. Compute selection groups for each module
 // 3. Select highest version for each selection group
-// 4. Walk graph from root, removing unreachable modules
+// 4. Enumerate all possible resolution strategies (for max_compatibility_level edge cases)
+// 5. Walk graph from root, trying each strategy until one succeeds
 //
 // Reference: Selection.java lines 44-84 describes the algorithm in detail.
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L44
 //
-// KNOWN LIMITATION: Strategy Enumeration Not Implemented
+// Strategy Enumeration (Phase 6):
 //
-// Bazel's Selection.java lines 249-264 implements enumerateStrategies() which computes
-// the cartesian product of all possible resolutions when max_compatibility_level allows
-// multiple valid versions. This is done via computePossibleResolutionResultsForOneDepSpec()
-// (lines 182-228) which returns ALL valid versions for a DepSpec, not just the highest one.
+// When max_compatibility_level allows multiple valid versions for a DepSpec, we enumerate
+// the cartesian product of all possible resolutions via computePossibleResolutionResultsForOneDepSpec()
+// (Selection.java lines 182-228) and enumerateStrategies() (lines 249-264).
 //
+// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L182
 // Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L249
 //
-// This implementation does NOT enumerate strategies - it validates constraints but doesn't
-// try alternative valid versions. Specifically:
-//
-//   - Bazel: For each DepSpec with max_compatibility_level, computes all modules where
-//     version >= dep.version AND compatLevel <= max_compatibility_level, then enumerates
-//     the cartesian product of all these possibilities across all deps.
-//
-//   - This implementation: Simply selects the highest version in each selection group and
-//     validates that max_compatibility_level constraints are satisfied. If constraints fail,
-//     an error is returned without attempting alternative valid versions.
-//
-// Impact: This implementation may fail with a max_compatibility_level error in cases where
-// Bazel would succeed by trying an alternative resolution strategy. This is an acceptable
-// trade-off for simplicity in most real-world use cases.
+// For each DepSpec with max_compatibility_level, we compute all modules where
+// version >= dep.version AND compatLevel <= max_compatibility_level, then enumerate
+// the cartesian product of all these possibilities across all deps. Each strategy is
+// tried in turn until one succeeds, or we return the first error if all fail.
 func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// Step 1: For any multiple-version overrides, build a mapping from
 	// (moduleName, compatibilityLevel) to the set of allowed versions.
@@ -80,38 +72,48 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 		}
 	}
 
-	// Step 4: Compute the resolution strategy - how each DepSpec resolves to a version.
+	// Step 4: Enumerate all possible resolution strategies.
 	//
-	// Reference: Selection.java lines 293-316
-	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L293
-	//
-	// NOTE: This is a simplified single-strategy approach. Bazel's actual implementation
-	// uses computePossibleResolutionResultsForOneDepSpec() (lines 182-228) to compute
-	// ALL valid versions for each DepSpec when max_compatibility_level is involved,
-	// then enumerates the cartesian product via enumerateStrategies() (lines 249-264).
-	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L182
+	// Reference: Selection.java lines 249-264 (enumerateStrategies)
 	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L249
 	//
-	// This implementation only tries the highest version, which may fail in edge cases
-	// where Bazel would succeed by trying an alternative valid version.
-	resolutionStrategy := func(depSpec DepSpec) string {
-		depKey := depSpec.ToModuleKey()
-		group, ok := selectionGroups[depKey]
-		if !ok {
-			// Module not in graph, return original version
-			return depSpec.Version
-		}
-		return selectedVersions[group]
-	}
+	// When max_compatibility_level allows multiple valid versions for a DepSpec,
+	// we enumerate the cartesian product of all possible resolutions and try each
+	// strategy until one succeeds.
+	strategies := enumerateStrategies(graph, selectionGroups, selectedVersions)
 
-	// Step 5: Two-phase graph walking (Bazel 7.6+ behavior)
+	// Step 5: Two-phase graph walking with strategy enumeration (Bazel 7.6+ behavior)
 	//
-	// Phase 1: Walk with nodep deps included (validation only).
-	// This validates that all nodep dependencies exist and have valid versions,
-	// but doesn't include them in the final resolved graph.
+	// Try each strategy until one succeeds. Return first success or first error if all fail.
 	//
 	// Reference: Selection.java lines 317-353, 397-403
 	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L317
+	var firstError error
+	for _, strategy := range strategies {
+		result, err := tryStrategy(graph, overrides, selectionGroups, strategy)
+		if err == nil {
+			return result, nil
+		}
+		if firstError == nil {
+			firstError = err
+		}
+	}
+
+	// All strategies failed - return first error
+	return nil, firstError
+}
+
+// tryStrategy attempts to resolve the dependency graph using a single resolution strategy.
+// Returns the result if successful, or an error if the strategy fails validation.
+func tryStrategy(
+	graph *DepGraph,
+	overrides map[string]Override,
+	selectionGroups map[ModuleKey]SelectionGroup,
+	strategy resolutionStrategy,
+) (*Result, error) {
+	// Phase 1: Walk with nodep deps included (validation only).
+	// This validates that all nodep dependencies exist and have valid versions,
+	// but doesn't include them in the final resolved graph.
 	walkerPhase1 := &depGraphWalker{
 		oldGraph:        graph,
 		overrides:       overrides,
@@ -120,7 +122,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	}
 
 	// Run phase 1 to validate (we discard the result)
-	_, _, err = walkerPhase1.walk(resolutionStrategy)
+	_, _, err := walkerPhase1.walk(strategy)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +136,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 		ignoreNodepDeps: true, // Exclude nodep deps for pruning
 	}
 
-	resolvedGraph, bfsOrder, err := walkerPhase2.walk(resolutionStrategy)
+	resolvedGraph, bfsOrder, err := walkerPhase2.walk(strategy)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +148,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 		for i, dep := range module.Deps {
 			newDeps[i] = DepSpec{
 				Name:                  dep.Name,
-				Version:               resolutionStrategy(dep),
+				Version:               strategy(dep),
 				MaxCompatibilityLevel: dep.MaxCompatibilityLevel,
 			}
 		}
@@ -156,7 +158,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 			for i, dep := range module.NodepDeps {
 				newNodepDeps[i] = DepSpec{
 					Name:                  dep.Name,
-					Version:               resolutionStrategy(dep),
+					Version:               strategy(dep),
 					MaxCompatibilityLevel: dep.MaxCompatibilityLevel,
 				}
 			}
@@ -465,4 +467,284 @@ func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, m
 	}
 
 	return nil
+}
+
+// resolutionResult represents a possible resolution for a DepSpec.
+// It contains the target module's version and compatibility level.
+//
+// Reference: Selection.java lines 182-228
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L182
+type resolutionResult struct {
+	Version     string
+	CompatLevel int
+}
+
+// computePossibleResolutionResultsForOneDepSpec computes all valid versions a DepSpec
+// can resolve to, considering max_compatibility_level constraints.
+//
+// Reference: Selection.java lines 182-228 (computePossibleResolutionResultsForOneDepSpec)
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L182
+//
+// The algorithm:
+// 1. Get the minimum compatibility level from the target module
+// 2. Set max_compatibility_level (defaults to min if not specified)
+// 3. Filter selection groups matching name and compatibility level range
+// 4. For each matching group, get the selected version
+// 5. Return all valid versions (one per compatibility level to avoid duplicates)
+func computePossibleResolutionResultsForOneDepSpec(
+	depSpec DepSpec,
+	graph *DepGraph,
+	selectionGroups map[ModuleKey]SelectionGroup,
+	selectedVersions map[SelectionGroup]string,
+) []resolutionResult {
+	// Get the target module to find its compatibility level
+	targetKey := depSpec.ToModuleKey()
+	targetModule, ok := graph.Modules[targetKey]
+	if !ok {
+		// Module not in graph - can only resolve to original version
+		return []resolutionResult{{Version: depSpec.Version, CompatLevel: 0}}
+	}
+
+	minCompatLevel := targetModule.CompatLevel
+
+	// Determine max_compatibility_level
+	// -1 means no constraint (use min), otherwise use the specified value
+	maxCompatLevel := minCompatLevel
+	if depSpec.MaxCompatibilityLevel >= 0 {
+		maxCompatLevel = depSpec.MaxCompatibilityLevel
+	}
+
+	// If min > max, no valid resolution exists
+	if minCompatLevel > maxCompatLevel {
+		return nil
+	}
+
+	// Collect results: one per compatibility level to avoid duplicates
+	// Use a map keyed by compat level to get the selected version for each
+	resultsByCompat := make(map[int]string)
+
+	// Iterate through all selection groups to find matching ones
+	for group, selectedVersion := range selectedVersions {
+		// Must match module name
+		if group.ModuleName != depSpec.Name {
+			continue
+		}
+
+		// Compatibility level must be in range [minCompatLevel, maxCompatLevel]
+		if group.CompatLevel < minCompatLevel || group.CompatLevel > maxCompatLevel {
+			continue
+		}
+
+		// The selected version must be >= dep's version (MVS constraint)
+		if version.Compare(selectedVersion, depSpec.Version) < 0 {
+			continue
+		}
+
+		// Store this as a valid result for this compat level
+		// If we already have one for this compat level, keep the lower version
+		// (to try simpler resolutions first)
+		existing, hasExisting := resultsByCompat[group.CompatLevel]
+		if !hasExisting || version.Compare(selectedVersion, existing) < 0 {
+			resultsByCompat[group.CompatLevel] = selectedVersion
+		}
+	}
+
+	// Convert map to sorted list
+	var results []resolutionResult
+	for compatLevel, ver := range resultsByCompat {
+		results = append(results, resolutionResult{
+			Version:     ver,
+			CompatLevel: compatLevel,
+		})
+	}
+
+	// Sort by compatibility level (ascending) to prefer lower compat levels first
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CompatLevel < results[j].CompatLevel
+	})
+
+	return results
+}
+
+// depSpecKey is used to deduplicate DepSpecs by name and version.
+type depSpecKey struct {
+	Name    string
+	Version string
+}
+
+// computeAllPossibleResolutions computes possible resolutions for all distinct DepSpecs
+// in the dependency graph that have max_compatibility_level constraints.
+//
+// Returns a map from DepSpec key to list of possible versions.
+//
+// Reference: Selection.java lines 230-248
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L230
+func computeAllPossibleResolutions(
+	graph *DepGraph,
+	selectionGroups map[ModuleKey]SelectionGroup,
+	selectedVersions map[SelectionGroup]string,
+) map[depSpecKey][]resolutionResult {
+	result := make(map[depSpecKey][]resolutionResult)
+
+	// Collect all distinct DepSpecs with max_compatibility_level
+	seen := make(map[depSpecKey]DepSpec)
+	for _, module := range graph.Modules {
+		for _, dep := range module.Deps {
+			if dep.MaxCompatibilityLevel >= 0 {
+				key := depSpecKey{Name: dep.Name, Version: dep.Version}
+				if _, ok := seen[key]; !ok {
+					seen[key] = dep
+				}
+			}
+		}
+		for _, dep := range module.NodepDeps {
+			if dep.MaxCompatibilityLevel >= 0 {
+				key := depSpecKey{Name: dep.Name, Version: dep.Version}
+				if _, ok := seen[key]; !ok {
+					seen[key] = dep
+				}
+			}
+		}
+	}
+
+	// Compute possible resolutions for each distinct DepSpec
+	for key, depSpec := range seen {
+		possibleResults := computePossibleResolutionResultsForOneDepSpec(
+			depSpec, graph, selectionGroups, selectedVersions,
+		)
+		if len(possibleResults) > 1 {
+			// Only include if there are multiple possibilities
+			result[key] = possibleResults
+		}
+	}
+
+	return result
+}
+
+// resolutionStrategy is a function that maps a DepSpec to its resolved version.
+type resolutionStrategy func(DepSpec) string
+
+// enumerateStrategies generates all possible resolution strategies based on the
+// cartesian product of possible resolutions for DepSpecs with max_compatibility_level.
+//
+// Reference: Selection.java lines 249-264 (enumerateStrategies)
+// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L249
+//
+// Returns a list of strategy functions. Each strategy represents one combination
+// of version choices for DepSpecs with multiple valid versions.
+func enumerateStrategies(
+	graph *DepGraph,
+	selectionGroups map[ModuleKey]SelectionGroup,
+	selectedVersions map[SelectionGroup]string,
+) []resolutionStrategy {
+	// Compute all possible resolutions
+	allPossible := computeAllPossibleResolutions(graph, selectionGroups, selectedVersions)
+
+	if len(allPossible) == 0 {
+		// No ambiguity - return single default strategy
+		return []resolutionStrategy{
+			makeDefaultStrategy(selectionGroups, selectedVersions),
+		}
+	}
+
+	// Build list of keys in deterministic order
+	var keys []depSpecKey
+	for k := range allPossible {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Name != keys[j].Name {
+			return keys[i].Name < keys[j].Name
+		}
+		return keys[i].Version < keys[j].Version
+	})
+
+	// Compute cartesian product
+	combinations := cartesianProduct(keys, allPossible)
+
+	// Convert each combination to a strategy function
+	strategies := make([]resolutionStrategy, len(combinations))
+	for i, combo := range combinations {
+		strategies[i] = makeStrategyFromCombination(
+			combo, selectionGroups, selectedVersions,
+		)
+	}
+
+	return strategies
+}
+
+// makeDefaultStrategy creates the default resolution strategy that uses
+// the highest selected version for each selection group.
+func makeDefaultStrategy(
+	selectionGroups map[ModuleKey]SelectionGroup,
+	selectedVersions map[SelectionGroup]string,
+) resolutionStrategy {
+	return func(depSpec DepSpec) string {
+		depKey := depSpec.ToModuleKey()
+		group, ok := selectionGroups[depKey]
+		if !ok {
+			return depSpec.Version
+		}
+		return selectedVersions[group]
+	}
+}
+
+// makeStrategyFromCombination creates a resolution strategy from a specific
+// combination of version choices.
+func makeStrategyFromCombination(
+	combination map[depSpecKey]string,
+	selectionGroups map[ModuleKey]SelectionGroup,
+	selectedVersions map[SelectionGroup]string,
+) resolutionStrategy {
+	return func(depSpec DepSpec) string {
+		// Check if this DepSpec has a specific override in the combination
+		key := depSpecKey{Name: depSpec.Name, Version: depSpec.Version}
+		if ver, ok := combination[key]; ok {
+			return ver
+		}
+
+		// Fall back to default selection
+		depKey := depSpec.ToModuleKey()
+		group, ok := selectionGroups[depKey]
+		if !ok {
+			return depSpec.Version
+		}
+		return selectedVersions[group]
+	}
+}
+
+// cartesianProduct computes the cartesian product of all possible resolutions.
+// Returns a list of maps, where each map represents one complete assignment
+// of versions to DepSpecs.
+func cartesianProduct(
+	keys []depSpecKey,
+	allPossible map[depSpecKey][]resolutionResult,
+) []map[depSpecKey]string {
+	if len(keys) == 0 {
+		return []map[depSpecKey]string{{}}
+	}
+
+	// Start with empty combination
+	result := []map[depSpecKey]string{{}}
+
+	for _, key := range keys {
+		possibilities := allPossible[key]
+		var newResult []map[depSpecKey]string
+
+		for _, existing := range result {
+			for _, poss := range possibilities {
+				// Clone existing map and add new choice
+				newCombo := make(map[depSpecKey]string, len(existing)+1)
+				for k, v := range existing {
+					newCombo[k] = v
+				}
+				newCombo[key] = poss.Version
+				newResult = append(newResult, newCombo)
+			}
+		}
+
+		result = newResult
+	}
+
+	return result
 }

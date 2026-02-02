@@ -86,6 +86,10 @@ type graphBuildContext struct {
 	// moduleDeps maps module name -> list of dependency names (for graph building)
 	moduleDeps map[string][]string
 
+	// moduleInfoCache maps "name@version" -> ModuleInfo for Bazel compatibility checking.
+	// This caches the parsed MODULE.bazel content to avoid refetching.
+	moduleInfoCache map[string]*ModuleInfo
+
 	// visiting tracks modules currently being processed to detect cycles
 	visiting *sync.Map
 
@@ -95,7 +99,19 @@ type graphBuildContext struct {
 	// overrideModules contains pre-parsed MODULE.bazel for overridden modules
 	overrideModules map[string]*ModuleInfo
 
-	// mu protects concurrent writes to depGraph and moduleDeps
+	// unfulfilledNodepEdgeModuleNames tracks module names from nodep edges that could
+	// not be satisfied in the current discovery round. These are nodep dependencies
+	// that reference modules not yet in the dependency graph.
+	//
+	// Reference: Discovery.java lines 62-78
+	// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java
+	unfulfilledNodepEdgeModuleNames map[string]bool
+
+	// prevRoundModuleNames contains module names discovered in the previous round.
+	// Used to determine if a nodep edge can be fulfilled in the current round.
+	prevRoundModuleNames map[string]bool
+
+	// mu protects concurrent writes to depGraph, moduleDeps, moduleInfoCache, and unfulfilledNodepEdgeModuleNames
 	mu sync.Mutex
 }
 
@@ -111,6 +127,7 @@ func newDependencyResolver(registry Registry, includeDevDeps bool) *dependencyRe
 // newDependencyResolverWithOptions creates a resolver with full configuration control.
 // The registry can be nil if opts.Registries is set, otherwise it's required.
 // When opts.Registries is set, it takes precedence over the registry parameter.
+// When opts.VendorDir is set, a vendor registry is prepended to the chain.
 func newDependencyResolverWithOptions(registry Registry, opts ResolutionOptions) *dependencyResolver {
 	reg := registry
 
@@ -120,6 +137,17 @@ func newDependencyResolverWithOptions(registry Registry, opts ResolutionOptions)
 	} else if reg == nil {
 		// No registry provided and no Registries in options, use BCR default
 		reg = registryWithAllOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger)
+	}
+
+	// Prepend vendor registry if VendorDir is set
+	if opts.VendorDir != "" {
+		vendorReg, err := newVendorRegistry(opts.VendorDir)
+		if err == nil {
+			// Create a chain with vendor registry first, then the configured registries
+			reg = newVendorChain(vendorReg, reg)
+		}
+		// If vendor registry creation fails, silently continue with just the remote registries
+		// This matches Bazel's behavior where an invalid vendor dir is not an error
 	}
 
 	return &dependencyResolver{
@@ -221,15 +249,75 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 
 	// Initialize graph build context with all state needed for traversal
 	bc := &graphBuildContext{
-		depGraph:        make(map[string]map[string]*depRequest),
-		moduleDeps:      make(map[string][]string),
-		visiting:        &sync.Map{},
-		overrides:       indexOverrides(rootModule.Overrides),
-		overrideModules: r.overrideModuleSnapshot(),
+		depGraph:                        make(map[string]map[string]*depRequest),
+		moduleDeps:                      make(map[string][]string),
+		moduleInfoCache:                 make(map[string]*ModuleInfo),
+		visiting:                        &sync.Map{},
+		overrides:                       indexOverrides(rootModule.Overrides),
+		overrideModules:                 r.overrideModuleSnapshot(),
+		unfulfilledNodepEdgeModuleNames: make(map[string]bool),
+		prevRoundModuleNames:            map[string]bool{rootModule.Name: true},
 	}
 
-	if err := r.buildDependencyGraph(ctx, rootModule, bc, []string{"<root>"}); err != nil {
-		return nil, fmt.Errorf("build dependency graph: %w", err)
+	// Multi-round discovery loop for handling nodep edges.
+	// Nodep dependencies (from use_extension) may reference modules not yet discovered.
+	// After each round, we check if any unfulfilled nodep edges can now be satisfied
+	// by newly discovered modules. If so, we run another round.
+	//
+	// Reference: Discovery.java lines 62-78
+	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java
+	for round := 1; ; round++ {
+		logger.Debug("starting discovery round", "round", round)
+
+		// Reset unfulfilled nodep edges for this round
+		bc.mu.Lock()
+		bc.unfulfilledNodepEdgeModuleNames = make(map[string]bool)
+		bc.mu.Unlock()
+
+		if err := r.buildDependencyGraph(ctx, rootModule, bc, []string{"<root>"}); err != nil {
+			return nil, fmt.Errorf("build dependency graph (round %d): %w", round, err)
+		}
+
+		// Collect current round's module names
+		currentModuleNames := make(map[string]bool)
+		bc.mu.Lock()
+		for moduleName := range bc.depGraph {
+			currentModuleNames[moduleName] = true
+		}
+		unfulfilledNodeps := make(map[string]bool)
+		for name := range bc.unfulfilledNodepEdgeModuleNames {
+			unfulfilledNodeps[name] = true
+		}
+		bc.mu.Unlock()
+
+		// Check if any unfulfilled nodep edge can now be fulfilled
+		// (i.e., its module name is now in the current module set)
+		canFulfillMore := false
+		for nodepName := range unfulfilledNodeps {
+			if currentModuleNames[nodepName] {
+				canFulfillMore = true
+				logger.Debug("unfulfilled nodep edge can now be fulfilled",
+					"nodepModule", nodepName, "round", round)
+				break
+			}
+		}
+
+		if !canFulfillMore {
+			logger.Debug("discovery complete", "rounds", round, "modules", len(currentModuleNames))
+			break
+		}
+
+		// Update prev round module names for the next iteration
+		bc.mu.Lock()
+		bc.prevRoundModuleNames = currentModuleNames
+		bc.mu.Unlock()
+
+		// Safety limit to prevent infinite loops in case of bugs
+		const maxDiscoveryRounds = 100
+		if round >= maxDiscoveryRounds {
+			logger.Warn("reached maximum discovery rounds", "maxRounds", maxDiscoveryRounds)
+			break
+		}
 	}
 
 	// Substitute yanked versions if enabled
@@ -251,7 +339,7 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		}
 	}
 
-	result, err := r.buildResolutionList(ctx, selectedVersions, bc.moduleDeps, rootModule)
+	result, err := r.buildResolutionList(ctx, selectedVersions, bc.moduleDeps, bc.moduleInfoCache, rootModule)
 	if err != nil {
 		return nil, err
 	}
@@ -273,14 +361,13 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 // buildDependencyGraph constructs the dependency graph by recursively fetching
 // and processing MODULE.bazel files. Uses bc (graphBuildContext) to accumulate state.
 //
+// This method handles both regular dependencies and nodep dependencies (from use_extension).
+// Nodep deps are tracked separately and only fulfilled if their target module already
+// exists in the dependency graph. Unfulfilled nodep edges are recorded for potential
+// resolution in subsequent discovery rounds.
+//
 // Reference: Discovery.java lines 47-79
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java#L47-L79
-//
-// KNOWN LIMITATION: Bazel's Discovery runs multiple rounds to handle "nodep" edges
-// (dependencies that become fulfillable after other modules are discovered). This
-// implementation performs single-pass discovery, which is sufficient for most use
-// cases but may not handle complex inter-module extension dependencies that require
-// multiple discovery rounds.
 func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *ModuleInfo, bc *graphBuildContext, path []string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -432,6 +519,57 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 			depPath := append(path[:len(path):len(path)], dep.Name+"@"+effectiveVersion)
 			enqueue(dep.Name, effectiveVersion, depPath)
 		}
+
+		// Process nodep dependencies
+		// Nodep deps only get added to the graph if their target module already exists
+		// (either in the graph already or was in the previous round).
+		// Otherwise, they're tracked as unfulfilled for potential resolution in later rounds.
+		//
+		// Reference: Discovery.java lines 62-78
+		for _, nodepDep := range module.NodepDependencies {
+			if nodepDep.DevDependency && !r.options.IncludeDevDeps {
+				continue
+			}
+
+			effectiveVersion := nodepDep.Version
+			if override, ok := bc.overrides[nodepDep.Name]; ok {
+				if override.Type == "single_version" && override.Version != "" {
+					effectiveVersion = override.Version
+				}
+			}
+
+			depKey := nodepDep.Name + "@" + effectiveVersion
+
+			bc.mu.Lock()
+			// Check if the nodep target already exists in the dependency graph
+			_, existsInGraph := bc.depGraph[nodepDep.Name]
+			// Or if it was in the previous round (can be fulfilled)
+			_, inPrevRound := bc.prevRoundModuleNames[nodepDep.Name]
+
+			if existsInGraph || inPrevRound {
+				// Nodep can be fulfilled - add to graph for version selection only
+				// (but don't enqueue for transitive traversal)
+				if bc.depGraph[nodepDep.Name] == nil {
+					bc.depGraph[nodepDep.Name] = make(map[string]*depRequest)
+				}
+				if existing, exists := bc.depGraph[nodepDep.Name][effectiveVersion]; exists {
+					existing.RequiredBy = append(existing.RequiredBy, path[len(path)-1]+" (nodep)")
+				} else {
+					bc.depGraph[nodepDep.Name][effectiveVersion] = &depRequest{
+						Version:       effectiveVersion,
+						DevDependency: nodepDep.DevDependency,
+						RequiredBy:    []string{path[len(path)-1] + " (nodep)"},
+					}
+				}
+				// Mark as visited to prevent re-processing, but don't traverse transitively
+				bc.visiting.LoadOrStore(depKey, struct{}{})
+			} else {
+				// Cannot be fulfilled - track as unfulfilled for potential later resolution
+				bc.unfulfilledNodepEdgeModuleNames[nodepDep.Name] = true
+			}
+			bc.mu.Unlock()
+		}
+
 		return nil
 	}
 
@@ -487,6 +625,14 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 
 			logger.Debug("fetched module", "name", task.name, "version", task.version,
 				"dependencies", len(transitiveDep.Dependencies))
+
+			// Cache module info for Bazel compatibility checking
+			if len(transitiveDep.BazelCompatibility) > 0 {
+				cacheKey := task.name + "@" + task.version
+				bc.mu.Lock()
+				bc.moduleInfoCache[cacheKey] = transitiveDep
+				bc.mu.Unlock()
+			}
 
 			if err := processDeps(transitiveDep, task.path); err != nil {
 				setErr(err)
@@ -606,7 +752,7 @@ func (r *dependencyResolver) checkDirectDeps(rootModule *ModuleInfo, selected ma
 	return mismatches
 }
 
-func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVersions map[string]*depRequest, moduleDeps map[string][]string, rootModule *ModuleInfo) (*ResolutionList, error) {
+func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVersions map[string]*depRequest, moduleDeps map[string][]string, moduleInfoCache map[string]*ModuleInfo, rootModule *ModuleInfo) (*ResolutionList, error) {
 	list := &ResolutionList{
 		Modules: make([]ModuleToResolve, 0, len(selectedVersions)),
 	}
@@ -679,6 +825,11 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		checkModuleMetadata(ctx, r.registry, r.options, list)
 	}
 
+	// Check Bazel compatibility if enabled and a Bazel version is specified
+	if r.options.BazelCompatibilityMode != BazelCompatibilityOff && r.options.BazelVersion != "" {
+		checkModuleBazelCompatibility(list.Modules, moduleInfoCache, r.options.BazelVersion)
+	}
+
 	// Compute summary statistics
 	list.Summary.TotalModules = len(list.Modules)
 	for _, module := range list.Modules {
@@ -692,6 +843,9 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		}
 		if module.IsDeprecated {
 			list.Summary.DeprecatedModules++
+		}
+		if module.IsBazelIncompatible {
+			list.Summary.IncompatibleModules++
 		}
 	}
 
@@ -724,6 +878,33 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 			if m.IsDeprecated {
 				list.Warnings = append(list.Warnings,
 					fmt.Sprintf("module %s is deprecated: %s", m.Name, m.DeprecationReason))
+			}
+		}
+	}
+
+	// Handle Bazel compatibility behavior
+	if list.Summary.IncompatibleModules > 0 {
+		switch r.options.BazelCompatibilityMode {
+		case BazelCompatibilityOff:
+			// Incompatibility info is populated but no warnings or errors
+		case BazelCompatibilityWarn:
+			for _, m := range list.Modules {
+				if m.IsBazelIncompatible {
+					list.Warnings = append(list.Warnings,
+						fmt.Sprintf("module %s@%s is incompatible with Bazel %s: %s",
+							m.Name, m.Version, r.options.BazelVersion, m.BazelIncompatibilityReason))
+				}
+			}
+		case BazelCompatibilityError:
+			incompatibleModules := make([]ModuleToResolve, 0, list.Summary.IncompatibleModules)
+			for _, m := range list.Modules {
+				if m.IsBazelIncompatible {
+					incompatibleModules = append(incompatibleModules, m)
+				}
+			}
+			return nil, &BazelIncompatibilityError{
+				BazelVersion: r.options.BazelVersion,
+				Modules:      incompatibleModules,
 			}
 		}
 	}

@@ -40,6 +40,15 @@ type ModuleInfo struct {
 	// Dependencies lists all bazel_dep declarations in the module file.
 	Dependencies []Dependency `json:"dependencies"`
 
+	// NodepDependencies lists dependencies that participate in version selection but
+	// don't create transitive dependency edges. These come from use_extension declarations
+	// that reference modules the extension depends on. Modules reachable only via nodep
+	// deps are not included in the final dependency graph.
+	//
+	// Reference: Discovery.java lines 62-78 and InterimModule.java nodepDeps field
+	// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java
+	NodepDependencies []Dependency `json:"nodep_dependencies,omitempty"`
+
 	// Overrides lists all override declarations (single_version, git, etc.).
 	Overrides []Override `json:"overrides"`
 }
@@ -73,6 +82,16 @@ type Dependency struct {
 
 	// DevDependency indicates this is only needed for development/testing.
 	DevDependency bool `json:"dev_dependency"`
+
+	// IsNodepDep indicates this dependency participates in version selection but
+	// doesn't create transitive dependency edges. Nodep dependencies are used by
+	// module extensions (use_extension) to reference modules they depend on without
+	// making them required dependencies. Modules reachable only via nodep deps are
+	// not included in the final dependency graph.
+	//
+	// Reference: Discovery.java lines 62-78 and InterimModule.java nodepDeps field
+	// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java
+	IsNodepDep bool `json:"is_nodep_dep,omitempty"`
 }
 
 // Override represents version or source overrides for a module dependency.
@@ -159,6 +178,59 @@ type ModuleToResolve struct {
 
 	// DeprecationReason explains why the module is deprecated.
 	DeprecationReason string `json:"deprecation_reason,omitempty"`
+
+	// BazelCompatibility contains the bazel_compatibility constraints for this module.
+	// Empty if no constraints were declared.
+	BazelCompatibility []string `json:"bazel_compatibility,omitempty"`
+
+	// IsBazelIncompatible indicates the module is incompatible with the target Bazel version.
+	// Check BazelIncompatibilityReason for details.
+	IsBazelIncompatible bool `json:"bazel_incompatible,omitempty"`
+
+	// BazelIncompatibilityReason explains why the module is incompatible.
+	BazelIncompatibilityReason string `json:"bazel_incompatibility_reason,omitempty"`
+
+	// Source contains information about how to fetch this module's source code.
+	// This is populated when GetModuleSource is called.
+	// It can describe archive, git_repository, or local_path sources.
+	Source *SourceInfo `json:"source,omitempty"`
+}
+
+// SourceInfo describes how to fetch a module's source code.
+// This is a simplified view of registry.Source for external use.
+//
+// Reference: IndexRegistry.java lines 264-295
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/IndexRegistry.java
+type SourceInfo struct {
+	// Type is the source type: "archive", "git_repository", or "local_path".
+	Type string `json:"type"`
+
+	// --- Archive fields ---
+
+	// URL is the download URL for archive sources.
+	URL string `json:"url,omitempty"`
+
+	// Integrity is the SRI hash for archive sources (e.g., "sha256-...").
+	Integrity string `json:"integrity,omitempty"`
+
+	// StripPrefix is the directory prefix to strip from the archive or git repo.
+	StripPrefix string `json:"strip_prefix,omitempty"`
+
+	// --- Git repository fields ---
+
+	// Remote is the Git repository URL.
+	Remote string `json:"remote,omitempty"`
+
+	// Commit is the Git commit hash to checkout.
+	Commit string `json:"commit,omitempty"`
+
+	// Tag is the Git tag to checkout (alternative to Commit).
+	Tag string `json:"tag,omitempty"`
+
+	// --- Local path fields ---
+
+	// Path is the local filesystem path.
+	Path string `json:"path,omitempty"`
 }
 
 // Key returns a unique identifier for this module in "name@version" format.
@@ -241,6 +313,9 @@ type ResolutionSummary struct {
 
 	// DeprecatedModules is the count of deprecated modules.
 	DeprecatedModules int `json:"deprecated_modules,omitempty"`
+
+	// IncompatibleModules is the count of modules incompatible with the target Bazel version.
+	IncompatibleModules int `json:"incompatible_modules,omitempty"`
 }
 
 // YankedVersionBehavior controls how yanked versions are handled during resolution.
@@ -274,6 +349,50 @@ const (
 
 	// DirectDepsError fails resolution if direct deps don't match resolved versions.
 	DirectDepsError
+)
+
+// BazelCompatibilityMode controls how Bazel compatibility constraints are validated.
+//
+// Reference: BazelModuleResolutionFunction.java lines 298-333
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/BazelModuleResolutionFunction.java
+type BazelCompatibilityMode int
+
+const (
+	// BazelCompatibilityOff disables Bazel compatibility checking (default).
+	BazelCompatibilityOff BazelCompatibilityMode = iota
+
+	// BazelCompatibilityWarn includes warnings when modules are incompatible with the Bazel version.
+	BazelCompatibilityWarn
+
+	// BazelCompatibilityError fails resolution if any module is incompatible with the Bazel version.
+	BazelCompatibilityError
+)
+
+// LockfileMode controls how the lockfile is handled during resolution.
+//
+// Reference: BazelModuleResolutionFunction.java lines 113-147
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/BazelModuleResolutionFunction.java
+type LockfileMode int
+
+const (
+	// LockfileOff disables lockfile handling (default).
+	// The lockfile is neither read nor written.
+	LockfileOff LockfileMode = iota
+
+	// LockfileUpdate reads the existing lockfile and updates it after resolution.
+	// If no lockfile exists, a new one is created.
+	// This is equivalent to Bazel's --lockfile_mode=update.
+	LockfileUpdate
+
+	// LockfileError fails if resolution differs from the lockfile.
+	// This ensures reproducible builds by requiring the lockfile to match.
+	// This is equivalent to Bazel's --lockfile_mode=error.
+	LockfileError
+
+	// LockfileRefresh ignores the existing lockfile and creates a fresh one.
+	// All registry files are re-fetched and new hashes are computed.
+	// This is equivalent to Bazel's --lockfile_mode=refresh.
+	LockfileRefresh
 )
 
 // ProgressEventType identifies the type of progress event.
@@ -343,6 +462,13 @@ type ResolutionOptions struct {
 	// Default is false for backwards compatibility.
 	SubstituteYanked bool
 
+	// BazelCompatibilityMode controls validation of bazel_compatibility constraints.
+	// When set to BazelCompatibilityWarn or BazelCompatibilityError, modules with
+	// bazel_compatibility constraints that don't match BazelVersion will be flagged.
+	// Requires BazelVersion to be set for validation to occur.
+	// Default is BazelCompatibilityOff for backwards compatibility.
+	BazelCompatibilityMode BazelCompatibilityMode
+
 	// BazelVersion specifies which Bazel version's behavior to emulate.
 	// When set, includes that version's MODULE.tools dependencies in resolution.
 	// Format: "7.0.0", "8.0.0", etc.
@@ -373,6 +499,17 @@ type ResolutionOptions struct {
 	//
 	// This mirrors Bazel's --vendor_dir flag behavior.
 	VendorDir string
+
+	// LockfileMode controls how the lockfile is handled during resolution.
+	// Default is LockfileOff for backwards compatibility.
+	//
+	// Reference: BazelModuleResolutionFunction.java lines 113-147
+	LockfileMode LockfileMode
+
+	// LockfilePath specifies the path to the lockfile.
+	// If empty and LockfileMode is not Off, defaults to "MODULE.bazel.lock"
+	// in the same directory as the MODULE.bazel file.
+	LockfilePath string
 
 	// Timeout specifies the HTTP request timeout for registry requests.
 	// When set to a positive value, overrides the default 15 second timeout.
@@ -617,4 +754,32 @@ type MaxDepthExceededError struct {
 func (e *MaxDepthExceededError) Error() string {
 	return fmt.Sprintf("maximum dependency depth exceeded: depth %d > max %d (path: %s)",
 		e.Depth, e.MaxDepth, formatDepPath(e.Path))
+}
+
+// BazelIncompatibilityError is returned when resolution selects modules that are
+// incompatible with the specified Bazel version and BazelCompatibilityError mode is configured.
+type BazelIncompatibilityError struct {
+	// BazelVersion is the Bazel version being checked against.
+	BazelVersion string
+	// Modules contains the modules that are incompatible.
+	Modules []ModuleToResolve
+}
+
+func (e *BazelIncompatibilityError) Error() string {
+	if len(e.Modules) == 1 {
+		m := e.Modules[0]
+		return fmt.Sprintf("module %s@%s is incompatible with Bazel %s: %s",
+			m.Name, m.Version, e.BazelVersion, m.BazelIncompatibilityReason)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d modules are incompatible with Bazel %s:", len(e.Modules), e.BazelVersion)
+	for _, m := range e.Modules {
+		sb.WriteString("\n  - ")
+		sb.WriteString(m.Name)
+		sb.WriteByte('@')
+		sb.WriteString(m.Version)
+		sb.WriteString(": ")
+		sb.WriteString(m.BazelIncompatibilityReason)
+	}
+	return sb.String()
 }

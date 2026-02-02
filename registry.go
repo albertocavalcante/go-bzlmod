@@ -95,6 +95,12 @@ type registryClient struct {
 	metadataCache sync.Map    // map[string]*registry.Metadata keyed by module name
 	externalCache ModuleCache // optional external cache for persistence across resolutions
 	logger        *slog.Logger
+
+	// Mirror configuration (fetched lazily from bazel_registry.json)
+	mirrors        []string
+	moduleBasePath string
+	mirrorsOnce    sync.Once
+	mirrorsErr     error
 }
 
 // log returns the configured logger, or a no-op logger if none was set.
@@ -108,6 +114,137 @@ func (r *registryClient) log() *slog.Logger {
 // BaseURL returns the base URL of the registry (e.g., "https://bcr.bazel.build").
 func (r *registryClient) BaseURL() string {
 	return r.baseURL
+}
+
+// loadMirrors fetches and caches the bazel_registry.json configuration.
+// This is called once lazily on first use.
+func (r *registryClient) loadMirrors(ctx context.Context) {
+	r.mirrorsOnce.Do(func() {
+		url := fmt.Sprintf("%s/bazel_registry.json", r.baseURL)
+		logger := r.log()
+		logger.Debug("fetching registry configuration", "url", url)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+		if err != nil {
+			r.mirrorsErr = err
+			return
+		}
+
+		resp, err := r.client.Do(req)
+		if err != nil {
+			// Not an error - registry config is optional
+			logger.Debug("registry config not available", "error", err)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			// Not an error - registry config is optional
+			logger.Debug("registry config not available", "status", resp.StatusCode)
+			return
+		}
+
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			logger.Debug("failed to read registry config", "error", err)
+			return
+		}
+
+		var config registry.RegistryConfig
+		if err := json.Unmarshal(data, &config); err != nil {
+			logger.Debug("failed to parse registry config", "error", err)
+			return
+		}
+
+		r.mirrors = config.Mirrors
+		if config.ModuleBasePath != "" {
+			r.moduleBasePath = config.ModuleBasePath
+		} else {
+			r.moduleBasePath = "modules"
+		}
+
+		logger.Debug("loaded registry config", "mirrors", len(r.mirrors), "module_base_path", r.moduleBasePath)
+	})
+}
+
+// getModuleBasePath returns the module base path (defaults to "modules").
+func (r *registryClient) getModuleBasePath(ctx context.Context) string {
+	r.loadMirrors(ctx)
+	if r.moduleBasePath != "" {
+		return r.moduleBasePath
+	}
+	return "modules"
+}
+
+// getMirrors returns the list of mirror URLs.
+func (r *registryClient) getMirrors(ctx context.Context) []string {
+	r.loadMirrors(ctx)
+	return r.mirrors
+}
+
+// fetchWithMirrors tries to fetch a path from the primary registry and falls back to mirrors.
+// Returns the response body data or an error if all attempts fail.
+func (r *registryClient) fetchWithMirrors(ctx context.Context, path, moduleName, version string) ([]byte, error) {
+	logger := r.log()
+
+	// Build list of URLs to try: primary first, then mirrors
+	urls := []string{fmt.Sprintf("%s/%s", r.baseURL, path)}
+	for _, mirror := range r.getMirrors(ctx) {
+		urls = append(urls, fmt.Sprintf("%s/%s", strings.TrimSuffix(mirror, "/"), path))
+	}
+
+	var lastErr error
+	for i, url := range urls {
+		if i > 0 {
+			logger.Debug("trying mirror", "url", url, "attempt", i+1)
+		} else {
+			logger.Debug("fetching from registry", "url", url)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		resp, err := r.client.Do(req)
+		if err != nil {
+			logger.Debug("request failed", "url", url, "error", err)
+			lastErr = fmt.Errorf("fetch %s@%s from %s: %w", moduleName, version, url, err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			logger.Debug("registry returned error status", "url", url, "status", resp.StatusCode)
+			lastErr = &RegistryError{
+				StatusCode: resp.StatusCode,
+				ModuleName: moduleName,
+				Version:    version,
+				URL:        url,
+				Retryable:  resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode == 504,
+			}
+			// Don't try mirrors for 404 - the module doesn't exist
+			if resp.StatusCode == 404 {
+				return nil, lastErr
+			}
+			continue
+		}
+
+		data, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read %s@%s response from %s: %w", moduleName, version, url, err)
+			continue
+		}
+
+		if i > 0 {
+			logger.Debug("mirror fetch succeeded", "url", url)
+		}
+		return data, nil
+	}
+
+	return nil, lastErr
 }
 
 // RegistryOption configures a Registry.
@@ -368,36 +505,13 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 		// External cache error or miss, continue with registry fetch
 	}
 
-	// 3. Fetch from registry
-	url := fmt.Sprintf("%s/modules/%s/%s/MODULE.bazel", r.baseURL, moduleName, version)
-	logger.Debug("fetching module from registry", "name", moduleName, "version", version, "url", url)
+	// 3. Fetch from registry (with mirror fallback)
+	basePath := r.getModuleBasePath(ctx)
+	path := fmt.Sprintf("%s/%s/%s/MODULE.bazel", basePath, moduleName, version)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	data, err := r.fetchWithMirrors(ctx, path, moduleName, version)
 	if err != nil {
 		return nil, err
-	}
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		logger.Debug("registry request failed", "name", moduleName, "version", version, "error", err)
-		return nil, fmt.Errorf("fetch module %s@%s: %w", moduleName, version, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		logger.Debug("registry returned error status", "name", moduleName, "version", version, "status", resp.StatusCode)
-		return nil, &RegistryError{
-			StatusCode: resp.StatusCode,
-			ModuleName: moduleName,
-			Version:    version,
-			URL:        url,
-			Retryable:  resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode == 504,
-		}
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read module %s@%s response: %w", moduleName, version, err)
 	}
 
 	moduleInfo, err := ParseModuleContent(string(data))
@@ -418,6 +532,40 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 	return moduleInfo, nil
 }
 
+// GetModuleSource fetches the source.json file for a module version.
+// This describes how to fetch the module's source code (archive, git, or local_path).
+// Results are cached, so repeated calls for the same module version are fast.
+func (r *registryClient) GetModuleSource(ctx context.Context, moduleName, version string) (*registry.Source, error) {
+	cacheKey := moduleName + "@" + version + ":source"
+	logger := r.log()
+
+	// Check in-memory cache first
+	if cached, ok := r.cache.Load(cacheKey); ok {
+		logger.Debug("source cache hit (memory)", "name", moduleName, "version", version)
+		return cached.(*registry.Source), nil
+	}
+
+	// Fetch from registry (with mirror fallback)
+	basePath := r.getModuleBasePath(ctx)
+	path := fmt.Sprintf("%s/%s/%s/source.json", basePath, moduleName, version)
+
+	data, err := r.fetchWithMirrors(ctx, path, moduleName, version)
+	if err != nil {
+		return nil, err
+	}
+
+	var source registry.Source
+	if err := json.Unmarshal(data, &source); err != nil {
+		return nil, fmt.Errorf("parse source %s@%s: %w", moduleName, version, err)
+	}
+
+	logger.Debug("fetched source from registry", "name", moduleName, "version", version, "type", source.Type)
+
+	// Store in in-memory cache
+	r.cache.Store(cacheKey, &source)
+	return &source, nil
+}
+
 // GetModuleMetadata fetches the metadata.json file for a module.
 // This includes version list, yanked versions, maintainers, and deprecation info.
 // Results are cached, so repeated calls for the same module are fast.
@@ -426,30 +574,13 @@ func (r *registryClient) GetModuleMetadata(ctx context.Context, moduleName strin
 		return cached.(*registry.Metadata), nil
 	}
 
-	url := fmt.Sprintf("%s/modules/%s/metadata.json", r.baseURL, moduleName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("create request for %s metadata: %w", moduleName, err)
-	}
+	// Fetch from registry (with mirror fallback)
+	basePath := r.getModuleBasePath(ctx)
+	path := fmt.Sprintf("%s/%s/metadata.json", basePath, moduleName)
 
-	resp, err := r.client.Do(req)
+	data, err := r.fetchWithMirrors(ctx, path, moduleName, "")
 	if err != nil {
-		return nil, fmt.Errorf("fetch metadata for %s: %w", moduleName, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &RegistryError{
-			StatusCode: resp.StatusCode,
-			ModuleName: moduleName,
-			URL:        url,
-			Retryable:  resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode == 504,
-		}
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read metadata response for %s: %w", moduleName, err)
+		return nil, err
 	}
 
 	var metadata registry.Metadata

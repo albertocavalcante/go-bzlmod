@@ -238,6 +238,50 @@ func (rc *registryChain) GetRegistryForModule(moduleName string) string {
 	return ""
 }
 
+// GetModuleSource fetches source.json using the registry that provides this module.
+func (rc *registryChain) GetModuleSource(ctx context.Context, moduleName, version string) (*registry.Source, error) {
+	// Check if we've already determined which registry provides this module
+	rc.moduleRegistryMu.RLock()
+	registryIdx, found := rc.moduleRegistry[moduleName]
+	rc.moduleRegistryMu.RUnlock()
+
+	if found {
+		// We know which registry has this module, use it directly
+		return rc.clients[registryIdx].GetModuleSource(ctx, moduleName, version)
+	}
+
+	// Try each registry in order to find the source
+	var lastErr error
+	for i, client := range rc.clients {
+		source, err := client.GetModuleSource(ctx, moduleName, version)
+		if err == nil {
+			// Success! Remember this registry for future requests for this module
+			rc.moduleRegistryMu.Lock()
+			if _, exists := rc.moduleRegistry[moduleName]; !exists {
+				rc.moduleRegistry[moduleName] = i
+			}
+			rc.moduleRegistryMu.Unlock()
+			return source, nil
+		}
+
+		// Check if it's a 404 (module not found in this registry)
+		if isNotFound(err) {
+			lastErr = err
+			continue
+		}
+
+		// For other errors, continue to next registry
+		lastErr = err
+		continue
+	}
+
+	// Module source not found in any registry
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("source.json for module %s@%s not found in any registry", moduleName, version)
+}
+
 // Registry provides access to Bazel module registries.
 // Implementations fetch MODULE.bazel files and module metadata from registries.
 //
@@ -249,6 +293,10 @@ type Registry interface {
 
 	// GetModuleMetadata fetches metadata for a module (available versions, yanked info, etc).
 	GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error)
+
+	// GetModuleSource fetches the source.json file for a module version.
+	// This describes how to fetch the module's source code (archive, git, or local_path).
+	GetModuleSource(ctx context.Context, moduleName, version string) (*registry.Source, error)
 
 	// BaseURL returns the base URL of this registry.
 	BaseURL() string
