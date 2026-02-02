@@ -170,6 +170,13 @@ func (r *dependencyResolver) overrideModuleSnapshot() map[string]*ModuleInfo {
 	return snapshot
 }
 
+// emitProgress safely calls the OnProgress callback if configured.
+func (r *dependencyResolver) emitProgress(event ProgressEvent) {
+	if r.options.OnProgress != nil {
+		r.options.OnProgress(event)
+	}
+}
+
 // ResolveDependencies resolves all transitive dependencies for a root module.
 // It returns a ResolutionList containing all selected modules sorted by name.
 //
@@ -178,6 +185,12 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 	if rootModule == nil {
 		return nil, fmt.Errorf("root module is nil")
 	}
+
+	// Emit resolve_start event
+	r.emitProgress(ProgressEvent{
+		Type:    ProgressResolveStart,
+		Message: "starting dependency resolution",
+	})
 
 	// Inject Bazel's MODULE.tools dependencies if a Bazel version is specified
 	if r.options.BazelVersion != "" {
@@ -216,7 +229,18 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		}
 	}
 
-	return r.buildResolutionList(ctx, selectedVersions, bc.moduleDeps, rootModule)
+	result, err := r.buildResolutionList(ctx, selectedVersions, bc.moduleDeps, rootModule)
+	if err != nil {
+		return nil, err
+	}
+
+	// Emit resolve_end event
+	r.emitProgress(ProgressEvent{
+		Type:    ProgressResolveEnd,
+		Message: fmt.Sprintf("resolved %d modules", len(result.Modules)),
+	})
+
+	return result, nil
 }
 
 // buildDependencyGraph constructs the dependency graph by recursively fetching
@@ -386,6 +410,13 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 				continue
 			}
 
+			// Emit module_fetch_start event
+			r.emitProgress(ProgressEvent{
+				Type:    ProgressModuleFetchStart,
+				Module:  task.name,
+				Version: task.version,
+			})
+
 			// Check if there's a registry override for this module
 			registryToUse := r.registry
 			if override, ok := bc.overrides[task.name]; ok && override.Registry != "" {
@@ -394,6 +425,14 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 			}
 
 			transitiveDep, err := registryToUse.GetModuleFile(ctx, task.name, task.version)
+
+			// Emit module_fetch_end event
+			r.emitProgress(ProgressEvent{
+				Type:    ProgressModuleFetchEnd,
+				Module:  task.name,
+				Version: task.version,
+			})
+
 			if err != nil {
 				if isNotFound(err) {
 					bc.mu.Lock()

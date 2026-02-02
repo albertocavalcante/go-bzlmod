@@ -201,6 +201,38 @@ const (
 	NetworkAllowlist
 )
 
+// ProgressEventType identifies the type of progress event.
+type ProgressEventType string
+
+const (
+	// ProgressResolveStart is emitted when resolution begins.
+	ProgressResolveStart ProgressEventType = "resolve_start"
+
+	// ProgressResolveEnd is emitted when resolution completes.
+	ProgressResolveEnd ProgressEventType = "resolve_end"
+
+	// ProgressModuleFetchStart is emitted when fetching a module begins.
+	ProgressModuleFetchStart ProgressEventType = "module_fetch_start"
+
+	// ProgressModuleFetchEnd is emitted when fetching a module completes.
+	ProgressModuleFetchEnd ProgressEventType = "module_fetch_end"
+)
+
+// ProgressEvent contains information about resolution progress.
+type ProgressEvent struct {
+	// Type identifies the event type.
+	Type ProgressEventType `json:"type"`
+
+	// Module is the module name (for module_fetch_* events).
+	Module string `json:"module,omitempty"`
+
+	// Version is the module version (for module_fetch_* events).
+	Version string `json:"version,omitempty"`
+
+	// Message provides additional context about the event.
+	Message string `json:"message,omitempty"`
+}
+
 // ResolutionOptions configures the dependency resolution behavior.
 type ResolutionOptions struct {
 	// IncludeDevDeps includes dev_dependency=True modules in resolution.
@@ -286,6 +318,16 @@ type ResolutionOptions struct {
 	//
 	// Example: 30 * time.Second for slower networks
 	Timeout time.Duration
+
+	// OnProgress is called with progress updates during resolution.
+	// This can be used for logging, progress bars, or debugging.
+	//
+	// The callback must be thread-safe as it may be called concurrently
+	// from multiple goroutines during parallel module fetching.
+	// The callback should return quickly to avoid blocking resolution.
+	//
+	// If nil, no progress events are emitted.
+	OnProgress func(event ProgressEvent)
 }
 
 // YankedVersionsError is returned when resolution selects yanked versions

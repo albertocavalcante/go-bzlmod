@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1138,6 +1139,186 @@ func TestBuildDependencyGraph_LongerMutualDependency(t *testing.T) {
 	for _, expected := range []string{"module_a", "module_b", "module_c"} {
 		if !moduleNames[expected] {
 			t.Errorf("Expected module %s in resolution list", expected)
+		}
+	}
+}
+
+// TestOnProgress_CallbacksInvoked tests that progress callbacks are invoked.
+func TestOnProgress_CallbacksInvoked(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	var events []ProgressEvent
+	var mu sync.Mutex
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolverWithOptions(registry, ResolutionOptions{
+		OnProgress: func(event ProgressEvent) {
+			mu.Lock()
+			events = append(events, event)
+			mu.Unlock()
+		},
+	})
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Check that we got resolve_start and resolve_end events
+	var hasStart, hasEnd bool
+	var fetchStarts, fetchEnds int
+	for _, e := range events {
+		switch e.Type {
+		case ProgressResolveStart:
+			hasStart = true
+		case ProgressResolveEnd:
+			hasEnd = true
+		case ProgressModuleFetchStart:
+			fetchStarts++
+		case ProgressModuleFetchEnd:
+			fetchEnds++
+		}
+	}
+
+	if !hasStart {
+		t.Error("Expected resolve_start event")
+	}
+	if !hasEnd {
+		t.Error("Expected resolve_end event")
+	}
+	if fetchStarts == 0 {
+		t.Error("Expected at least one module_fetch_start event")
+	}
+	if fetchEnds == 0 {
+		t.Error("Expected at least one module_fetch_end event")
+	}
+	if fetchStarts != fetchEnds {
+		t.Errorf("Mismatch: %d fetch_start events but %d fetch_end events", fetchStarts, fetchEnds)
+	}
+}
+
+// TestOnProgress_NilCallbackDoesNotPanic tests that nil OnProgress doesn't cause panics.
+func TestOnProgress_NilCallbackDoesNotPanic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolverWithOptions(registry, ResolutionOptions{
+		OnProgress: nil, // Explicitly nil
+	})
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// This should not panic
+	_, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+}
+
+// TestOnProgress_ModuleInfoInEvents tests that module fetch events have correct module info.
+func TestOnProgress_ModuleInfoInEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_b", version = "2.0.0")`)
+		case "/modules/module_b/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "2.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	var events []ProgressEvent
+	var mu sync.Mutex
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolverWithOptions(registry, ResolutionOptions{
+		OnProgress: func(event ProgressEvent) {
+			mu.Lock()
+			events = append(events, event)
+			mu.Unlock()
+		},
+	})
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Collect module names from fetch events
+	fetchedModules := make(map[string]bool)
+	for _, e := range events {
+		if e.Type == ProgressModuleFetchStart {
+			if e.Module == "" {
+				t.Error("module_fetch_start event missing Module field")
+			}
+			if e.Version == "" {
+				t.Error("module_fetch_start event missing Version field")
+			}
+			fetchedModules[e.Module+"@"+e.Version] = true
+		}
+	}
+
+	// Verify expected modules were fetched
+	expectedFetches := []string{"module_a@1.0.0", "module_b@2.0.0"}
+	for _, expected := range expectedFetches {
+		if !fetchedModules[expected] {
+			t.Errorf("Expected fetch event for %s", expected)
 		}
 	}
 }
