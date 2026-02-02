@@ -531,6 +531,18 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		selectedNames[name] = true
 	}
 
+	// Extract root module's direct dependencies for depth calculation
+	rootDeps := make([]string, 0, len(rootModule.Dependencies))
+	for _, dep := range rootModule.Dependencies {
+		if dep.DevDependency && !r.options.IncludeDevDeps {
+			continue
+		}
+		rootDeps = append(rootDeps, dep.Name)
+	}
+
+	// Calculate depth for each module using BFS
+	moduleDepths := calculateModuleDepths(rootDeps, moduleDeps, selectedNames)
+
 	for moduleName, req := range selectedVersions {
 		registryURL := defaultRegistry
 
@@ -563,6 +575,7 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 			Name:          moduleName,
 			Version:       req.Version,
 			Registry:      registryURL,
+			Depth:         moduleDepths[moduleName],
 			DevDependency: req.DevDependency,
 			Dependencies:  deps,
 			RequiredBy:    req.RequiredBy,
@@ -818,4 +831,38 @@ func indexOverrides(overrides []Override) map[string]Override {
 		index[override.ModuleName] = override
 	}
 	return index
+}
+
+// calculateModuleDepths computes the shortest path length from root to each module using BFS.
+// Returns a map from module name to depth (1 = direct dependency, 2+ = transitive).
+func calculateModuleDepths(rootDeps []string, moduleDeps map[string][]string, selected map[string]bool) map[string]int {
+	depths := make(map[string]int)
+	queue := make([]string, 0, len(rootDeps))
+
+	// Root's direct deps have depth 1
+	for _, dep := range rootDeps {
+		if selected[dep] {
+			if _, seen := depths[dep]; !seen {
+				depths[dep] = 1
+				queue = append(queue, dep)
+			}
+		}
+	}
+
+	// BFS for minimum depth
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		currentDepth := depths[current]
+
+		for _, depName := range moduleDeps[current] {
+			if selected[depName] {
+				if _, seen := depths[depName]; !seen {
+					depths[depName] = currentDepth + 1
+					queue = append(queue, depName)
+				}
+			}
+		}
+	}
+	return depths
 }

@@ -99,6 +99,10 @@ type ModuleToResolve struct {
 	// Registry is the URL to fetch this module from.
 	Registry string `json:"registry"`
 
+	// Depth is the shortest path length from root to this module.
+	// 0 = root (not in Modules list), 1 = direct dependency, 2+ = transitive.
+	Depth int `json:"depth"`
+
 	// DevDependency indicates if this module is only a dev dependency.
 	DevDependency bool `json:"dev_dependency"`
 

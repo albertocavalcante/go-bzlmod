@@ -1142,6 +1142,240 @@ func TestBuildDependencyGraph_LongerMutualDependency(t *testing.T) {
 	}
 }
 
+// TestCalculateModuleDepths tests the BFS-based depth calculation.
+func TestCalculateModuleDepths(t *testing.T) {
+	tests := []struct {
+		name       string
+		rootDeps   []string
+		moduleDeps map[string][]string
+		selected   map[string]bool
+		wantDepths map[string]int
+	}{
+		{
+			name:     "direct dependencies have depth 1",
+			rootDeps: []string{"a", "b"},
+			moduleDeps: map[string][]string{
+				"a": {},
+				"b": {},
+			},
+			selected: map[string]bool{"a": true, "b": true},
+			wantDepths: map[string]int{
+				"a": 1,
+				"b": 1,
+			},
+		},
+		{
+			name:     "transitive dependencies have depth 2+",
+			rootDeps: []string{"a"},
+			moduleDeps: map[string][]string{
+				"a": {"b"},
+				"b": {"c"},
+				"c": {},
+			},
+			selected: map[string]bool{"a": true, "b": true, "c": true},
+			wantDepths: map[string]int{
+				"a": 1,
+				"b": 2,
+				"c": 3,
+			},
+		},
+		{
+			name:     "diamond dependency gets minimum depth",
+			rootDeps: []string{"a", "b"},
+			moduleDeps: map[string][]string{
+				"a": {"c"},
+				"b": {"c"},
+				"c": {},
+			},
+			selected: map[string]bool{"a": true, "b": true, "c": true},
+			wantDepths: map[string]int{
+				"a": 1,
+				"b": 1,
+				"c": 2, // reachable via both a and b, depth is min(1+1, 1+1) = 2
+			},
+		},
+		{
+			name:     "module reachable via short and long paths gets short path depth",
+			rootDeps: []string{"a", "d"},
+			moduleDeps: map[string][]string{
+				"a": {"b"},
+				"b": {"c"},
+				"c": {},
+				"d": {"c"}, // d is direct dep, so c is at depth 2 via d
+			},
+			selected: map[string]bool{"a": true, "b": true, "c": true, "d": true},
+			wantDepths: map[string]int{
+				"a": 1,
+				"b": 2,
+				"c": 2, // via d (depth 1+1=2), not via a->b (1+1+1=3)
+				"d": 1,
+			},
+		},
+		{
+			name:     "unselected modules are not included",
+			rootDeps: []string{"a"},
+			moduleDeps: map[string][]string{
+				"a": {"b", "c"},
+				"b": {},
+				"c": {},
+			},
+			selected: map[string]bool{"a": true, "b": true}, // c not selected
+			wantDepths: map[string]int{
+				"a": 1,
+				"b": 2,
+				// c not in result
+			},
+		},
+		{
+			name:       "empty deps",
+			rootDeps:   []string{},
+			moduleDeps: map[string][]string{},
+			selected:   map[string]bool{},
+			wantDepths: map[string]int{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calculateModuleDepths(tt.rootDeps, tt.moduleDeps, tt.selected)
+
+			if len(got) != len(tt.wantDepths) {
+				t.Errorf("got %d depths, want %d", len(got), len(tt.wantDepths))
+			}
+
+			for name, wantDepth := range tt.wantDepths {
+				if gotDepth, ok := got[name]; !ok {
+					t.Errorf("missing depth for %s", name)
+				} else if gotDepth != wantDepth {
+					t.Errorf("depth[%s] = %d, want %d", name, gotDepth, wantDepth)
+				}
+			}
+		})
+	}
+}
+
+// TestResolveDependencies_Depth tests that Depth is correctly populated in resolution results.
+func TestResolveDependencies_Depth(t *testing.T) {
+	// Create a mock server with a chain: root -> a -> b -> c
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_b", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")
+			bazel_dep(name = "module_c", version = "1.0.0")`)
+		case "/modules/module_c/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_c", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Build depth map from results
+	depths := make(map[string]int)
+	for _, m := range list.Modules {
+		depths[m.Name] = m.Depth
+	}
+
+	// Verify depths
+	expectedDepths := map[string]int{
+		"module_a": 1, // direct dep
+		"module_b": 2, // transitive via a
+		"module_c": 3, // transitive via a -> b
+	}
+
+	for name, wantDepth := range expectedDepths {
+		if gotDepth, ok := depths[name]; !ok {
+			t.Errorf("module %s not found in results", name)
+		} else if gotDepth != wantDepth {
+			t.Errorf("Depth[%s] = %d, want %d", name, gotDepth, wantDepth)
+		}
+	}
+}
+
+// TestResolveDependencies_DepthDiamond tests depth with diamond dependencies.
+func TestResolveDependencies_DepthDiamond(t *testing.T) {
+	// Diamond: root -> a, root -> b, a -> c, b -> c
+	// c should have depth 2 (via both a and b)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")
+			bazel_dep(name = "module_c", version = "1.0.0")`)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_b", version = "1.0.0")
+			bazel_dep(name = "module_c", version = "1.0.0")`)
+		case "/modules/module_c/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_c", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+			{Name: "module_b", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Build depth map from results
+	depths := make(map[string]int)
+	for _, m := range list.Modules {
+		depths[m.Name] = m.Depth
+	}
+
+	// Verify depths
+	expectedDepths := map[string]int{
+		"module_a": 1, // direct dep
+		"module_b": 1, // direct dep
+		"module_c": 2, // transitive via both a and b (minimum depth)
+	}
+
+	for name, wantDepth := range expectedDepths {
+		if gotDepth, ok := depths[name]; !ok {
+			t.Errorf("module %s not found in results", name)
+		} else if gotDepth != wantDepth {
+			t.Errorf("Depth[%s] = %d, want %d", name, gotDepth, wantDepth)
+		}
+	}
+}
+
 // Benchmark tests
 func BenchmarkApplyMVS(b *testing.B) {
 	registry := newRegistryClient("https://bcr.bazel.build")
