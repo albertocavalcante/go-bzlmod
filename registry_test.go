@@ -499,3 +499,137 @@ func TestRegistry_MultipleURLs(t *testing.T) {
 		t.Error("Expected RegistryChain for multiple URLs")
 	}
 }
+
+// TestHTTPClient_CustomClientIsUsed verifies that a custom HTTP client is used for requests.
+func TestHTTPClient_CustomClientIsUsed(t *testing.T) {
+	requestReceived := false
+	var authHeader string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestReceived = true
+		authHeader = r.Header.Get("Authorization")
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	// Create a custom transport that adds an auth header
+	customTransport := &roundTripperFunc{
+		fn: func(req *http.Request) (*http.Response, error) {
+			req = req.Clone(req.Context())
+			req.Header.Set("Authorization", "Bearer test-token")
+			return http.DefaultTransport.RoundTrip(req)
+		},
+	}
+
+	customClient := &http.Client{Transport: customTransport}
+	reg := registryWithHTTPClient(customClient, 0, server.URL)
+
+	ctx := context.Background()
+	_, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+
+	if !requestReceived {
+		t.Error("Expected request to be received")
+	}
+	if authHeader != "Bearer test-token" {
+		t.Errorf("Authorization header = %q, want %q", authHeader, "Bearer test-token")
+	}
+}
+
+// roundTripperFunc allows using a function as an http.RoundTripper
+type roundTripperFunc struct {
+	fn func(*http.Request) (*http.Response, error)
+}
+
+func (rt *roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return rt.fn(req)
+}
+
+// TestHTTPClient_NilClientUsesDefault tests that nil HTTPClient uses the default.
+func TestHTTPClient_NilClientUsesDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	// nil client should work fine
+	reg := registryWithHTTPClient(nil, 0, server.URL)
+
+	ctx := context.Background()
+	info, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+	if info.Name != "test" {
+		t.Errorf("Module name = %q, want %q", info.Name, "test")
+	}
+}
+
+// TestHTTPClient_TimeoutOverridesCustomClient tests that Timeout overrides custom client timeout.
+func TestHTTPClient_TimeoutOverridesCustomClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		fmt.Fprint(w, `module(name = "test", version = "1.0.0")`)
+	}))
+	defer server.Close()
+
+	// Custom client with 10s timeout
+	customClient := &http.Client{Timeout: 10 * time.Second}
+
+	// But we override with 10ms timeout - should fail
+	reg := registryWithHTTPClient(customClient, 10*time.Millisecond, server.URL)
+
+	ctx := context.Background()
+	_, err := reg.GetModuleFile(ctx, "test", "1.0.0")
+	if err == nil {
+		t.Error("Expected timeout error, got nil")
+	}
+}
+
+// TestHTTPClient_ResolveWithCustomClient tests the full Resolve function with custom client.
+func TestHTTPClient_ResolveWithCustomClient(t *testing.T) {
+	var authHeaderReceived string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeaderReceived = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/modules/dep_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dep_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	customTransport := &roundTripperFunc{
+		fn: func(req *http.Request) (*http.Response, error) {
+			req = req.Clone(req.Context())
+			req.Header.Set("Authorization", "Bearer my-token")
+			return http.DefaultTransport.RoundTrip(req)
+		},
+	}
+
+	ctx := context.Background()
+	moduleContent := `
+module(name = "root", version = "1.0.0")
+bazel_dep(name = "dep_a", version = "1.0.0")
+`
+
+	result, err := Resolve(ctx, moduleContent, ResolutionOptions{
+		Registries: []string{server.URL},
+		HTTPClient: &http.Client{Transport: customTransport},
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if len(result.Modules) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(result.Modules))
+	}
+
+	if authHeaderReceived != "Bearer my-token" {
+		t.Errorf("Authorization header = %q, want %q", authHeaderReceived, "Bearer my-token")
+	}
+}

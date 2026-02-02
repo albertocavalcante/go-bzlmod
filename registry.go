@@ -123,9 +123,16 @@ func Registry(urls ...string) registryInterface {
 // registryWithTimeout creates a registry with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
 func registryWithTimeout(timeout time.Duration, urls ...string) registryInterface {
+	return registryWithHTTPClient(nil, timeout, urls...)
+}
+
+// registryWithHTTPClient creates a registry with an optional custom HTTP client.
+// If httpClient is nil, creates default clients with connection pooling.
+// If timeout is positive, it overrides the httpClient's timeout.
+func registryWithHTTPClient(httpClient *http.Client, timeout time.Duration, urls ...string) registryInterface {
 	if len(urls) == 0 {
 		// Use BCR + GitHub mirror for resilience
-		chain, err := newRegistryChainWithTimeout(DefaultRegistries, timeout)
+		chain, err := newRegistryChainWithHTTPClient(DefaultRegistries, httpClient, timeout)
 		if err != nil {
 			// This should never happen with DefaultRegistries
 			panic(fmt.Sprintf("failed to create default registry chain: %v", err))
@@ -133,14 +140,14 @@ func registryWithTimeout(timeout time.Duration, urls ...string) registryInterfac
 		return chain
 	}
 	if len(urls) == 1 {
-		reg, err := createRegistryClientWithTimeout(urls[0], timeout)
+		reg, err := createRegistryClientWithHTTPClient(urls[0], httpClient, timeout)
 		if err != nil {
 			// Fall back to treating it as a remote URL if parsing fails
-			return newRegistryClientWithTimeout(urls[0], timeout)
+			return newRegistryClientWithHTTPClient(urls[0], httpClient, timeout)
 		}
 		return reg
 	}
-	chain, err := newRegistryChainWithTimeout(urls, timeout)
+	chain, err := newRegistryChainWithHTTPClient(urls, httpClient, timeout)
 	if err != nil {
 		// Panic on invalid URLs - caller should validate URLs before calling
 		panic(fmt.Sprintf("failed to create registry chain: %v", err))
@@ -156,24 +163,44 @@ func newRegistryClient(baseURL string) *registryClient {
 // newRegistryClientWithTimeout creates a registryClient with a custom timeout.
 // If timeout is zero or negative, uses defaultRequestTimeout (15 seconds).
 func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *registryClient {
-	transport := &http.Transport{
-		MaxIdleConns:        defaultMaxIdleConns,
-		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
-		IdleConnTimeout:     defaultIdleConnTimeout,
-		DisableCompression:  false,
-	}
+	return newRegistryClientWithHTTPClient(baseURL, nil, timeout)
+}
 
-	actualTimeout := defaultRequestTimeout
-	if timeout > 0 {
-		actualTimeout = timeout
+// newRegistryClientWithHTTPClient creates a registryClient with an optional custom HTTP client.
+// If client is nil, creates a default client with connection pooling.
+// If timeout is positive, it overrides the client's timeout.
+func newRegistryClientWithHTTPClient(baseURL string, client *http.Client, timeout time.Duration) *registryClient {
+	if client == nil {
+		// Create default pooled client
+		transport := &http.Transport{
+			MaxIdleConns:        defaultMaxIdleConns,
+			MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
+			IdleConnTimeout:     defaultIdleConnTimeout,
+			DisableCompression:  false,
+		}
+
+		actualTimeout := defaultRequestTimeout
+		if timeout > 0 {
+			actualTimeout = timeout
+		}
+
+		client = &http.Client{
+			Timeout:   actualTimeout,
+			Transport: transport,
+		}
+	} else if timeout > 0 {
+		// Clone client with new timeout to avoid modifying the user's client
+		client = &http.Client{
+			Transport:     client.Transport,
+			CheckRedirect: client.CheckRedirect,
+			Jar:           client.Jar,
+			Timeout:       timeout,
+		}
 	}
 
 	return &registryClient{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
-		client: &http.Client{
-			Timeout:   actualTimeout,
-			Transport: transport,
-		},
+		client:  client,
 	}
 }
 

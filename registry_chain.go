@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -67,13 +68,20 @@ func newRegistryChain(registryURLs []string) (*registryChain, error) {
 // newRegistryChainWithTimeout creates a chain of registries with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
 func newRegistryChainWithTimeout(registryURLs []string, timeout time.Duration) (*registryChain, error) {
+	return newRegistryChainWithHTTPClient(registryURLs, nil, timeout)
+}
+
+// newRegistryChainWithHTTPClient creates a chain of registries with an optional custom HTTP client.
+// If httpClient is nil, creates default clients with connection pooling.
+// If timeout is positive, it overrides the httpClient's timeout.
+func newRegistryChainWithHTTPClient(registryURLs []string, httpClient *http.Client, timeout time.Duration) (*registryChain, error) {
 	if len(registryURLs) == 0 {
 		return nil, errors.New("no registry URLs provided")
 	}
 
 	clients := make([]registryInterface, 0, len(registryURLs))
 	for _, url := range registryURLs {
-		client, err := createRegistryClientWithTimeout(url, timeout)
+		client, err := createRegistryClientWithHTTPClient(url, httpClient, timeout)
 		if err != nil {
 			// Log error but continue with other registries
 			// In production, consider adding a warning mechanism

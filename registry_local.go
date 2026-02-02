@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -192,15 +193,17 @@ func isFileURL(url string) bool {
 	return strings.HasPrefix(url, "file://")
 }
 
-// createRegistryClient creates the appropriate registry client for a URL.
-// Handles file:// URLs for local registries and http(s):// for remote.
-func createRegistryClient(url string) (registryInterface, error) {
-	return createRegistryClientWithTimeout(url, 0)
-}
-
 // createRegistryClientWithTimeout creates a registry client with a custom timeout.
 // If timeout is zero or negative, uses the default timeout.
 func createRegistryClientWithTimeout(url string, timeout time.Duration) (registryInterface, error) {
+	return createRegistryClientWithHTTPClient(url, nil, timeout)
+}
+
+// createRegistryClientWithHTTPClient creates a registry client with an optional custom HTTP client.
+// Handles file:// URLs for local registries and http(s):// for remote.
+// If client is nil, creates a default client with connection pooling.
+// If timeout is positive, it overrides the client's timeout (for remote registries).
+func createRegistryClientWithHTTPClient(url string, client *http.Client, timeout time.Duration) (registryInterface, error) {
 	if isFileURL(url) {
 		path, err := parseFileURL(url)
 		if err != nil {
@@ -217,5 +220,5 @@ func createRegistryClientWithTimeout(url string, timeout time.Duration) (registr
 	}
 
 	// Remote registry
-	return newRegistryClientWithTimeout(url, timeout), nil
+	return newRegistryClientWithHTTPClient(url, client, timeout), nil
 }

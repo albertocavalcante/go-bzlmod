@@ -2,6 +2,7 @@ package gobzlmod
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -328,6 +329,30 @@ type ResolutionOptions struct {
 	//
 	// If nil, no progress events are emitted.
 	OnProgress func(event ProgressEvent)
+
+	// HTTPClient allows providing a custom HTTP client for registry requests.
+	// Use this to configure authentication, custom TLS, proxies, or middleware.
+	// If nil, a default client with connection pooling is used.
+	//
+	// Example with bearer token:
+	//
+	//	type bearerTransport struct {
+	//	    token string
+	//	    base  http.RoundTripper
+	//	}
+	//
+	//	func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	//	    req = req.Clone(req.Context())
+	//	    req.Header.Set("Authorization", "Bearer "+t.token)
+	//	    return t.base.RoundTrip(req)
+	//	}
+	//
+	//	client := &http.Client{
+	//	    Transport: &bearerTransport{token: os.Getenv("TOKEN"), base: http.DefaultTransport},
+	//	}
+	//	result, _ := Resolve(ctx, content, ResolutionOptions{HTTPClient: client})
+	//
+	HTTPClient *http.Client
 }
 
 // YankedVersionsError is returned when resolution selects yanked versions
