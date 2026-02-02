@@ -493,7 +493,7 @@ func TestConcurrentAccess(t *testing.T) {
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -567,7 +567,7 @@ func TestSpecialCharactersInVersion(t *testing.T) {
 func TestLargeResponse(t *testing.T) {
 	// Generate a large list of versions
 	var versions []string
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		versions = append(versions, fmt.Sprintf("%d.0.0", i))
 	}
 

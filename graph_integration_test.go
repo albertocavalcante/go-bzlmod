@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/albertocavalcante/go-bzlmod/graph"
@@ -148,7 +149,7 @@ bazel_dep(name = "a", version = "1.0.0")`
 
 	// Should contain module names
 	jsonStr := string(jsonBytes)
-	if !contains(jsonStr, "root@1.0.0") {
+	if !strings.Contains(jsonStr, "root@1.0.0") {
 		t.Error("expected JSON to contain root@1.0.0")
 	}
 }
@@ -299,17 +300,4 @@ bazel_dep(name = "a", version = "1.0.0")`
 	if stats.MaxDepth != 2 {
 		t.Errorf("expected max depth 2, got %d", stats.MaxDepth)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

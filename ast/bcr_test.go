@@ -53,10 +53,8 @@ func TestParseBCR(t *testing.T) {
 	jobs := make(chan string, len(moduleFiles))
 	var wg sync.WaitGroup
 
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numWorkers {
+		wg.Go(func() {
 			for path := range jobs {
 				content, err := os.ReadFile(path)
 				if err != nil {
@@ -89,7 +87,7 @@ func TestParseBCR(t *testing.T) {
 
 				atomic.AddInt64(&successCount, 1)
 			}
-		}()
+		})
 	}
 
 	for _, path := range moduleFiles {
@@ -183,11 +181,4 @@ func TestParseBCRStrict(t *testing.T) {
 	} else {
 		t.Logf("All %d MODULE.bazel files parsed successfully!", len(moduleFiles))
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

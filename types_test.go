@@ -416,7 +416,7 @@ func BenchmarkYankedVersionsError_Small(b *testing.B) {
 // BenchmarkYankedVersionsError_Large benchmarks error generation for a large number of yanked modules.
 func BenchmarkYankedVersionsError_Large(b *testing.B) {
 	modules := make([]ModuleToResolve, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		modules[i] = ModuleToResolve{
 			Name:       "module_" + string(rune('a'+i%26)),
 			Version:    "1.0.0",
@@ -460,7 +460,7 @@ func BenchmarkDirectDepsMismatchError_Small(b *testing.B) {
 // BenchmarkDirectDepsMismatchError_Large benchmarks error generation for a large number of mismatches.
 func BenchmarkDirectDepsMismatchError_Large(b *testing.B) {
 	mismatches := make([]DirectDepMismatch, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		mismatches[i] = DirectDepMismatch{
 			Name:            "dependency_module_" + string(rune('a'+i%26)),
 			DeclaredVersion: "1.0.0",

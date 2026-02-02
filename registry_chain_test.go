@@ -333,7 +333,7 @@ func TestRegistryChain_ConcurrentAccess(t *testing.T) {
 
 	// Launch multiple concurrent requests
 	done := make(chan error, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			_, err := chain.GetModuleFile(ctx, "module_a", "1.0.0")
 			done <- err
@@ -341,9 +341,9 @@ func TestRegistryChain_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Check that all requests succeeded
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		if err := <-done; err != nil {
-			t.Errorf("Concurrent request %d failed: %v", i, err)
+			t.Errorf("Concurrent request failed: %v", err)
 		}
 	}
 

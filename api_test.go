@@ -819,7 +819,7 @@ func TestResolve_LargeContent(t *testing.T) {
 	var content strings.Builder
 	content.WriteString(`module(name = "large_project", version = "1.0.0")
 `)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		fmt.Fprintf(&content, "bazel_dep(name = \"dep\", version = \"1.0.0\")\n")
 	}
 

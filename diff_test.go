@@ -1,7 +1,7 @@
 package gobzlmod
 
 import (
-	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -220,16 +220,16 @@ func TestDiffResolutions_MixedChanges(t *testing.T) {
 		Downgraded: []ModuleUpgrade{{Name: "downgraded", OldVersion: "2.0.0", NewVersion: "1.0.0"}},
 	}
 
-	if !reflect.DeepEqual(diff.Added, expectedDiff.Added) {
+	if !slices.Equal(diff.Added, expectedDiff.Added) {
 		t.Errorf("Added = %+v, want %+v", diff.Added, expectedDiff.Added)
 	}
-	if !reflect.DeepEqual(diff.Removed, expectedDiff.Removed) {
+	if !slices.Equal(diff.Removed, expectedDiff.Removed) {
 		t.Errorf("Removed = %+v, want %+v", diff.Removed, expectedDiff.Removed)
 	}
-	if !reflect.DeepEqual(diff.Upgraded, expectedDiff.Upgraded) {
+	if !slices.Equal(diff.Upgraded, expectedDiff.Upgraded) {
 		t.Errorf("Upgraded = %+v, want %+v", diff.Upgraded, expectedDiff.Upgraded)
 	}
-	if !reflect.DeepEqual(diff.Downgraded, expectedDiff.Downgraded) {
+	if !slices.Equal(diff.Downgraded, expectedDiff.Downgraded) {
 		t.Errorf("Downgraded = %+v, want %+v", diff.Downgraded, expectedDiff.Downgraded)
 	}
 
@@ -338,13 +338,13 @@ func BenchmarkDiffResolutions(b *testing.B) {
 	oldModules := make([]ModuleToResolve, 100)
 	newModules := make([]ModuleToResolve, 100)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		oldModules[i] = ModuleToResolve{
 			Name:    "module_" + string(rune('a'+i%26)) + string(rune('0'+i/26)),
 			Version: "1.0.0",
 		}
 	}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		name := "module_" + string(rune('a'+(i+50)%26)) + string(rune('0'+(i+50)/26))
 		newModules[i] = ModuleToResolve{
 			Name:    name,

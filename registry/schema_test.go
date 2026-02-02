@@ -220,12 +220,12 @@ func TestValidator_LazyInit(t *testing.T) {
 	}`
 
 	// Call multiple times in sequence
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := v.ValidateMetadata([]byte(json1)); err != nil {
-			t.Errorf("iteration %d: ValidateMetadata() error: %v", i, err)
+			t.Errorf("ValidateMetadata() error: %v", err)
 		}
 		if err := v.ValidateSource([]byte(json2)); err != nil {
-			t.Errorf("iteration %d: ValidateSource() error: %v", i, err)
+			t.Errorf("ValidateSource() error: %v", err)
 		}
 	}
 }

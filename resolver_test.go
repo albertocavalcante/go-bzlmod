@@ -934,7 +934,7 @@ func TestBuildDependencyGraph_DeepChain(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Create a chain: module_0 -> module_1 -> ... -> module_49
-		for i := 0; i < chainDepth; i++ {
+		for i := range chainDepth {
 			moduleName := fmt.Sprintf("module_%d", i)
 			path := fmt.Sprintf("/modules/%s/1.0.0/MODULE.bazel", moduleName)
 			if r.URL.Path == path {
@@ -984,7 +984,7 @@ func TestBuildDependencyGraph_MaxDepthExceeded(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Create a very deep chain
-		for i := 0; i < chainDepth; i++ {
+		for i := range chainDepth {
 			moduleName := fmt.Sprintf("module_%d", i)
 			path := fmt.Sprintf("/modules/%s/1.0.0/MODULE.bazel", moduleName)
 			if r.URL.Path == path {
@@ -1564,10 +1564,10 @@ func BenchmarkApplyMVS(b *testing.B) {
 
 	// Create a large dependency graph for benchmarking
 	depGraph := make(map[string]map[string]*depRequest)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		moduleName := fmt.Sprintf("module_%d", i)
 		depGraph[moduleName] = make(map[string]*depRequest)
-		for j := 0; j < 10; j++ {
+		for j := range 10 {
 			version := fmt.Sprintf("1.%d.0", j)
 			depGraph[moduleName][version] = &depRequest{
 				Version:    version,

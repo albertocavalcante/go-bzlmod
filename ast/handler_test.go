@@ -605,7 +605,7 @@ func TestWalk_LargeFile(t *testing.T) {
 	statements := make([]Statement, 0, 1000)
 	statements = append(statements, &ModuleDecl{Name: label.MustModule("large"), Version: label.MustVersion("1.0.0")})
 
-	for i := 0; i < 999; i++ {
+	for i := range 999 {
 		statements = append(statements, &BazelDep{
 			Name:    label.MustModule("dep_" + string(rune('a'+i%26))),
 			Version: label.MustVersion("1.0.0"),
@@ -635,10 +635,8 @@ func TestWalk_ConcurrentSafe(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 100 {
+		wg.Go(func() {
 			collector := &DependencyCollector{}
 			err := Walk(file, collector)
 			if err != nil {
@@ -647,7 +645,7 @@ func TestWalk_ConcurrentSafe(t *testing.T) {
 			if len(collector.Dependencies) != 2 {
 				t.Errorf("Expected 2 dependencies, got %d", len(collector.Dependencies))
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

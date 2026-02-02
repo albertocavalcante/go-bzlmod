@@ -465,7 +465,7 @@ func TestConcurrentAccess(t *testing.T) {
 	done := make(chan bool)
 
 	// Run multiple goroutines accessing the data
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		go func() {
 			_ = SupportedVersions()
 			_ = GetConfig("7.0.0")
@@ -476,7 +476,7 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		<-done
 	}
 }
