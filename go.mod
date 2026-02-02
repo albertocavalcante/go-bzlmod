@@ -4,10 +4,7 @@ go 1.25
 
 toolchain go1.25.5
 
-require (
-	github.com/bazelbuild/buildtools v0.0.0-20250602201422-b1e23f1025b8
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
-)
+require github.com/bazelbuild/buildtools v0.0.0-20250602201422-b1e23f1025b8
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
@@ -163,6 +160,7 @@ require (
 	github.com/ryancurrah/gomodguard v1.4.1 // indirect
 	github.com/ryanrolds/sqlclosecheck v0.5.1 // indirect
 	github.com/sanposhiho/wastedassign/v2 v2.1.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sashamelentyev/interfacebloat v1.1.0 // indirect
 	github.com/sashamelentyev/usestdlibvars v1.29.0 // indirect
 	github.com/securego/gosec/v2 v2.22.11 // indirect

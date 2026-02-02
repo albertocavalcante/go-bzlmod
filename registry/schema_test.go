@@ -35,7 +35,7 @@ func TestValidator_ValidateMetadata(t *testing.T) {
 					}
 				],
 				"repository": ["github:example/repo"],
-				"versions": ["1.0.0", "1.1.0"],
+				"versions": ["0.9.0", "1.0.0", "1.1.0"],
 				"yanked_versions": {"0.9.0": "security issue"},
 				"deprecated": "use new_module instead"
 			}`,
