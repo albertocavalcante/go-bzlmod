@@ -426,7 +426,7 @@ func BenchmarkResolveFromContent_Simple(b *testing.B) {
 	bazel_dep(name = "simple_dep", version = "1.0.0")`
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := ResolveContent(context.Background(), content, ResolutionOptions{
 			Registries:     []string{server.URL},
 			IncludeDevDeps: false,
@@ -460,7 +460,7 @@ func BenchmarkResolveFromContent_Complex(b *testing.B) {
 	bazel_dep(name = "dep2", version = "1.0.0")`
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := ResolveContent(context.Background(), content, ResolutionOptions{
 			Registries:     []string{server.URL},
 			IncludeDevDeps: false,

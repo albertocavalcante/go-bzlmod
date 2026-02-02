@@ -408,7 +408,7 @@ func BenchmarkYankedVersionsError_Small(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = err.Error()
 	}
 }
@@ -429,7 +429,7 @@ func BenchmarkYankedVersionsError_Large(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = err.Error()
 	}
 }
@@ -452,7 +452,7 @@ func BenchmarkDirectDepsMismatchError_Small(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = err.Error()
 	}
 }
@@ -473,7 +473,7 @@ func BenchmarkDirectDepsMismatchError_Large(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = err.Error()
 	}
 }

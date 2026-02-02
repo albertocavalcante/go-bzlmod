@@ -356,7 +356,7 @@ func BenchmarkDiffResolutions(b *testing.B) {
 	new := &ResolutionList{Modules: newModules}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = DiffResolutions(old, new)
 	}
 }

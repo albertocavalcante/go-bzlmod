@@ -418,7 +418,7 @@ func BenchmarkGetModuleFile_Cached(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := client.GetModuleFile(ctx, "benchmark_module", "1.0.0")
 		if err != nil {
 			b.Fatalf("GetModuleFile() error = %v", err)
@@ -436,13 +436,15 @@ func BenchmarkGetModuleFile_Uncached(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	i := 0
+	for b.Loop() {
 		// Use different module names to avoid caching
 		moduleName := fmt.Sprintf("benchmark_module_%d", i)
 		_, err := client.GetModuleFile(ctx, moduleName, "1.0.0")
 		if err != nil {
 			b.Fatalf("GetModuleFile() error = %v", err)
 		}
+		i++
 	}
 }
 
