@@ -13,6 +13,7 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -32,13 +34,25 @@ const (
 
 var packagesToVendor = []string{"build", "labels", "tables"}
 
+//go:embed templates/README.md.tmpl
+var readmeTemplate string
+
 // VersionInfo holds metadata about the vendored code.
 type VersionInfo struct {
 	Source     string   `json:"source"`
 	Ref        string   `json:"ref"`
 	VendoredAt string   `json:"vendored_at"`
 	Packages   []string `json:"packages"`
-	Note       string   `json:"note"`
+	Note       string   `json:"note,omitempty"`
+}
+
+// TemplateData contains all data available to the README template.
+type TemplateData struct {
+	Source         string
+	Ref            string
+	VendoredAt     string
+	Packages       []string
+	DestImportPath string
 }
 
 func main() {
@@ -49,18 +63,8 @@ func main() {
 	flag.Parse()
 
 	// Determine the ref to use
-	ref := ""
-	switch {
-	case *version != "":
-		ref = extractCommitFromVersion(*version)
-		if ref == "" {
-			ref = *version
-		}
-	case *commit != "":
-		ref = *commit
-	case *tag != "":
-		ref = *tag
-	default:
+	ref := determineRef(*version, *commit, *tag)
+	if ref == "" {
 		fmt.Fprintln(os.Stderr, "Error: one of -version, -commit, or -tag is required")
 		flag.Usage()
 		os.Exit(1)
@@ -71,82 +75,68 @@ func main() {
 	// Find project root (where go.mod is)
 	root, err := findProjectRoot()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error finding project root: %v\n", err)
-		os.Exit(1)
+		fatalf("Error finding project root: %v", err)
 	}
 
-	// Download tarball
-	url := fmt.Sprintf("https://github.com/bazelbuild/buildtools/archive/%s.tar.gz", ref)
-	fmt.Printf("Downloading from: %s\n", url)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error downloading: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "Error: HTTP %d from %s\n", resp.StatusCode, url)
-		os.Exit(1)
-	}
-
-	// Create destination directory
 	destPath := filepath.Join(root, destDir)
-	if err := os.RemoveAll(destPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error cleaning destination: %v\n", err)
-		os.Exit(1)
-	}
-	if err := os.MkdirAll(destPath, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating destination: %v\n", err)
-		os.Exit(1)
-	}
 
-	// Extract and process tarball
-	if err := extractTarball(resp.Body, destPath, *keepTests); err != nil {
-		fmt.Fprintf(os.Stderr, "Error extracting: %v\n", err)
-		os.Exit(1)
+	// Download and extract
+	if err := downloadAndExtract(ref, destPath, *keepTests); err != nil {
+		fatalf("Error downloading/extracting: %v", err)
 	}
 
 	// Rewrite imports in all .go files
 	if err := rewriteImports(destPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error rewriting imports: %v\n", err)
-		os.Exit(1)
+		fatalf("Error rewriting imports: %v", err)
 	}
 
-	// Write VERSION file
+	// Prepare version info
 	versionInfo := VersionInfo{
 		Source:     sourceRepo,
 		Ref:        ref,
 		VendoredAt: time.Now().UTC().Format(time.RFC3339),
 		Packages:   packagesToVendor,
-		Note:       "Subset of buildtools containing only the Starlark parser",
 	}
-	versionFile := filepath.Join(destPath, "VERSION")
-	versionData, err := json.MarshalIndent(versionInfo, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling version info: %v\n", err)
-		os.Exit(1)
-	}
-	if err := os.WriteFile(versionFile, append(versionData, '\n'), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing VERSION file: %v\n", err)
-		os.Exit(1)
+
+	// Write VERSION file
+	if err := writeVersionFile(destPath, versionInfo); err != nil {
+		fatalf("Error writing VERSION file: %v", err)
 	}
 
 	// Fetch LICENSE from upstream
 	if err := fetchLicense(destPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching LICENSE: %v\n", err)
-		os.Exit(1)
+		fatalf("Error fetching LICENSE: %v", err)
 	}
 
-	// Write README.md
-	if err := writeReadme(destPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing README.md: %v\n", err)
-		os.Exit(1)
+	// Write README.md from template
+	if err := writeReadme(destPath, versionInfo); err != nil {
+		fatalf("Error writing README.md: %v", err)
 	}
 
 	fmt.Printf("Successfully vendored packages to %s\n", destPath)
 	fmt.Printf("Packages: %v\n", packagesToVendor)
+}
+
+func fatalf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
+// determineRef determines the git ref to use based on flags.
+func determineRef(version, commit, tag string) string {
+	switch {
+	case version != "":
+		if ref := extractCommitFromVersion(version); ref != "" {
+			return ref
+		}
+		return version
+	case commit != "":
+		return commit
+	case tag != "":
+		return tag
+	default:
+		return ""
+	}
 }
 
 // extractCommitFromVersion extracts the commit hash from a pseudo-version.
@@ -178,13 +168,39 @@ func findProjectRoot() (string, error) {
 	}
 }
 
+// downloadAndExtract downloads the tarball and extracts needed packages.
+func downloadAndExtract(ref, destPath string, keepTests bool) error {
+	url := fmt.Sprintf("https://github.com/bazelbuild/buildtools/archive/%s.tar.gz", ref)
+	fmt.Printf("Downloading from: %s\n", url)
+
+	resp, err := http.Get(url) //nolint:gosec // URL is constructed from user input, intentional
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+	}
+
+	// Clean and recreate destination directory
+	if err := os.RemoveAll(destPath); err != nil {
+		return fmt.Errorf("clean destination: %w", err)
+	}
+	if err := os.MkdirAll(destPath, 0o755); err != nil {
+		return fmt.Errorf("create destination: %w", err)
+	}
+
+	return extractTarball(resp.Body, destPath, keepTests)
+}
+
 // extractTarball extracts only the needed packages from the tarball
 func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 	gzr, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("gzip reader: %w", err)
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	tr := tar.NewReader(gzr)
 
@@ -318,80 +334,73 @@ func rewriteImports(destPath string) error {
 	return nil
 }
 
+// writeVersionFile writes the VERSION JSON file.
+func writeVersionFile(destPath string, info VersionInfo) error {
+	versionFile := filepath.Join(destPath, "VERSION")
+	versionData, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := os.WriteFile(versionFile, append(versionData, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	fmt.Println("  Wrote VERSION file")
+	return nil
+}
+
 // fetchLicense downloads the LICENSE file from the upstream repository
 func fetchLicense(destPath string) error {
 	url := "https://raw.githubusercontent.com/bazelbuild/buildtools/master/LICENSE"
 	fmt.Printf("Fetching LICENSE from: %s\n", url)
 
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) //nolint:gosec // URL is constant
 	if err != nil {
-		return fmt.Errorf("fetch license: %w", err)
+		return fmt.Errorf("fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch license: HTTP %d", resp.StatusCode)
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read license: %w", err)
+		return fmt.Errorf("read: %w", err)
 	}
 
 	licensePath := filepath.Join(destPath, "LICENSE")
 	if err := os.WriteFile(licensePath, content, 0o644); err != nil {
-		return fmt.Errorf("write license: %w", err)
+		return fmt.Errorf("write: %w", err)
 	}
 
 	fmt.Println("  Wrote LICENSE file")
 	return nil
 }
 
-// writeReadme creates a README.md explaining the vendored code
-func writeReadme(destPath string) error {
-	readme := `# Vendored buildtools Parser
+// writeReadme renders the README template and writes it to the destination.
+func writeReadme(destPath string, info VersionInfo) error {
+	tmpl, err := template.New("readme").Parse(readmeTemplate)
+	if err != nil {
+		return fmt.Errorf("parse template: %w", err)
+	}
 
-This directory contains a **subset** of [bazelbuild/buildtools](https://github.com/bazelbuild/buildtools).
-
-## Contents
-
-Only the following packages are included:
-
-- ` + "`build/`" + ` - Starlark/BUILD file parser
-- ` + "`labels/`" + ` - Bazel label parsing utilities
-- ` + "`tables/`" + ` - Parser configuration tables
-
-## License
-
-This code is licensed under the Apache License 2.0, the same license as the original
-buildtools repository. See the [LICENSE](LICENSE) file for details.
-
-## Why Vendor?
-
-This library vendors the parser to achieve **zero external runtime dependencies**.
-Only the parser packages are needed; the full buildtools repository includes many
-other tools (buildifier, buildozer, etc.) that are not required.
-
-## Updating
-
-To update the vendored code, run:
-
-` + "```bash" + `
-go run ./tools/vendor-parser -commit <commit-hash>
-# or
-go run ./tools/vendor-parser -tag <tag>
-` + "```" + `
-
-Then update all imports in the project if the destination path has changed.
-
-## Version
-
-See the [VERSION](VERSION) file for information about the vendored version.
-`
+	data := TemplateData{
+		Source:         info.Source,
+		Ref:            info.Ref,
+		VendoredAt:     info.VendoredAt,
+		Packages:       info.Packages,
+		DestImportPath: destImportPath,
+	}
 
 	readmePath := filepath.Join(destPath, "README.md")
-	if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
-		return fmt.Errorf("write readme: %w", err)
+	f, err := os.Create(readmePath)
+	if err != nil {
+		return fmt.Errorf("create: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := tmpl.Execute(f, data); err != nil {
+		return fmt.Errorf("execute template: %w", err)
 	}
 
 	fmt.Println("  Wrote README.md")

@@ -1,11 +1,10 @@
 {
   "source": "github.com/bazelbuild/buildtools",
   "ref": "b1e23f1025b8",
-  "vendored_at": "2026-02-02T21:14:46Z",
+  "vendored_at": "2026-02-02T21:32:10Z",
   "packages": [
     "build",
     "labels",
     "tables"
-  ],
-  "note": "Subset of buildtools containing only the Starlark parser"
+  ]
 }

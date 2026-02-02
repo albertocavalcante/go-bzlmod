@@ -6,9 +6,9 @@ This directory contains a vendored subset of the [bazelbuild/buildtools](https:/
 
 | Field | Value |
 |-------|-------|
-| **Source** | `github.com/bazelbuild/buildtools` |
-| **Ref** | `b1e23f1025b8` |
-| **Vendored** | `2026-02-02T21:32:10Z` |
+| **Source** | `{{.Source}}` |
+| **Ref** | `{{.Ref}}` |
+| **Vendored** | `{{.VendoredAt}}` |
 
 ## Included Packages
 
@@ -77,7 +77,7 @@ After updating:
 Code in this project imports the vendored parser as:
 
 ```go
-import "github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
+import "{{.DestImportPath}}/build"
 ```
 
 The vendor tool automatically rewrites internal imports within the vendored code.
@@ -88,10 +88,10 @@ The `VERSION` file contains JSON metadata about the vendored version:
 
 ```json
 {
-  "source": "github.com/bazelbuild/buildtools",
-  "ref": "b1e23f1025b8",
-  "vendored_at": "2026-02-02T21:32:10Z",
-  "packages": ["build", "labels", "tables"]
+  "source": "{{.Source}}",
+  "ref": "{{.Ref}}",
+  "vendored_at": "{{.VendoredAt}}",
+  "packages": [{{range $i, $p := .Packages}}{{if $i}}, {{end}}"{{$p}}"{{end}}]
 }
 ```
 
