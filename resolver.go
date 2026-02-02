@@ -717,14 +717,14 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 	}
 
 	// Build dependency graph - O(n) where n = number of modules
-	list.Graph = buildGraph(rootModule, list.Modules, moduleDeps)
+	list.Graph = buildGraph(rootModule, list.Modules)
 
 	return list, nil
 }
 
 // buildGraph constructs a graph.Graph from resolution results.
 // This is O(n) where n is the number of modules.
-func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve, moduleDeps map[string][]string) *graph.Graph {
+func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve) *graph.Graph {
 	// Create module index for O(1) version lookup
 	moduleVersions := make(map[string]string, len(modules))
 	for _, m := range modules {
@@ -734,8 +734,8 @@ func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve, moduleDeps ma
 	// Build root dependencies (filtered to selected modules)
 	var rootDeps []graph.ModuleKey
 	for _, dep := range rootModule.Dependencies {
-		if version, ok := moduleVersions[dep.Name]; ok {
-			rootDeps = append(rootDeps, graph.ModuleKey{Name: dep.Name, Version: version})
+		if ver, ok := moduleVersions[dep.Name]; ok {
+			rootDeps = append(rootDeps, graph.ModuleKey{Name: dep.Name, Version: ver})
 		}
 	}
 
@@ -754,8 +754,8 @@ func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve, moduleDeps ma
 		// Convert dependency names to ModuleKeys
 		deps := make([]graph.ModuleKey, 0, len(m.Dependencies))
 		for _, depName := range m.Dependencies {
-			if version, ok := moduleVersions[depName]; ok {
-				deps = append(deps, graph.ModuleKey{Name: depName, Version: version})
+			if ver, ok := moduleVersions[depName]; ok {
+				deps = append(deps, graph.ModuleKey{Name: depName, Version: ver})
 			}
 		}
 

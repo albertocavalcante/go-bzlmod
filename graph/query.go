@@ -202,7 +202,7 @@ func (g *Graph) Explain(moduleName string) (*Explanation, error) {
 		}
 		// Get the requested version from the immediate parent
 		// Path must have at least 2 nodes to have a parent
-		if len(path) >= 2 { //nolint:mnd // minimum path length with parent
+		if len(path) >= 2 {
 			parent := path[len(path)-2]
 			if requestedVersion, ok := node.RequestedVersions[parent]; ok {
 				chain.RequestedVersion = requestedVersion

@@ -115,7 +115,7 @@ func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 	}
 
 	modulePath := filepath.Join(r.rootPath, "modules", moduleName, version, "MODULE.bazel")
-	data, err := os.ReadFile(modulePath) //nolint:gosec // G304: Local registry reads from user-configured path
+	data, err := os.ReadFile(modulePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -151,7 +151,7 @@ func (r *localRegistry) GetModuleMetadata(ctx context.Context, moduleName string
 	}
 
 	metadataPath := filepath.Join(r.rootPath, "modules", moduleName, "metadata.json")
-	data, err := os.ReadFile(metadataPath) //nolint:gosec // G304: Local registry reads from user-configured path
+	data, err := os.ReadFile(metadataPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{

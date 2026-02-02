@@ -79,31 +79,31 @@ func (d *ResolutionDiff) TotalChanges() int {
 // complex version strings like "1.2.3.bcr.1" and pre-release versions.
 //
 // Parameters:
-//   - old: the baseline resolution (nil is treated as empty)
-//   - new: the updated resolution (nil is treated as empty)
+//   - oldList: the baseline resolution (nil is treated as empty)
+//   - newList: the updated resolution (nil is treated as empty)
 //
 // Returns a ResolutionDiff describing:
-//   - Added: modules in new but not in old
-//   - Removed: modules in old but not in new
+//   - Added: modules in newList but not in oldList
+//   - Removed: modules in oldList but not in newList
 //   - Upgraded: modules where new version > old version
 //   - Downgraded: modules where new version < old version
 //
 // Results are sorted alphabetically by module name for consistent output.
-func DiffResolutions(old, new *ResolutionList) *ResolutionDiff {
+func DiffResolutions(oldList, newList *ResolutionList) *ResolutionDiff {
 	diff := &ResolutionDiff{}
 
 	// Build lookup maps for O(1) comparison
 	oldModules := make(map[string]string) // name -> version
 	newModules := make(map[string]string)
 
-	if old != nil {
-		for _, m := range old.Modules {
+	if oldList != nil {
+		for _, m := range oldList.Modules {
 			oldModules[m.Name] = m.Version
 		}
 	}
 
-	if new != nil {
-		for _, m := range new.Modules {
+	if newList != nil {
+		for _, m := range newList.Modules {
 			newModules[m.Name] = m.Version
 		}
 	}
@@ -117,21 +117,21 @@ func DiffResolutions(old, new *ResolutionList) *ResolutionDiff {
 				Version: newVersion,
 			})
 		} else if oldVersion != newVersion {
-			cmp := version.Compare(newVersion, oldVersion)
-			if cmp > 0 {
+			cmpResult := version.Compare(newVersion, oldVersion)
+			if cmpResult > 0 {
 				diff.Upgraded = append(diff.Upgraded, ModuleUpgrade{
 					Name:       name,
 					OldVersion: oldVersion,
 					NewVersion: newVersion,
 				})
-			} else if cmp < 0 {
+			} else if cmpResult < 0 {
 				diff.Downgraded = append(diff.Downgraded, ModuleUpgrade{
 					Name:       name,
 					OldVersion: oldVersion,
 					NewVersion: newVersion,
 				})
 			}
-			// cmp == 0 means versions are equal (shouldn't happen if strings differ,
+			// cmpResult == 0 means versions are equal (shouldn't happen if strings differ,
 			// but handle it gracefully by not including in diff)
 		}
 	}

@@ -186,9 +186,9 @@ func Compare(a, b string) int {
 
 	// Compare release segments
 	// Reference: Version.java line 184
-	cmp := compareIdentifierLists(va.Release, vb.Release)
-	if cmp != 0 {
-		return cmp
+	result := compareIdentifierLists(va.Release, vb.Release)
+	if result != 0 {
+		return result
 	}
 
 	// Prerelease versions sort BEFORE release versions

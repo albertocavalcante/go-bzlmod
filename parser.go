@@ -14,7 +14,7 @@ import (
 // For more advanced parsing with error diagnostics and position information,
 // use the ast package instead.
 func ParseModuleFile(filename string) (*ModuleInfo, error) {
-	data, err := os.ReadFile(filename) //nolint:gosec // G304: User-provided file path is the purpose of this function
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("read module file: %w", err)
 	}
