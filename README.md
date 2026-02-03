@@ -1,26 +1,20 @@
-# Go-bzlmod
+# go-bzlmod
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/albertocavalcante/go-bzlmod.svg)](https://pkg.go.dev/github.com/albertocavalcante/go-bzlmod)
 [![Go Report Card](https://goreportcard.com/badge/github.com/albertocavalcante/go-bzlmod)](https://goreportcard.com/report/github.com/albertocavalcante/go-bzlmod)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-A Go library for Bazel module dependency resolution using Minimal Version Selection (MVS). Parses `MODULE.bazel` files, resolves transitive dependencies, and applies MVS algorithm to determine the minimal set of module versions.
+A Go library for Bazel module dependency resolution. Implements [Minimal Version Selection](https://research.swtch.com/vgo-mvs) (MVS), parses `MODULE.bazel` files, and provides dependency graph analysis.
 
 ## Features
 
-Pure MVS implementation following [Russ Cox's research](https://research.swtch.com/vgo-mvs). Concurrent dependency resolution with override support. Fetches metadata from Bazel Central Registry or custom registries. Handles `single_version_override`, `git_override`, `local_path_override`, and `archive_override`.
-
-## Algorithm Differences
-
-This library implements pure MVS. Bazel uses an enhanced algorithm with automatic version upgrades and compatibility mappings.
-
-```
-Module: platforms
-Our MVS: v0.0.4  (declared in MODULE.bazel)
-Bazel:   v0.0.7  (upgraded for compatibility)
-```
-
-Use this library for understanding MVS behavior, research, or building dependency analysis tools. Don't use it for exact Bazel build reproduction.
+- **MVS Resolution** — Pure MVS with concurrent fetching ([resolver.go](resolver.go))
+- **Multi-Registry** — Chain registries with priority ordering ([registry.go](registry.go))
+- **Override Support** — `single_version_override`, `git_override`, `local_path_override`, `archive_override`
+- **Graph Queries** — Dependency paths, explanations, cycle detection ([graph/](graph/))
+- **Bazel Compatibility** — Validate `bazel_compatibility` constraints ([bazel_compat.go](bazel_compat.go))
+- **Vendor Support** — Resolve from local vendor directories
+- **MODULE.tools** — Inject Bazel's implicit dependencies ([bazeltools/](bazeltools/))
 
 ## Installation
 
@@ -28,38 +22,9 @@ Use this library for understanding MVS behavior, research, or building dependenc
 go get github.com/albertocavalcante/go-bzlmod
 ```
 
-## Usage
+Requires Go 1.21+.
 
-### Basic Example
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-    
-    "github.com/albertocavalcante/go-bzlmod"
-)
-
-func main() {
-    resolutionList, err := gobzlmod.ResolveDependenciesFromFile(
-        "MODULE.bazel",
-        "https://bcr.bazel.build",
-        false, // include dev dependencies
-    )
-    if err != nil {
-        log.Fatalf("Failed to resolve dependencies: %v", err)
-    }
-
-    fmt.Printf("Resolved %d modules:\n", resolutionList.Summary.TotalModules)
-    for _, module := range resolutionList.Modules {
-        fmt.Printf("  %s@%s\n", module.Name, module.Version)
-    }
-}
-```
-
-### With Context and Content
+## Quick Start
 
 ```go
 package main
@@ -68,204 +33,160 @@ import (
     "context"
     "fmt"
     "log"
-    "time"
-    
+
     "github.com/albertocavalcante/go-bzlmod"
 )
 
 func main() {
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-
-    moduleContent := `
-module(name = "my_project", version = "1.0.0")
-
-bazel_dep(name = "rules_go", version = "0.41.0")
-bazel_dep(name = "gazelle", version = "0.31.0")
-bazel_dep(name = "protobuf", version = "3.19.2")
-
-single_version_override(
-    module_name = "protobuf",
-    version = "3.19.6",
-)
-`
-
-    resolutionList, err := gobzlmod.ResolveDependenciesWithContext(
-        ctx,
-        moduleContent,
-        "https://bcr.bazel.build",
-        true, // include dev dependencies
+    // Resolve from a file
+    result, err := gobzlmod.Resolve(context.Background(),
+        gobzlmod.FileSource("MODULE.bazel"),
     )
     if err != nil {
-        log.Fatalf("Failed to resolve dependencies: %v", err)
+        log.Fatal(err)
     }
-    
-    fmt.Printf("Resolved %d modules with overrides\n", resolutionList.Summary.TotalModules)
+
+    fmt.Printf("Resolved %d modules:\n", result.Summary.TotalModules)
+    for _, m := range result.Modules {
+        fmt.Printf("  %s@%s\n", m.Name, m.Version)
+    }
 }
 ```
 
-### Advanced Usage
+## Module Sources
+
+Three ways to specify input:
 
 ```go
-package main
+// From file path
+result, _ := gobzlmod.Resolve(ctx, gobzlmod.FileSource("MODULE.bazel"))
 
-import (
-    "context"
-    "fmt"
-    "log"
-    
-    "github.com/albertocavalcante/go-bzlmod"
+// From string content
+result, _ := gobzlmod.Resolve(ctx, gobzlmod.ContentSource(`
+    module(name = "my_project", version = "1.0.0")
+    bazel_dep(name = "rules_go", version = "0.50.1")
+`))
+
+// From registry (fetch module by name@version)
+result, _ := gobzlmod.Resolve(ctx, gobzlmod.RegistrySource{
+    Name:    "rules_go",
+    Version: "0.50.1",
+})
+```
+
+## Options
+
+Configure resolution with functional options:
+
+```go
+result, err := gobzlmod.Resolve(ctx, src,
+    // Include dev_dependency modules
+    gobzlmod.WithDevDeps(),
+
+    // Use custom registries (first match wins)
+    gobzlmod.WithRegistries(
+        "https://my-registry.example.com",
+        gobzlmod.DefaultRegistry,  // BCR fallback
+    ),
+
+    // Set request timeout
+    gobzlmod.WithTimeout(30*time.Second),
+
+    // Check for yanked versions
+    gobzlmod.WithYankedCheck(true),
+    gobzlmod.WithYankedBehavior(gobzlmod.YankedVersionWarn),
 )
-
-func main() {
-    ctx := context.Background()
-    content := `module(name = "my_project", version = "1.0.0")`
-    
-    // Parse MODULE.bazel manually
-    moduleInfo, err := gobzlmod.ParseModuleContent(content)
-    if err != nil {
-        log.Fatalf("Failed to parse module: %v", err)
-    }
-
-    // Create custom registry client
-    registry := gobzlmod.NewRegistryClient("https://my-registry.com")
-
-    // Create resolver with options
-    resolver := gobzlmod.NewDependencyResolver(registry, true) // includeDevDeps
-
-    // Resolve with full control
-    resolutionList, err := resolver.ResolveDependencies(ctx, moduleInfo)
-    if err != nil {
-        log.Fatalf("Failed to resolve: %v", err)
-    }
-    
-    fmt.Printf("Advanced resolution complete: %d modules\n", resolutionList.Summary.TotalModules)
-}
 ```
 
-## Output Structure
+See [Resolution Options](docs/resolution-options.md) for all options.
+
+## Dependency Graph
+
+Query the resolved graph ([graph/query.go](graph/query.go)):
 
 ```go
-type ResolutionList struct {
-    Modules []ModuleToResolve `json:"modules"`
-    Summary ResolutionSummary `json:"summary"`
+result, _ := gobzlmod.Resolve(ctx, src)
+g := result.Graph
+
+// Explain why a module is at its version
+explanation, _ := g.Explain("protobuf")
+fmt.Println(explanation.RequestSummary)
+
+// Find all paths from root to a module
+chains, _ := g.WhyIncluded("protobuf")
+for _, chain := range chains {
+    fmt.Println(chain.String())  // root@1.0.0 -> rules_go@0.50.1 -> protobuf@3.19.6
 }
 
-type ModuleToResolve struct {
-    Name          string   `json:"name"`           // e.g., "rules_go"
-    Version       string   `json:"version"`        // e.g., "0.41.0"
-    Registry      string   `json:"registry"`       // source registry URL
-    DevDependency bool     `json:"dev_dependency"` // whether it's a dev dependency
-    RequiredBy    []string `json:"required_by"`    // modules that require this
+// Check for cycles
+if g.HasCycles() {
+    cycles := g.FindCycles()
+    fmt.Printf("Found %d cycles\n", len(cycles))
 }
 
-type ResolutionSummary struct {
-    TotalModules      int `json:"total_modules"`
-    ProductionModules int `json:"production_modules"`
-    DevModules        int `json:"dev_modules"`
-}
+// Get graph statistics
+stats := g.Stats()
+fmt.Printf("Total: %d, Direct: %d, Transitive: %d\n",
+    stats.TotalModules, stats.DirectDependencies, stats.TransitiveDependencies)
+
+// Export formats
+dotGraph := g.ToDOT()      // Graphviz DOT
+jsonGraph, _ := g.ToJSON() // Bazel-compatible JSON
+textGraph := g.ToText()    // Human-readable tree
 ```
 
-## API Functions
+See [Graph API](docs/graph-api.md) for complete documentation.
 
-### Core Functions
+## Packages
 
-```go
-// Resolve dependencies from a MODULE.bazel file
-func ResolveDependenciesFromFile(
-    moduleFilePath string,
-    registryURL string, 
-    includeDevDeps bool,
-) (*ResolutionList, error)
+| Package                     | Description                               |
+| --------------------------- | ----------------------------------------- |
+| [`gobzlmod`](.)             | Main API: `Resolve`, `Parse`, core types  |
+| [`ast`](ast/)               | MODULE.bazel AST parsing                  |
+| [`graph`](graph/)           | Dependency graph construction and queries |
+| [`label`](label/)           | Bazel label parsing (`@repo//pkg:target`) |
+| [`lockfile`](lockfile/)     | `MODULE.bazel.lock` parsing               |
+| [`registry`](registry/)     | Registry client and types                 |
+| [`selection`](selection/)   | MVS algorithm implementation              |
+| [`bazeltools`](bazeltools/) | MODULE.tools implicit dependencies        |
 
-// Resolve dependencies from MODULE.bazel content string
-func ResolveDependenciesFromContent(
-    moduleContent string,
-    registryURL string,
-    includeDevDeps bool,
-) (*ResolutionList, error)
+See [Package Architecture](docs/packages.md) for details.
 
-// Resolve dependencies with custom context for timeout control
-func ResolveDependenciesWithContext(
-    ctx context.Context,
-    moduleContent string,
-    registryURL string,
-    includeDevDeps bool,
-) (*ResolutionList, error)
-```
+## Algorithm Note
 
-### Utility Functions
-
-```go
-// Parse MODULE.bazel content into structured data
-func ParseModuleContent(content string) (*ModuleInfo, error)
-
-// Create a new registry client with caching
-func NewRegistryClient(baseURL string) *RegistryClient
-
-// Create a dependency resolver with custom options
-func NewDependencyResolver(
-    registry *RegistryClient,
-    includeDevDeps bool,
-) *DependencyResolver
-```
-
-## MVS Algorithm
-
-The library implements canonical Minimal Version Selection:
-
-1. **Build dependency graph**: Discover all version requirements from transitive closure
-2. **Apply overrides**: Process single_version_override and other override types
-3. **Select minimal versions**: Choose highest version among all requirements for each module
-4. **Filter dev dependencies**: Include/exclude based on configuration
-
-The algorithm is deterministic and reproducible - same inputs always produce same outputs.
-
-## Project Structure
+This library implements pure MVS. Bazel's resolver includes additional heuristics that may produce different results:
 
 ```
-├── api.go           # Public API functions
-├── types.go         # Core data structures
-├── parser.go        # MODULE.bazel parsing
-├── registry.go      # Registry client with caching
-├── resolver.go      # MVS dependency resolution
-├── *_test.go        # Comprehensive unit tests
-└── e2e/             # End-to-end tests vs real Bazel
+Module: platforms
+go-bzlmod: 0.0.4  (declared version, pure MVS)
+Bazel:     0.0.7  (upgraded via compatibility mapping)
 ```
+
+Use this library for dependency analysis and tooling. For exact Bazel parity, use `bazel mod graph`.
+
+Reference: [Selection.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java)
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) — Installation and basic usage
+- [Resolution Options](docs/resolution-options.md) — All configuration options
+- [Graph API](docs/graph-api.md) — Query dependency relationships
+- [Bazel Compatibility](docs/bazel-compatibility.md) — Version constraint validation
+- [Package Architecture](docs/packages.md) — Package organization
 
 ## Testing
 
-### Running Tests
-
 ```bash
-# Run all unit tests
-go test ./...
-
-# Run end-to-end tests with verbose output
-go test ./e2e -v
-
-# Run specific diagnostic tests
-go test ./e2e -run="TestDiagnostic" -v
-
-# Run tests with coverage
-go test -cover ./...
-
-# Run tests with race detection
-go test -race ./...
+go test ./...              # Unit tests
+go test ./e2e -v           # E2E tests against real Bazel
+go test -cover ./...       # With coverage
+go test -race ./...        # Race detection
 ```
-
-The e2e tests compare results against actual `bazel mod graph` output to validate correctness within expected algorithm differences.
-
-## Performance
-
-Concurrent fetching with HTTP caching. Registry responses cached in memory. Configurable concurrency limits prevent overwhelming registries.
-
-Typical performance: 20-30 modules in 1-2 seconds, 50-100 modules in 3-5 seconds. Performance is network-bound by registry response times.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing guidelines, and contribution process.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT) at your option.
+Licensed under [Apache 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your option.
