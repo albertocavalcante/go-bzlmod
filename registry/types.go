@@ -1,5 +1,7 @@
 package registry
 
+import "github.com/albertocavalcante/go-bzlmod/internal/compat"
+
 // Metadata represents the metadata.json file for a module in the registry.
 // This matches the BCR metadata.schema.json specification.
 type Metadata struct {
@@ -73,6 +75,13 @@ type Source struct {
 	// Overlay maps destination paths to source paths for overlay files.
 	Overlay map[string]string `json:"overlay,omitempty"`
 
+	// MirrorURLs lists backup URLs for source archive.
+	// These are tried in order if the primary URL fails.
+	// Requires Bazel 7.7.0+.
+	//
+	// Reference: https://github.com/bazelbuild/bazel/issues/17829
+	MirrorURLs []string `json:"mirror_urls,omitempty"`
+
 	// --- Git repository fields (Type == "git_repository") ---
 
 	// Remote is the Git repository URL.
@@ -131,6 +140,28 @@ func (s *Source) IsGitRepository() bool {
 // IsLocalPath returns true if this source is a local_path type.
 func (s *Source) IsLocalPath() bool {
 	return s.Type == "local_path"
+}
+
+// ValidateForBazelVersion checks if all fields used in this Source are supported
+// by the specified Bazel version. Returns a list of warning messages for any
+// unsupported fields.
+//
+// Returns nil if bazelVersion is empty or all fields are supported.
+func (s *Source) ValidateForBazelVersion(bazelVersion string) []string {
+	if bazelVersion == "" {
+		return nil
+	}
+
+	var warnings []string
+
+	// Check mirror_urls (requires Bazel 7.7.0+)
+	if len(s.MirrorURLs) > 0 {
+		if w := compat.CheckField(bazelVersion, "mirror_urls"); w != nil {
+			warnings = append(warnings, w.String())
+		}
+	}
+
+	return warnings
 }
 
 // LatestVersion returns the most recent version from the metadata.

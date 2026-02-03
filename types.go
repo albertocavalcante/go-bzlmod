@@ -316,6 +316,12 @@ type ResolutionSummary struct {
 
 	// IncompatibleModules is the count of modules incompatible with the target Bazel version.
 	IncompatibleModules int `json:"incompatible_modules,omitempty"`
+
+	// FieldWarnings lists warnings about bzlmod fields that aren't supported
+	// in the target Bazel version. These warnings are informational and don't
+	// block resolution. Examples include mirror_urls (requires 7.7.0+) or
+	// max_compatibility_level (requires 7.0.0+).
+	FieldWarnings []string `json:"field_warnings,omitempty"`
 }
 
 // YankedVersionBehavior controls how yanked versions are handled during resolution.

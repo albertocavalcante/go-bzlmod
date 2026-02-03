@@ -13,6 +13,7 @@ import (
 
 	"github.com/albertocavalcante/go-bzlmod/bazeltools"
 	"github.com/albertocavalcante/go-bzlmod/graph"
+	"github.com/albertocavalcante/go-bzlmod/internal/compat"
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
 
@@ -830,6 +831,12 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		checkModuleBazelCompatibility(list.Modules, moduleInfoCache, r.options.BazelVersion)
 	}
 
+	// Check field version compatibility if a Bazel version is specified
+	if r.options.BazelVersion != "" {
+		fieldWarnings := checkFieldCompatibility(rootModule, r.options.BazelVersion)
+		list.Summary.FieldWarnings = append(list.Summary.FieldWarnings, fieldWarnings...)
+	}
+
 	// Compute summary statistics
 	list.Summary.TotalModules = len(list.Modules)
 	for _, module := range list.Modules {
@@ -1100,6 +1107,34 @@ func indexOverrides(overrides []Override) map[string]Override {
 		index[override.ModuleName] = override
 	}
 	return index
+}
+
+// checkFieldCompatibility checks if bzlmod fields used in the root module are
+// compatible with the target Bazel version. Returns warning messages for any
+// unsupported fields.
+//
+// Currently checks:
+// - max_compatibility_level (requires Bazel 7.0.0+)
+func checkFieldCompatibility(rootModule *ModuleInfo, bazelVersion string) []string {
+	if bazelVersion == "" {
+		return nil
+	}
+
+	var warnings []string
+
+	// Check max_compatibility_level usage in dependencies
+	for _, dep := range rootModule.Dependencies {
+		if dep.MaxCompatibilityLevel > 0 {
+			if w := compat.CheckField(bazelVersion, "max_compatibility_level"); w != nil {
+				warnings = append(warnings,
+					fmt.Sprintf("bazel_dep(%s): %s", dep.Name, w.String()))
+				// Only warn once for this field type
+				break
+			}
+		}
+	}
+
+	return warnings
 }
 
 // calculateModuleDepths computes the shortest path length from root to each module using BFS.

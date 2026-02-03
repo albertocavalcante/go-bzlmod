@@ -2049,3 +2049,137 @@ func TestMultiRoundNodepDiscovery_DevDependencyExcluded(t *testing.T) {
 		t.Errorf("Expected module_a, got %s", list.Modules[0].Name)
 	}
 }
+
+// TestCheckFieldCompatibility tests that field compatibility checking works correctly.
+func TestCheckFieldCompatibility(t *testing.T) {
+	tests := []struct {
+		name         string
+		rootModule   *ModuleInfo
+		bazelVersion string
+		wantWarnings int
+	}{
+		{
+			name: "no max_compatibility_level",
+			rootModule: &ModuleInfo{
+				Name:    "root",
+				Version: "1.0.0",
+				Dependencies: []Dependency{
+					{Name: "dep_a", Version: "1.0.0"},
+				},
+			},
+			bazelVersion: "6.6.0",
+			wantWarnings: 0,
+		},
+		{
+			name: "max_compatibility_level with Bazel 7.0.0",
+			rootModule: &ModuleInfo{
+				Name:    "root",
+				Version: "1.0.0",
+				Dependencies: []Dependency{
+					{Name: "dep_a", Version: "1.0.0", MaxCompatibilityLevel: 2},
+				},
+			},
+			bazelVersion: "7.0.0",
+			wantWarnings: 0,
+		},
+		{
+			name: "max_compatibility_level with Bazel 6.6.0",
+			rootModule: &ModuleInfo{
+				Name:    "root",
+				Version: "1.0.0",
+				Dependencies: []Dependency{
+					{Name: "dep_a", Version: "1.0.0", MaxCompatibilityLevel: 2},
+				},
+			},
+			bazelVersion: "6.6.0",
+			wantWarnings: 1,
+		},
+		{
+			name: "multiple deps with max_compatibility_level only warns once",
+			rootModule: &ModuleInfo{
+				Name:    "root",
+				Version: "1.0.0",
+				Dependencies: []Dependency{
+					{Name: "dep_a", Version: "1.0.0", MaxCompatibilityLevel: 2},
+					{Name: "dep_b", Version: "1.0.0", MaxCompatibilityLevel: 3},
+				},
+			},
+			bazelVersion: "6.6.0",
+			wantWarnings: 1, // Only one warning for the field, not per dependency
+		},
+		{
+			name: "empty bazel version returns no warnings",
+			rootModule: &ModuleInfo{
+				Name:    "root",
+				Version: "1.0.0",
+				Dependencies: []Dependency{
+					{Name: "dep_a", Version: "1.0.0", MaxCompatibilityLevel: 2},
+				},
+			},
+			bazelVersion: "",
+			wantWarnings: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings := checkFieldCompatibility(tt.rootModule, tt.bazelVersion)
+			if len(warnings) != tt.wantWarnings {
+				t.Errorf("checkFieldCompatibility() returned %d warnings, want %d: %v",
+					len(warnings), tt.wantWarnings, warnings)
+			}
+		})
+	}
+}
+
+// TestResolutionSummary_FieldWarnings tests that FieldWarnings are populated in the summary.
+func TestResolutionSummary_FieldWarnings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "module_a", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolverWithOptions(registry, ResolutionOptions{
+		BazelVersion: "6.6.0",
+	})
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0", MaxCompatibilityLevel: 2},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	list, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	// Should have a field warning for max_compatibility_level
+	if len(list.Summary.FieldWarnings) == 0 {
+		t.Error("Expected field warnings for max_compatibility_level with Bazel 6.6.0")
+	}
+
+	// Verify the warning message contains expected info
+	found := false
+	for _, w := range list.Summary.FieldWarnings {
+		if strings.Contains(w, "max_compatibility_level") && strings.Contains(w, "7.0.0") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected warning about max_compatibility_level requiring Bazel 7.0.0, got: %v",
+			list.Summary.FieldWarnings)
+	}
+}

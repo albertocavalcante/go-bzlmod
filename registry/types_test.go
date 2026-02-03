@@ -217,3 +217,93 @@ func TestSource_JSONRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+func TestSource_ValidateForBazelVersion(t *testing.T) {
+	tests := []struct {
+		name         string
+		source       *Source
+		bazelVersion string
+		wantWarnings int
+	}{
+		{
+			name:         "empty version returns no warnings",
+			source:       &Source{MirrorURLs: []string{"https://mirror.example.com"}},
+			bazelVersion: "",
+			wantWarnings: 0,
+		},
+		{
+			name:         "no mirror_urls returns no warnings",
+			source:       &Source{URL: "https://example.com/archive.tar.gz"},
+			bazelVersion: "7.0.0",
+			wantWarnings: 0,
+		},
+		{
+			name:         "mirror_urls with Bazel 7.7.0 returns no warnings",
+			source:       &Source{MirrorURLs: []string{"https://mirror.example.com"}},
+			bazelVersion: "7.7.0",
+			wantWarnings: 0,
+		},
+		{
+			name:         "mirror_urls with Bazel 8.0.0 returns no warnings",
+			source:       &Source{MirrorURLs: []string{"https://mirror.example.com"}},
+			bazelVersion: "8.0.0",
+			wantWarnings: 0,
+		},
+		{
+			name:         "mirror_urls with Bazel 7.6.0 returns warning",
+			source:       &Source{MirrorURLs: []string{"https://mirror.example.com"}},
+			bazelVersion: "7.6.0",
+			wantWarnings: 1,
+		},
+		{
+			name:         "mirror_urls with Bazel 7.0.0 returns warning",
+			source:       &Source{MirrorURLs: []string{"https://mirror.example.com"}},
+			bazelVersion: "7.0.0",
+			wantWarnings: 1,
+		},
+		{
+			name:         "mirror_urls with Bazel 6.6.0 returns warning",
+			source:       &Source{MirrorURLs: []string{"https://mirror.example.com"}},
+			bazelVersion: "6.6.0",
+			wantWarnings: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings := tt.source.ValidateForBazelVersion(tt.bazelVersion)
+			if len(warnings) != tt.wantWarnings {
+				t.Errorf("ValidateForBazelVersion(%q) returned %d warnings, want %d: %v",
+					tt.bazelVersion, len(warnings), tt.wantWarnings, warnings)
+			}
+		})
+	}
+}
+
+func TestSource_MirrorURLsJSON(t *testing.T) {
+	// Test that MirrorURLs is properly serialized/deserialized
+	original := &Source{
+		URL:        "https://example.com/archive.tar.gz",
+		Integrity:  "sha256-abc123",
+		MirrorURLs: []string{"https://mirror1.example.com", "https://mirror2.example.com"},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	var restored Source
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if len(restored.MirrorURLs) != len(original.MirrorURLs) {
+		t.Errorf("MirrorURLs count = %d, want %d", len(restored.MirrorURLs), len(original.MirrorURLs))
+	}
+	for i, url := range restored.MirrorURLs {
+		if url != original.MirrorURLs[i] {
+			t.Errorf("MirrorURLs[%d] = %q, want %q", i, url, original.MirrorURLs[i])
+		}
+	}
+}
