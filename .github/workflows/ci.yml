@@ -54,6 +54,9 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
 
     steps:
       - name: Check out code
@@ -70,7 +73,7 @@ jobs:
           gosec -fmt sarif -out gosec.sarif -exclude-dir=third_party ./...
 
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@2d3fe93d4896727350828f23e48f5391e6d3f022 # v3
+        uses: github/codeql-action/upload-sarif@59c2c1ca13dff455ab22ad8157d6ab220447da29 # v4
         with:
           sarif_file: gosec.sarif
 
