@@ -39,8 +39,11 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@v1.13.0
+
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: gotestsum --format pkgname-and-test-fails --jsonfile test-output.json -- -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage to Codecov
         if: matrix.go-version == 'stable'
@@ -85,8 +88,11 @@ jobs:
         with:
           go-version: stable
 
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@v1.13.0
+
       - name: Run E2E tests
-        run: go test ./e2e -v -timeout=10m
+        run: gotestsum --format pkgname-and-test-fails -- ./e2e -timeout=10m
 
   build:
     name: Build
