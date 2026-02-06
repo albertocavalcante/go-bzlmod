@@ -23,6 +23,14 @@ test-v:
 test-race:
     go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go test -race
 
+# Run tests with gotestsum (better output)
+test-sum:
+    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs gotestsum --format pkgname-and-test-fails --
+
+# Run tests with gotestsum and race detector
+test-sum-race:
+    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs gotestsum --format pkgname-and-test-fails -- -race
+
 # Run benchmarks
 bench:
     go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go test -bench=. -benchmem
@@ -77,6 +85,10 @@ fmt-check:
 # Clean build cache
 clean:
     go clean -cache
+
+# Install gotestsum for better test output
+install-gotestsum:
+    go install gotest.tools/gotestsum@v1.13.0
 
 # Vendor the buildtools parser (updates third_party/buildtools)
 vendor-parser tag="":
