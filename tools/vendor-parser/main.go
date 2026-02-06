@@ -30,6 +30,10 @@ const (
 	sourceRepo     = "github.com/bazelbuild/buildtools"
 	destImportPath = "github.com/albertocavalcante/go-bzlmod/third_party/buildtools"
 	destDir        = "third_party/buildtools"
+
+	// File permission constants
+	dirPerm  = 0o755
+	filePerm = 0o644
 )
 
 var packagesToVendor = []string{"build", "labels", "tables"}
@@ -216,7 +220,7 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 	if err != nil {
 		return fmt.Errorf("open root %s: %w", destPath, err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	filesWritten := 0
 	for {
@@ -270,11 +274,11 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 		}
 
 		// Create parent directory using root-relative operations
-		destDir := filepath.Dir(localPath)
-		if err := root.Mkdir(destDir, 0o755); err != nil && !os.IsExist(err) {
+		parentDir := filepath.Dir(localPath)
+		if mkdirErr := root.Mkdir(parentDir, dirPerm); mkdirErr != nil && !os.IsExist(mkdirErr) {
 			// MkdirAll equivalent: create parent directories
-			if err := mkdirAllInRoot(root, destDir, 0o755); err != nil {
-				return fmt.Errorf("mkdir %s: %w", destDir, err)
+			if mkdirErr := mkdirAllInRoot(root, parentDir, dirPerm); mkdirErr != nil {
+				return fmt.Errorf("mkdir %s: %w", parentDir, mkdirErr)
 			}
 		}
 
@@ -285,7 +289,7 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 		}
 
 		// Write file using root-relative path (secure against path traversal)
-		if err := writeFileInRoot(root, localPath, content, 0o644); err != nil {
+		if err := writeFileInRoot(root, localPath, content, filePerm); err != nil {
 			return fmt.Errorf("write %s: %w", localPath, err)
 		}
 
