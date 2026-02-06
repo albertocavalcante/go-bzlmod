@@ -356,3 +356,126 @@ func TestConvertOverrides(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveWithSelection_ConcurrentQueueAccess tests that the buildDepGraph
+// function is race-free when goroutines concurrently add items to the queue.
+// This test should be run with -race to detect data races.
+func TestResolveWithSelection_ConcurrentQueueAccess(t *testing.T) {
+	// Create a dependency graph with many modules that each have multiple deps.
+	// This maximizes concurrent goroutines adding to the queue simultaneously.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		// Root deps: lib_a through lib_j (10 direct deps)
+		case "/modules/lib_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_a", version = "1.0.0")
+bazel_dep(name = "shared_x", version = "1.0.0")
+bazel_dep(name = "shared_y", version = "1.0.0")`)
+		case "/modules/lib_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_b", version = "1.0.0")
+bazel_dep(name = "shared_x", version = "1.0.0")
+bazel_dep(name = "shared_z", version = "1.0.0")`)
+		case "/modules/lib_c/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_c", version = "1.0.0")
+bazel_dep(name = "shared_y", version = "1.0.0")
+bazel_dep(name = "shared_z", version = "1.0.0")`)
+		case "/modules/lib_d/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_d", version = "1.0.0")
+bazel_dep(name = "shared_x", version = "1.0.0")`)
+		case "/modules/lib_e/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_e", version = "1.0.0")
+bazel_dep(name = "shared_y", version = "1.0.0")`)
+		case "/modules/lib_f/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_f", version = "1.0.0")
+bazel_dep(name = "shared_z", version = "1.0.0")`)
+		case "/modules/lib_g/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_g", version = "1.0.0")
+bazel_dep(name = "leaf_1", version = "1.0.0")
+bazel_dep(name = "leaf_2", version = "1.0.0")`)
+		case "/modules/lib_h/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_h", version = "1.0.0")
+bazel_dep(name = "leaf_3", version = "1.0.0")
+bazel_dep(name = "leaf_4", version = "1.0.0")`)
+		case "/modules/lib_i/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_i", version = "1.0.0")
+bazel_dep(name = "leaf_5", version = "1.0.0")`)
+		case "/modules/lib_j/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_j", version = "1.0.0")
+bazel_dep(name = "leaf_6", version = "1.0.0")`)
+		// Shared modules (accessed by multiple libs)
+		case "/modules/shared_x/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "shared_x", version = "1.0.0")
+bazel_dep(name = "deep_1", version = "1.0.0")`)
+		case "/modules/shared_y/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "shared_y", version = "1.0.0")
+bazel_dep(name = "deep_2", version = "1.0.0")`)
+		case "/modules/shared_z/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "shared_z", version = "1.0.0")
+bazel_dep(name = "deep_3", version = "1.0.0")`)
+		// Leaf modules (no further deps)
+		case "/modules/leaf_1/1.0.0/MODULE.bazel",
+			"/modules/leaf_2/1.0.0/MODULE.bazel",
+			"/modules/leaf_3/1.0.0/MODULE.bazel",
+			"/modules/leaf_4/1.0.0/MODULE.bazel",
+			"/modules/leaf_5/1.0.0/MODULE.bazel",
+			"/modules/leaf_6/1.0.0/MODULE.bazel",
+			"/modules/deep_1/1.0.0/MODULE.bazel",
+			"/modules/deep_2/1.0.0/MODULE.bazel",
+			"/modules/deep_3/1.0.0/MODULE.bazel":
+			// Extract module name from path for proper response
+			name := r.URL.Path[len("/modules/"):]
+			name = name[:len(name)-len("/1.0.0/MODULE.bazel")]
+			fmt.Fprintf(w, `module(name = "%s", version = "1.0.0")`, name)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	moduleContent := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "lib_a", version = "1.0.0")
+bazel_dep(name = "lib_b", version = "1.0.0")
+bazel_dep(name = "lib_c", version = "1.0.0")
+bazel_dep(name = "lib_d", version = "1.0.0")
+bazel_dep(name = "lib_e", version = "1.0.0")
+bazel_dep(name = "lib_f", version = "1.0.0")
+bazel_dep(name = "lib_g", version = "1.0.0")
+bazel_dep(name = "lib_h", version = "1.0.0")
+bazel_dep(name = "lib_i", version = "1.0.0")
+bazel_dep(name = "lib_j", version = "1.0.0")`
+
+	opts := ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: false,
+	}
+
+	// Run multiple times to increase chance of catching race
+	for i := 0; i < 10; i++ {
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
+		if err != nil {
+			t.Fatalf("iteration %d: resolveWithSelection() error = %v", i, err)
+		}
+
+		// Verify all expected modules are present
+		// 10 libs + 3 shared + 6 leaves + 3 deep = 22 modules
+		expectedModules := map[string]bool{
+			"lib_a": true, "lib_b": true, "lib_c": true, "lib_d": true, "lib_e": true,
+			"lib_f": true, "lib_g": true, "lib_h": true, "lib_i": true, "lib_j": true,
+			"shared_x": true, "shared_y": true, "shared_z": true,
+			"leaf_1": true, "leaf_2": true, "leaf_3": true,
+			"leaf_4": true, "leaf_5": true, "leaf_6": true,
+			"deep_1": true, "deep_2": true, "deep_3": true,
+		}
+
+		for _, m := range result.Resolved.Modules {
+			delete(expectedModules, m.Name)
+		}
+
+		if len(expectedModules) > 0 {
+			missing := make([]string, 0, len(expectedModules))
+			for name := range expectedModules {
+				missing = append(missing, name)
+			}
+			t.Errorf("iteration %d: missing modules: %v", i, missing)
+		}
+	}
+}

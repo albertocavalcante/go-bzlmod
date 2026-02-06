@@ -143,9 +143,15 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 
 	for {
 		// Process all current queue items
-		for len(queue) > 0 {
+		for {
+			mu.Lock()
+			if len(queue) == 0 {
+				mu.Unlock()
+				break
+			}
 			dep := queue[0]
 			queue = queue[1:]
+			mu.Unlock()
 
 			key := dep.ToModuleKey()
 
