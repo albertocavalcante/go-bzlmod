@@ -89,8 +89,8 @@ func runBazelModGraph(t *testing.T, workspaceDir string) (*BazelModGraph, error)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Build bazelisk from the Go module
-	bazeliskPath := filepath.Join(os.TempDir(), "bazelisk-e2e")
+	// Build bazelisk from the Go module into a secure temp directory
+	bazeliskPath := filepath.Join(t.TempDir(), "bazelisk")
 	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", bazeliskPath, "github.com/bazelbuild/bazelisk")
 	if err := buildCmd.Run(); err != nil {
 		// Try to use system bazelisk or bazel if available

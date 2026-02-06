@@ -255,6 +255,18 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 
 		// Create full destination path
 		destFile := filepath.Join(destPath, pkg, relPath)
+
+		// Security: Validate path is within destination directory (prevent path traversal)
+		// Clean the path and ensure it doesn't escape destPath
+		cleanDest := filepath.Clean(destFile)
+		absDestPath, err := filepath.Abs(destPath)
+		if err != nil {
+			return fmt.Errorf("abs path %s: %w", destPath, err)
+		}
+		if !strings.HasPrefix(cleanDest, absDestPath+string(filepath.Separator)) && cleanDest != absDestPath {
+			return fmt.Errorf("invalid file path in archive (path traversal attempt): %s", header.Name)
+		}
+
 		destDir := filepath.Dir(destFile)
 		if err := os.MkdirAll(destDir, 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", destDir, err)
