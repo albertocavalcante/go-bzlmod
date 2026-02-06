@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 )
 
 // lockfilePermissions is the file permission mode for lockfiles.
@@ -15,7 +15,7 @@ const lockfilePermissions = 0o600
 
 // ReadFile reads and parses a lockfile from the given path.
 func ReadFile(path string) (*Lockfile, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- intentional file read by caller-provided path
 	if err != nil {
 		return nil, fmt.Errorf("failed to read lockfile: %w", err)
 	}
@@ -126,7 +126,7 @@ func sortedStringMap(m map[string]string) orderedStringMap {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return orderedStringMap{keys: keys, values: m}
 }
 
@@ -162,7 +162,7 @@ func sortedExtensions(m map[string]ModuleExtensionEntry) orderedExtensionMap {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return orderedExtensionMap{keys: keys, values: m}
 }
 
@@ -201,7 +201,7 @@ func sortedFacts(m map[string]json.RawMessage) orderedRawMessageMap {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return orderedRawMessageMap{keys: keys, values: m}
 }
 

@@ -115,7 +115,7 @@ func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 	}
 
 	modulePath := filepath.Join(r.rootPath, "modules", moduleName, version, "MODULE.bazel")
-	data, err := os.ReadFile(modulePath)
+	data, err := os.ReadFile(modulePath) // #nosec G304 -- path is constructed from registry root, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -152,7 +152,7 @@ func (r *localRegistry) GetModuleSource(ctx context.Context, moduleName, version
 	}
 
 	sourcePath := filepath.Join(r.rootPath, "modules", moduleName, version, "source.json")
-	data, err := os.ReadFile(sourcePath)
+	data, err := os.ReadFile(sourcePath) // #nosec G304 -- path is constructed from registry root, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -188,7 +188,7 @@ func (r *localRegistry) GetModuleMetadata(ctx context.Context, moduleName string
 	}
 
 	metadataPath := filepath.Join(r.rootPath, "modules", moduleName, "metadata.json")
-	data, err := os.ReadFile(metadataPath)
+	data, err := os.ReadFile(metadataPath) // #nosec G304 -- path is constructed from registry root, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -241,7 +241,7 @@ func createRegistryClientWithAllOptions(url string, client *http.Client, cache M
 	if isFileURL(url) {
 		path, err := parseFileURL(url)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse file URL %s: %w", url, err)
 		}
 		// Verify path exists
 		if _, err := os.Stat(path); err != nil {

@@ -48,7 +48,7 @@ type Parser struct {
 
 // ParseFile reads and parses a MODULE.bazel file from disk.
 func ParseFile(filename string) (*ParseResult, error) {
-	data, err := os.ReadFile(filename)
+	data, err := os.ReadFile(filename) // #nosec G304 -- intentional file read by caller-provided path
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", filename, err)
 	}

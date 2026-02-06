@@ -30,7 +30,7 @@ var bazelCompatibilityPattern = regexp.MustCompile(`^(>=|<=|>|<|-)(\d+\.){2}\d+$
 // For more advanced parsing with error diagnostics and position information,
 // use the ast package instead.
 func ParseModuleFile(filename string) (*ModuleInfo, error) {
-	data, err := os.ReadFile(filename)
+	data, err := os.ReadFile(filename) // #nosec G304 -- intentional file read by caller-provided path
 	if err != nil {
 		return nil, fmt.Errorf("read module file: %w", err)
 	}
