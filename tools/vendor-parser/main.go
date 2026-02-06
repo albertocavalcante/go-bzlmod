@@ -210,6 +210,14 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 		pkgSet[pkg] = true
 	}
 
+	// Use os.Root for secure file operations within destPath (Go 1.24+)
+	// This prevents path traversal attacks by restricting all operations to destPath
+	root, err := os.OpenRoot(destPath)
+	if err != nil {
+		return fmt.Errorf("open root %s: %w", destPath, err)
+	}
+	defer root.Close()
+
 	filesWritten := 0
 	for {
 		header, err := tr.Next()
@@ -253,23 +261,21 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 			continue
 		}
 
-		// Create full destination path
-		destFile := filepath.Join(destPath, pkg, relPath)
+		// Build relative path within root
+		localPath := filepath.Join(pkg, relPath)
 
-		// Security: Validate path is within destination directory (prevent path traversal)
-		// Clean the path and ensure it doesn't escape destPath
-		cleanDest := filepath.Clean(destFile)
-		absDestPath, err := filepath.Abs(destPath)
-		if err != nil {
-			return fmt.Errorf("abs path %s: %w", destPath, err)
-		}
-		if !strings.HasPrefix(cleanDest, absDestPath+string(filepath.Separator)) && cleanDest != absDestPath {
+		// Validate path is local (no .. or absolute paths) using Go 1.20+ filepath.IsLocal
+		if !filepath.IsLocal(localPath) {
 			return fmt.Errorf("invalid file path in archive (path traversal attempt): %s", header.Name)
 		}
 
-		destDir := filepath.Dir(destFile)
-		if err := os.MkdirAll(destDir, 0o755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", destDir, err)
+		// Create parent directory using root-relative operations
+		destDir := filepath.Dir(localPath)
+		if err := root.Mkdir(destDir, 0o755); err != nil && !os.IsExist(err) {
+			// MkdirAll equivalent: create parent directories
+			if err := mkdirAllInRoot(root, destDir, 0o755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", destDir, err)
+			}
 		}
 
 		// Read file content
@@ -278,9 +284,9 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 			return fmt.Errorf("read %s: %w", header.Name, err)
 		}
 
-		// Write file
-		if err := os.WriteFile(destFile, content, 0o644); err != nil {
-			return fmt.Errorf("write %s: %w", destFile, err)
+		// Write file using root-relative path (secure against path traversal)
+		if err := writeFileInRoot(root, localPath, content, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", localPath, err)
 		}
 
 		filesWritten++
@@ -289,6 +295,40 @@ func extractTarball(r io.Reader, destPath string, keepTests bool) error {
 
 	fmt.Printf("Extracted %d files\n", filesWritten)
 	return nil
+}
+
+// mkdirAllInRoot creates a directory and all parent directories within an os.Root
+func mkdirAllInRoot(root *os.Root, path string, perm os.FileMode) error {
+	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	current := ""
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if current == "" {
+			current = part
+		} else {
+			current = filepath.Join(current, part)
+		}
+		if err := root.Mkdir(current, perm); err != nil && !os.IsExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeFileInRoot writes a file within an os.Root
+func writeFileInRoot(root *os.Root, path string, data []byte, perm os.FileMode) error {
+	f, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 // rewriteImports rewrites buildtools imports to use the vendored path
