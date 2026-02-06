@@ -25,11 +25,11 @@ test-race:
 
 # Run tests with gotestsum (better output)
 test-sum:
-    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs gotestsum --format pkgname-and-test-fails --
+    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go tool -modfile=tools.go.mod gotestsum --format pkgname-and-test-fails --
 
 # Run tests with gotestsum and race detector
 test-sum-race:
-    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs gotestsum --format pkgname-and-test-fails -- -race
+    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go tool -modfile=tools.go.mod gotestsum --format pkgname-and-test-fails -- -race
 
 # Run benchmarks
 bench:
@@ -49,6 +49,7 @@ lint-all: lint staticcheck
 # Tidy all go.mod files
 tidy:
     go mod tidy
+    go mod tidy -modfile=tools.go.mod
     cd tools/lint && go mod tidy
 
 # Verify the module has no external dependencies
@@ -85,10 +86,6 @@ fmt-check:
 # Clean build cache
 clean:
     go clean -cache
-
-# Install gotestsum for better test output
-install-gotestsum:
-    go install gotest.tools/gotestsum@v1.13.0
 
 # Vendor the buildtools parser (updates third_party/buildtools)
 vendor-parser tag="":
