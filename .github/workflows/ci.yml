@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for SonarCloud analysis
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -42,12 +44,12 @@ jobs:
       - name: Run tests
         run: go tool -modfile=tools.go.mod gotestsum --format pkgname-and-test-fails --jsonfile test-output.json -- -race -coverprofile=coverage.out ./...
 
-      - name: Upload coverage to Codecov
+      - name: SonarCloud Analysis
         if: matrix.go-version == 'stable'
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.out
-          fail_ci_if_error: true
+        uses: SonarSource/sonarcloud-github-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   security:
     name: Security Scan

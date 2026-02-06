@@ -1,6 +1,8 @@
 # go-bzlmod
 
 [![CI](https://github.com/albertocavalcante/go-bzlmod/actions/workflows/ci.yml/badge.svg)](https://github.com/albertocavalcante/go-bzlmod/actions/workflows/ci.yml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=albertocavalcante_go-bzlmod&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=albertocavalcante_go-bzlmod)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=albertocavalcante_go-bzlmod&metric=coverage)](https://sonarcloud.io/summary/new_code?id=albertocavalcante_go-bzlmod)
 [![Go Reference](https://pkg.go.dev/badge/github.com/albertocavalcante/go-bzlmod.svg)](https://pkg.go.dev/github.com/albertocavalcante/go-bzlmod)
 [![Go Report Card](https://goreportcard.com/badge/github.com/albertocavalcante/go-bzlmod)](https://goreportcard.com/report/github.com/albertocavalcante/go-bzlmod)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
