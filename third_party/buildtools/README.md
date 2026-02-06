@@ -4,20 +4,20 @@ This directory contains a vendored subset of the [bazelbuild/buildtools](https:/
 
 ## Vendored Version
 
-| Field | Value |
-|-------|-------|
-| **Source** | `github.com/bazelbuild/buildtools` |
-| **Ref** | `b1e23f1025b8` |
-| **Vendored** | `2026-02-02T21:32:10Z` |
+| Field        | Value                              |
+| ------------ | ---------------------------------- |
+| **Source**   | `github.com/bazelbuild/buildtools` |
+| **Ref**      | `b1e23f1025b8`                     |
+| **Vendored** | `2026-02-02T21:32:10Z`             |
 
 ## Included Packages
 
 Only the parser-related packages are vendored:
 
-| Package | Description |
-|---------|-------------|
-| `build/` | Core Starlark/BUILD file parser, AST types, and printer |
-| `labels/` | Bazel label parsing and manipulation utilities |
+| Package   | Description                                                      |
+| --------- | ---------------------------------------------------------------- |
+| `build/`  | Core Starlark/BUILD file parser, AST types, and printer          |
+| `labels/` | Bazel label parsing and manipulation utilities                   |
 | `tables/` | Parser configuration tables for known Bazel rules and attributes |
 
 These packages have **zero external dependencies** — they only use the Go standard library.
