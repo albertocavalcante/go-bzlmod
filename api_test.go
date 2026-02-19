@@ -636,6 +636,25 @@ bazel_dep(name = "custom_dep", version = "1.0.0")`
 	}
 }
 
+func TestResolve_MissingDirectDependencyReturnsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate a registry where the requested direct dependency does not exist.
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	content := `module(name = "root", version = "1.0.0")
+bazel_dep(name = "missing_dep", version = "1.0.0")`
+
+	_, err := ResolveContent(ctx, content, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+	if err == nil {
+		t.Fatal("expected error when direct dependency is missing from all registries")
+	}
+}
+
 // TestResolve_MultipleRegistries tests registry chain behavior
 func TestResolve_MultipleRegistries(t *testing.T) {
 	// Server 1: has module_a

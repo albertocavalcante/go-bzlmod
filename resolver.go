@@ -113,6 +113,10 @@ type graphBuildContext struct {
 	// Used to determine if a nodep edge can be fulfilled in the current round.
 	prevRoundModuleNames map[string]bool
 
+	// explicitRootProdDepNames tracks production dependencies explicitly declared
+	// in the root MODULE.bazel (before MODULE.tools injection).
+	explicitRootProdDepNames map[string]bool
+
 	// mu protects concurrent writes to depGraph, moduleDeps, moduleInfoCache, and unfulfilledNodepEdgeModuleNames
 	mu sync.Mutex
 }
@@ -243,6 +247,14 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		Message: "starting dependency resolution",
 	})
 
+	// Track explicit root production deps before MODULE.tools injection.
+	explicitRootProdDepNames := make(map[string]bool)
+	for _, dep := range rootModule.Dependencies {
+		if !dep.DevDependency {
+			explicitRootProdDepNames[dep.Name] = true
+		}
+	}
+
 	// Inject Bazel's MODULE.tools dependencies if a Bazel version is specified
 	if r.options.BazelVersion != "" {
 		logger.Debug("injecting MODULE.tools dependencies", "bazelVersion", r.options.BazelVersion)
@@ -259,6 +271,7 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		overrideModules:                 r.overrideModuleSnapshot(),
 		unfulfilledNodepEdgeModuleNames: make(map[string]bool),
 		prevRoundModuleNames:            map[string]bool{rootModule.Name: true},
+		explicitRootProdDepNames:        explicitRootProdDepNames,
 	}
 
 	// Multi-round discovery loop for handling nodep edges.
@@ -614,9 +627,26 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 			if err != nil {
 				if isNotFound(err) {
 					logger.Debug("module not found", "name", task.name, "version", task.version)
+					missingRequiredByRootProduction := false
 					bc.mu.Lock()
+					if versions, ok := bc.depGraph[task.name]; ok {
+						if req, ok := versions[task.version]; ok {
+							// Missing direct production deps from root should fail resolution.
+							if !req.DevDependency && bc.explicitRootProdDepNames[task.name] {
+								for _, rb := range req.RequiredBy {
+									if rb == "<root>" {
+										missingRequiredByRootProduction = true
+										break
+									}
+								}
+							}
+						}
+					}
 					removeDependency(bc.depGraph, task.name, task.version)
 					bc.mu.Unlock()
+					if missingRequiredByRootProduction {
+						setErr(fmt.Errorf("fetch module %s@%s: %w", task.name, task.version, err))
+					}
 					tasksWG.Done()
 					continue
 				}
