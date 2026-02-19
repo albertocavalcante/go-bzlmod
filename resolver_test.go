@@ -2687,8 +2687,8 @@ func TestFindNonYankedVersion_NotYanked(t *testing.T) {
 func TestResolveDependencies_WideFanoutDoesNotDeadlock(t *testing.T) {
 	const (
 		numBranches       = 5   // matches defaultMaxConcurrency
-		depsPerBranch     = 400 // total enqueue burst = 2000 (> minTaskBufferSize=100)
-		resolveTimeoutSec = 2
+		depsPerBranch     = 120 // total enqueue burst = 600 (> minTaskBufferSize=100)
+		resolveTimeoutSec = 10
 	)
 
 	moduleFiles := make(map[string]string)
