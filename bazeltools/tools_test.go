@@ -1,7 +1,7 @@
 package bazeltools
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -412,7 +412,7 @@ func TestDataIntegrity_CoreDepsExist(t *testing.T) {
 // TestVersionProgression_NewerVersionsHaveValidDeps verifies version progression
 func TestVersionProgression_NewerVersionsHaveValidDeps(t *testing.T) {
 	versions := SupportedVersions()
-	sort.Strings(versions) // Sort to get version order
+	slices.Sort(versions) // Sort to get version order
 
 	for _, v := range versions {
 		deps := GetDeps(v)

@@ -1,8 +1,9 @@
 package selection
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
@@ -559,8 +560,8 @@ func computePossibleResolutionResultsForOneDepSpec(
 	}
 
 	// Sort by compatibility level (ascending) to prefer lower compat levels first
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].CompatLevel < results[j].CompatLevel
+	slices.SortFunc(results, func(a, b resolutionResult) int {
+		return cmp.Compare(a.CompatLevel, b.CompatLevel)
 	})
 
 	return results
@@ -652,11 +653,11 @@ func enumerateStrategies(
 	for k := range allPossible {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Name != keys[j].Name {
-			return keys[i].Name < keys[j].Name
+	slices.SortFunc(keys, func(a, b depSpecKey) int {
+		if a.Name != b.Name {
+			return cmp.Compare(a.Name, b.Name)
 		}
-		return keys[i].Version < keys[j].Version
+		return cmp.Compare(a.Version, b.Version)
 	})
 
 	// Compute cartesian product

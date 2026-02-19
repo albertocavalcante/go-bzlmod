@@ -1,7 +1,7 @@
 package label
 
 import (
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -186,7 +186,9 @@ func TestVersionsSortWithEmpty(t *testing.T) {
 		versions[i] = MustVersion(s)
 	}
 
-	sort.Sort(versions)
+	slices.SortFunc(versions, func(a, b Version) int {
+		return a.Compare(b)
+	})
 
 	for i, v := range versions {
 		if v.String() != want[i] {
@@ -227,7 +229,9 @@ func TestVersionsSort(t *testing.T) {
 		versions[i] = MustVersion(s)
 	}
 
-	sort.Sort(versions)
+	slices.SortFunc(versions, func(a, b Version) int {
+		return a.Compare(b)
+	})
 
 	for i, v := range versions {
 		if v.String() != want[i] {

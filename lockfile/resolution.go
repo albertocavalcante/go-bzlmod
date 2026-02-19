@@ -1,9 +1,10 @@
 package lockfile
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
-	"sort"
+	"slices"
 )
 
 // ModuleResolution represents a resolved module for lockfile generation.
@@ -154,12 +155,12 @@ func Compare(old, new *Lockfile) *Diff {
 	}
 
 	// Sort for deterministic output
-	sort.Strings(diff.Added)
-	sort.Strings(diff.Removed)
-	sort.Strings(diff.YankedAdded)
-	sort.Strings(diff.YankedRemoved)
-	sort.Slice(diff.Changed, func(i, j int) bool {
-		return diff.Changed[i].URL < diff.Changed[j].URL
+	slices.Sort(diff.Added)
+	slices.Sort(diff.Removed)
+	slices.Sort(diff.YankedAdded)
+	slices.Sort(diff.YankedRemoved)
+	slices.SortFunc(diff.Changed, func(a, b HashChange) int {
+		return cmp.Compare(a.URL, b.URL)
 	})
 
 	return diff
