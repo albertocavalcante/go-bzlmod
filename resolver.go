@@ -342,7 +342,7 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 
 	result, err := r.buildResolutionList(ctx, selectedVersions, bc.moduleDeps, bc.moduleInfoCache, rootModule)
 	if err != nil {
-		return nil, err
+		return nil, err // Preserve error types (e.g., YankedVersionsError) without wrapping
 	}
 
 	logger.Info("resolution complete",
@@ -483,8 +483,8 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 
 			if existing, exists := bc.depGraph[dep.Name][effectiveVersion]; exists {
 				existing.RequiredBy = append(existing.RequiredBy, path[len(path)-1])
-				if dep.DevDependency {
-					existing.DevDependency = true
+				if !dep.DevDependency {
+					existing.DevDependency = false
 				}
 			} else {
 				bc.depGraph[dep.Name][effectiveVersion] = &depRequest{

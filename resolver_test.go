@@ -2183,3 +2183,169 @@ func TestResolutionSummary_FieldWarnings(t *testing.T) {
 			list.Summary.FieldWarnings)
 	}
 }
+
+// TestDevDependencyFlag_ProductionPathOverridesDevPath tests that when a module is
+// required as both a dev dependency (by root) and a production dependency (by another
+// module), it is correctly marked as DevDependency=false.
+//
+// Regression test for: DevDependency flag logic was inverted, promoting to true when
+// any dev requester existed, even if a production path also required the module.
+func TestDevDependencyFlag_ProductionPathOverridesDevPath(t *testing.T) {
+	// Setup:
+	//   root -> shared@1.0.0 (dev_dependency = true)
+	//   root -> lib_a@1.0.0  (production)
+	//   lib_a@1.0.0 -> shared@1.0.0 (production)
+	//
+	// Expected: shared should be DevDependency=false because lib_a requires it
+	// as a production dependency.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/lib_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_a", version = "1.0.0")
+bazel_dep(name = "shared", version = "1.0.0")`)
+		case "/modules/shared/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "shared", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	reg := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(reg, true) // includeDevDeps=true
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "lib_a", Version: "1.0.0", DevDependency: false},
+			{Name: "shared", Version: "1.0.0", DevDependency: true},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies failed: %v", err)
+	}
+
+	for _, m := range result.Modules {
+		if m.Name == "shared" {
+			if m.DevDependency {
+				t.Errorf("module 'shared' has DevDependency=true, want false: "+
+					"it is required as a production dep by lib_a")
+			}
+			return
+		}
+	}
+	t.Fatal("module 'shared' not found in resolution result")
+}
+
+// TestDevDependencyFlag_AllDevRequesters tests that a module required only via
+// dev dependency paths is correctly marked as DevDependency=true.
+func TestDevDependencyFlag_AllDevRequesters(t *testing.T) {
+	// Setup:
+	//   root -> dev_only@1.0.0 (dev_dependency = true)
+	//   root -> lib_a@1.0.0    (production)
+	//   lib_a has no dep on dev_only
+	//
+	// Expected: dev_only should be DevDependency=true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/lib_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_a", version = "1.0.0")`)
+		case "/modules/dev_only/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dev_only", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	reg := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(reg, true)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "lib_a", Version: "1.0.0", DevDependency: false},
+			{Name: "dev_only", Version: "1.0.0", DevDependency: true},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies failed: %v", err)
+	}
+
+	for _, m := range result.Modules {
+		if m.Name == "dev_only" {
+			if !m.DevDependency {
+				t.Errorf("module 'dev_only' has DevDependency=false, want true: "+
+					"it is only required via dev dependency paths")
+			}
+			return
+		}
+	}
+	t.Fatal("module 'dev_only' not found in resolution result")
+}
+
+// TestDevDependencyFlag_SummaryCounts tests that ProductionModules and DevModules
+// summary counts are accurate when dev and production dependencies coexist.
+func TestDevDependencyFlag_SummaryCounts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_lib/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_lib", version = "1.0.0")
+bazel_dep(name = "shared", version = "1.0.0")`)
+		case "/modules/shared/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "shared", version = "1.0.0")`)
+		case "/modules/dev_tool/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dev_tool", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	reg := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(reg, true)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "prod_lib", Version: "1.0.0", DevDependency: false},
+			{Name: "shared", Version: "1.0.0", DevDependency: true},   // also required by prod_lib
+			{Name: "dev_tool", Version: "1.0.0", DevDependency: true}, // only dev
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies failed: %v", err)
+	}
+
+	// Expected: prod_lib=production, shared=production (required by prod_lib), dev_tool=dev
+	wantProd := 2 // prod_lib + shared
+	wantDev := 1  // dev_tool
+
+	if result.Summary.ProductionModules != wantProd {
+		t.Errorf("Summary.ProductionModules = %d, want %d", result.Summary.ProductionModules, wantProd)
+		for _, m := range result.Modules {
+			t.Logf("  %s: DevDependency=%v", m.Name, m.DevDependency)
+		}
+	}
+	if result.Summary.DevModules != wantDev {
+		t.Errorf("Summary.DevModules = %d, want %d", result.Summary.DevModules, wantDev)
+	}
+}
