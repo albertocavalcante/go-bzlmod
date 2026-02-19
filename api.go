@@ -58,10 +58,11 @@
 package gobzlmod
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 )
 
 // ModuleSource represents a source of MODULE.bazel content for resolution.
@@ -208,7 +209,7 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 	resolver := newDependencyResolverWithOptions(reg, opts)
 	result, err := resolver.ResolveDependencies(ctx, moduleInfo)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve dependencies for %s@%s: %w", name, version, err)
 	}
 
 	// Determine the registry URL for the target module
@@ -226,7 +227,7 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 			directDeps = append(directDeps, m.Name)
 		}
 	}
-	sort.Strings(directDeps)
+	slices.Sort(directDeps)
 
 	// Create the target module entry
 	targetModule := ModuleToResolve{
@@ -238,8 +239,11 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 		RequiredBy:   nil, // Root module isn't required by anything
 	}
 
-	// Prepend target module to the list
-	result.Modules = append([]ModuleToResolve{targetModule}, result.Modules...)
+	// Insert target module and maintain sorted order by name
+	result.Modules = append(result.Modules, targetModule)
+	slices.SortFunc(result.Modules, func(a, b ModuleToResolve) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
 
 	// Update summary
 	result.Summary.TotalModules++

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1378,19 +1379,26 @@ bazel_dep(name = "platforms", version = "0.0.8")`)
 		t.Errorf("Expected 3 modules, got %d", len(result.Modules))
 	}
 
-	// First module should be the target with Depth=0
-	if result.Modules[0].Name != "rules_go" {
-		t.Errorf("Expected first module to be rules_go, got %s", result.Modules[0].Name)
+	// Find the target module (list is sorted by name)
+	var targetModule *ModuleToResolve
+	for i := range result.Modules {
+		if result.Modules[i].Name == "rules_go" {
+			targetModule = &result.Modules[i]
+			break
+		}
 	}
-	if result.Modules[0].Version != "0.50.0" {
-		t.Errorf("Expected version 0.50.0, got %s", result.Modules[0].Version)
+	if targetModule == nil {
+		t.Fatal("Target module rules_go not found in results")
 	}
-	if result.Modules[0].Depth != 0 {
-		t.Errorf("Expected target module to have Depth=0, got %d", result.Modules[0].Depth)
+	if targetModule.Version != "0.50.0" {
+		t.Errorf("Expected version 0.50.0, got %s", targetModule.Version)
+	}
+	if targetModule.Depth != 0 {
+		t.Errorf("Expected target module to have Depth=0, got %d", targetModule.Depth)
 	}
 
 	// Target module should list its direct dependencies
-	deps := result.Modules[0].Dependencies
+	deps := targetModule.Dependencies
 	if len(deps) != 2 {
 		t.Errorf("Expected 2 direct dependencies, got %d", len(deps))
 	}
@@ -1400,10 +1408,9 @@ bazel_dep(name = "platforms", version = "0.0.8")`)
 	}
 
 	// Other modules should have Depth=1 (direct deps of target)
-	for i := 1; i < len(result.Modules); i++ {
-		if result.Modules[i].Depth != 1 {
-			t.Errorf("Expected module %s to have Depth=1, got %d",
-				result.Modules[i].Name, result.Modules[i].Depth)
+	for _, m := range result.Modules {
+		if m.Name != "rules_go" && m.Depth != 1 {
+			t.Errorf("Expected module %s to have Depth=1, got %d", m.Name, m.Depth)
 		}
 	}
 
@@ -1413,12 +1420,12 @@ bazel_dep(name = "platforms", version = "0.0.8")`)
 	}
 }
 
-// TestResolveModule_TargetIncludedFirst tests that target is always first
-func TestResolveModule_TargetIncludedFirst(t *testing.T) {
+// TestResolveModule_TargetIncluded tests that the target module is included with Depth=0
+func TestResolveModule_TargetIncluded(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/modules/my_module/1.0.0/MODULE.bazel":
-			// Module with many deps that sort before "my_module"
+			// Module with deps that sort before and after "my_module"
 			fmt.Fprint(w, `module(name = "my_module", version = "1.0.0")
 bazel_dep(name = "aaa_first", version = "1.0.0")
 bazel_dep(name = "zzz_last", version = "1.0.0")`)
@@ -1441,9 +1448,27 @@ bazel_dep(name = "zzz_last", version = "1.0.0")`)
 		t.Fatalf("ResolveModule() error = %v", err)
 	}
 
-	// Target should be first, regardless of alphabetical order
-	if result.Modules[0].Name != "my_module" {
-		t.Errorf("Expected target 'my_module' to be first, got %s", result.Modules[0].Name)
+	// Target module should be present with Depth=0
+	found := false
+	for _, m := range result.Modules {
+		if m.Name == "my_module" {
+			found = true
+			if m.Depth != 0 {
+				t.Errorf("Expected target module Depth=0, got %d", m.Depth)
+			}
+		}
+	}
+	if !found {
+		t.Error("Target module 'my_module' not found in results")
+	}
+
+	// Modules list should be sorted by name
+	names := make([]string, len(result.Modules))
+	for i, m := range result.Modules {
+		names[i] = m.Name
+	}
+	if !slices.IsSorted(names) {
+		t.Errorf("Modules list should be sorted by name, got %v", names)
 	}
 }
 
@@ -1591,12 +1616,11 @@ bazel_dep(name = "dep_from_s2", version = "1.0.0")`)
 	}
 
 	// Target should come from server1
-	if result.Modules[0].Registry != server1.URL {
-		t.Errorf("Expected target registry %s, got %s", server1.URL, result.Modules[0].Registry)
-	}
-
-	// Dependency should come from server2
 	for _, m := range result.Modules {
+		if m.Name == "target" && m.Registry != server1.URL {
+			t.Errorf("Expected target registry %s, got %s", server1.URL, m.Registry)
+		}
+		// Dependency should come from server2
 		if m.Name == "dep_from_s2" && m.Registry != server2.URL {
 			t.Errorf("Expected dep_from_s2 registry %s, got %s", server2.URL, m.Registry)
 		}
@@ -1692,5 +1716,45 @@ func TestResolveModule_MissingModuleDirective(t *testing.T) {
 	// The parser requires a module() directive, so this should fail
 	if err == nil {
 		t.Error("Expected error for MODULE.bazel without module() directive")
+	}
+}
+
+// TestResolveModule_ModulesListSortedByName tests that the Modules list returned by
+// ResolveModule is sorted by name, including the prepended target module.
+//
+// Regression test for: resolveModuleInternal prepended the target module to the
+// already-sorted list, breaking the sorted-by-name contract of ResolutionList.Modules.
+func TestResolveModule_ModulesListSortedByName(t *testing.T) {
+	// Use a target module name that sorts AFTER its dependencies to expose the bug.
+	// "z_target" sorts after "aaa_dep" and "mmm_dep".
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/z_target/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "z_target", version = "1.0.0")
+bazel_dep(name = "aaa_dep", version = "1.0.0")
+bazel_dep(name = "mmm_dep", version = "1.0.0")`)
+		case "/modules/aaa_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "aaa_dep", version = "1.0.0")`)
+		case "/modules/mmm_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "mmm_dep", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	result, err := ResolveModule(context.Background(), "z_target", "1.0.0",
+		ResolutionOptions{Registries: []string{server.URL}})
+	if err != nil {
+		t.Fatalf("ResolveModule failed: %v", err)
+	}
+
+	// Verify list is sorted by name
+	names := make([]string, len(result.Modules))
+	for i, m := range result.Modules {
+		names[i] = m.Name
+	}
+	if !slices.IsSorted(names) {
+		t.Errorf("Modules list is not sorted by name: %v", names)
 	}
 }
