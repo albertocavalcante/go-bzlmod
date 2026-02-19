@@ -13,11 +13,12 @@ A Go library for Bazel module dependency resolution. Implements [Minimal Version
 
 - **MVS Resolution** — Pure MVS with concurrent fetching ([resolver.go](resolver.go))
 - **Multi-Registry** — Chain registries with priority ordering ([registry.go](registry.go))
-- **Override Support** — `single_version_override`, `git_override`, `local_path_override`, `archive_override`
+- **Override Support** — `single_version_override`, `multiple_version_override`, `git_override`, `local_path_override`, `archive_override`
 - **Graph Queries** — Dependency paths, explanations, cycle detection ([graph/](graph/))
 - **Bazel Compatibility** — Validate `bazel_compatibility` constraints ([bazel_compat.go](bazel_compat.go))
 - **Vendor Support** — Resolve from local vendor directories
 - **MODULE.tools** — Inject Bazel's implicit dependencies ([bazeltools/](bazeltools/))
+- **Nodep Edges** — Parse `repo_name = None` and handle nodep discovery semantics
 
 ## Installation
 
@@ -166,6 +167,14 @@ Bazel:     0.0.7  (upgraded via compatibility mapping)
 ```
 
 Use this library for dependency analysis and tooling. For exact Bazel parity, use `bazel mod graph`.
+
+## Bazel Parity Notes
+
+The resolver matches several Bazel-specific bzlmod semantics that are easy to miss:
+
+- `dev_dependency` is only honored on the root module. Transitive `dev_dependency` edges are ignored.
+- Non-registry overrides (`git_override`, `local_path_override`, `archive_override`) resolve as versionless modules (`version = ""`).
+- `bazel_dep(..., repo_name = None)` is treated as a nodep edge: it participates in selection constraints but does not create a required dependency edge by itself.
 
 Reference: [Selection.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java)
 

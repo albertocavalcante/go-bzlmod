@@ -63,8 +63,8 @@ result, err := gobzlmod.Resolve(ctx, gobzlmod.RegistrySource{
     Name:    "rules_go",
     Version: "0.50.1",
 })
-// result.Modules[0] is rules_go@0.50.1 (Depth=0)
-// result.Modules[1:] are its dependencies (Depth>=1)
+// result.Modules is sorted by module name.
+// Find rules_go by name if you need the root module entry (Depth=0).
 ```
 
 Reference: [`api.go:104-126`](../api.go#L104-L126)

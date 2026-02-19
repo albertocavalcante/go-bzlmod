@@ -65,7 +65,7 @@ Reference: [`types.go:499-507`](../types.go#L499-L507), [Bazel vendor docs](http
 gobzlmod.WithDevDeps()
 ```
 
-Include `dev_dependency = True` modules in resolution. By default, dev dependencies are excluded.
+Include root-module `dev_dependency = True` modules in resolution. By default, dev dependencies are excluded. Transitive `dev_dependency` edges are ignored to match Bazel semantics.
 
 Reference: [`types.go:438-439`](../types.go#L438-L439)
 
