@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/albertocavalcante/go-bzlmod/selection"
@@ -386,10 +387,12 @@ func TestSelectionResolver_NilModule(t *testing.T) {
 }
 
 func TestConvertOverrides(t *testing.T) {
+	localPath := filepath.Join("local", "override", "baz")
+
 	overrides := []Override{
 		{Type: "single_version", ModuleName: "foo", Version: "1.0.0"},
 		{Type: "git", ModuleName: "bar"},
-		{Type: "local_path", ModuleName: "baz", Path: "/tmp/baz"},
+		{Type: "local_path", ModuleName: "baz", Path: localPath},
 		{Type: "archive", ModuleName: "qux"},
 	}
 
@@ -415,8 +418,8 @@ func TestConvertOverrides(t *testing.T) {
 	if !ok {
 		t.Fatalf("baz override type = %T, want *selection.NonRegistryOverride", converted["baz"])
 	}
-	if bazOverride.Path != "/tmp/baz" {
-		t.Fatalf("baz override path = %q, want %q", bazOverride.Path, "/tmp/baz")
+	if bazOverride.Path != localPath {
+		t.Fatalf("baz override path = %q, want %q", bazOverride.Path, localPath)
 	}
 }
 
