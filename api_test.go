@@ -1696,6 +1696,40 @@ bazel_dep(name = "test_dep", version = "1.0.0", dev_dependency = True)`)
 	}
 }
 
+// TestResolveModule_TargetYankedVersionError verifies that yanked checks also apply
+// to the explicitly requested target module.
+func TestResolveModule_TargetYankedVersionError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/target/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "target", version = "1.0.0")`)
+		case "/modules/target/metadata.json":
+			fmt.Fprint(w, `{
+				"versions": ["1.0.0"],
+				"yanked_versions": {"1.0.0": "critical security issue"}
+			}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := ResolveModule(ctx, "target", "1.0.0", ResolutionOptions{
+		Registries:     []string{server.URL},
+		CheckYanked:    true,
+		YankedBehavior: YankedVersionError,
+	})
+	if err == nil {
+		t.Fatal("expected error for yanked target module")
+	}
+
+	var yankedErr *YankedVersionsError
+	if !isYankedError(err, &yankedErr) {
+		t.Fatalf("expected YankedVersionsError, got %T: %v", err, err)
+	}
+}
+
 // TestResolveModule_MissingModuleDirective tests handling of MODULE.bazel without module() call
 func TestResolveModule_MissingModuleDirective(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

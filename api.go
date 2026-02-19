@@ -239,6 +239,25 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 		RequiredBy:   nil, // Root module isn't required by anything
 	}
 
+	// Apply metadata checks to the target module as well.
+	if opts.CheckYanked || opts.WarnDeprecated {
+		targetList := &ResolutionList{Modules: []ModuleToResolve{targetModule}}
+		checkModuleMetadata(ctx, reg, opts, targetList)
+		targetModule = targetList.Modules[0]
+	}
+
+	// Apply Bazel compatibility checks to the target module as well.
+	if opts.BazelCompatibilityMode != BazelCompatibilityOff &&
+		opts.BazelVersion != "" &&
+		len(moduleInfo.BazelCompatibility) > 0 {
+		targetModule.BazelCompatibility = moduleInfo.BazelCompatibility
+		compatible, reason, _ := checkBazelCompatibility(opts.BazelVersion, moduleInfo.BazelCompatibility)
+		if !compatible {
+			targetModule.IsBazelIncompatible = true
+			targetModule.BazelIncompatibilityReason = reason
+		}
+	}
+
 	// Insert target module and maintain sorted order by name
 	result.Modules = append(result.Modules, targetModule)
 	slices.SortFunc(result.Modules, func(a, b ModuleToResolve) int {
@@ -248,6 +267,51 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 	// Update summary
 	result.Summary.TotalModules++
 	result.Summary.ProductionModules++
+	if targetModule.Yanked {
+		result.Summary.YankedModules++
+	}
+	if targetModule.IsDeprecated {
+		result.Summary.DeprecatedModules++
+	}
+	if targetModule.IsBazelIncompatible {
+		result.Summary.IncompatibleModules++
+	}
+
+	// Apply yanked behavior for the target module.
+	if targetModule.Yanked {
+		switch opts.YankedBehavior {
+		case YankedVersionAllow:
+			// no-op
+		case YankedVersionWarn:
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("module %s@%s is yanked: %s", targetModule.Name, targetModule.Version, targetModule.YankReason))
+		case YankedVersionError:
+			return nil, &YankedVersionsError{Modules: []ModuleToResolve{targetModule}}
+		}
+	}
+
+	// Add deprecated warning for target module if enabled.
+	if opts.WarnDeprecated && targetModule.IsDeprecated {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("module %s is deprecated: %s", targetModule.Name, targetModule.DeprecationReason))
+	}
+
+	// Apply Bazel compatibility behavior for the target module.
+	if targetModule.IsBazelIncompatible {
+		switch opts.BazelCompatibilityMode {
+		case BazelCompatibilityOff:
+			// no-op
+		case BazelCompatibilityWarn:
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("module %s@%s is incompatible with Bazel %s: %s",
+					targetModule.Name, targetModule.Version, opts.BazelVersion, targetModule.BazelIncompatibilityReason))
+		case BazelCompatibilityError:
+			return nil, &BazelIncompatibilityError{
+				BazelVersion: opts.BazelVersion,
+				Modules:      []ModuleToResolve{targetModule},
+			}
+		}
+	}
 
 	return result, nil
 }
