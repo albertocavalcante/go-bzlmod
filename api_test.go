@@ -2,6 +2,7 @@ package gobzlmod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1727,6 +1728,143 @@ func TestResolveModule_TargetYankedVersionError(t *testing.T) {
 	var yankedErr *YankedVersionsError
 	if !isYankedError(err, &yankedErr) {
 		t.Fatalf("expected YankedVersionsError, got %T: %v", err, err)
+	}
+}
+
+func TestResolveModule_TargetYankedVersionWarn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/target/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "target", version = "1.0.0")`)
+		case "/modules/target/metadata.json":
+			fmt.Fprint(w, `{
+				"versions": ["1.0.0"],
+				"yanked_versions": {"1.0.0": "critical security issue"}
+			}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "target", "1.0.0", ResolutionOptions{
+		Registries:     []string{server.URL},
+		CheckYanked:    true,
+		YankedBehavior: YankedVersionWarn,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Summary.YankedModules != 1 {
+		t.Fatalf("Summary.YankedModules = %d, want 1", result.Summary.YankedModules)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatalf("expected yanked warning for target module")
+	}
+	target := result.Module("target")
+	if target == nil || !target.Yanked {
+		t.Fatalf("target module should be marked as yanked")
+	}
+}
+
+func TestResolveModule_TargetDeprecatedWarn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/target/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "target", version = "1.0.0")`)
+		case "/modules/target/metadata.json":
+			fmt.Fprint(w, `{
+				"versions": ["1.0.0"],
+				"deprecated": "use new_target instead"
+			}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "target", "1.0.0", ResolutionOptions{
+		Registries:     []string{server.URL},
+		WarnDeprecated: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Summary.DeprecatedModules != 1 {
+		t.Fatalf("Summary.DeprecatedModules = %d, want 1", result.Summary.DeprecatedModules)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatalf("expected deprecated warning for target module")
+	}
+	target := result.Module("target")
+	if target == nil || !target.IsDeprecated {
+		t.Fatalf("target module should be marked deprecated")
+	}
+}
+
+func TestResolveModule_TargetBazelCompatibilityError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/target/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(
+	name = "target",
+	version = "1.0.0",
+	bazel_compatibility = [">=8.0.0"],
+)`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	_, err := ResolveModule(ctx, "target", "1.0.0", ResolutionOptions{
+		Registries:             []string{server.URL},
+		BazelCompatibilityMode: BazelCompatibilityError,
+		BazelVersion:           "7.0.0",
+	})
+	if err == nil {
+		t.Fatalf("expected BazelIncompatibilityError for incompatible target module")
+	}
+	var compatErr *BazelIncompatibilityError
+	if !errors.As(err, &compatErr) {
+		t.Fatalf("expected BazelIncompatibilityError, got %T: %v", err, err)
+	}
+}
+
+func TestResolveModule_TargetBazelCompatibilityWarn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/modules/target/1.0.0/MODULE.bazel" {
+			fmt.Fprint(w, `module(
+	name = "target",
+	version = "1.0.0",
+	bazel_compatibility = [">=8.0.0"],
+)`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	result, err := ResolveModule(ctx, "target", "1.0.0", ResolutionOptions{
+		Registries:             []string{server.URL},
+		BazelCompatibilityMode: BazelCompatibilityWarn,
+		BazelVersion:           "7.0.0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Summary.IncompatibleModules != 1 {
+		t.Fatalf("Summary.IncompatibleModules = %d, want 1", result.Summary.IncompatibleModules)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatalf("expected bazel compatibility warning for target module")
+	}
+	target := result.Module("target")
+	if target == nil || !target.IsBazelIncompatible {
+		t.Fatalf("target module should be marked bazel incompatible")
 	}
 }
 
