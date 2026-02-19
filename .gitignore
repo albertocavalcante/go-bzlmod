@@ -33,3 +33,6 @@ go.work.sum
 
 # BCR test cache
 .bcr-cache/
+
+# Local generated tooling binaries
+/vendor-parser
