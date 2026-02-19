@@ -155,8 +155,8 @@ func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 				info.Overrides = append(info.Overrides, override)
 			}
 
-		// Reference: ModuleFileGlobals.multipleVersionOverride()
-		case "multiple_version_override":
+			// Bazel parity: parse multiple_version_override directives.
+			case "multiple_version_override":
 			seenOtherDirective = true
 			override := Override{
 				Type:       "multiple_version",
