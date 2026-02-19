@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -927,6 +928,125 @@ bazel_dep(name = "file_dep", version = "1.0.0")`
 
 	if len(result.Modules) != 1 {
 		t.Errorf("Expected 1 module, got %d", len(result.Modules))
+	}
+}
+
+func TestResolveFile_LocalPathOverrideHydratesModuleFromDisk(t *testing.T) {
+	var localFetchCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/remote_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "remote_dep", version = "1.0.0")`)
+		default:
+			if strings.Contains(r.URL.Path, "/modules/local_dep/") {
+				localFetchCount.Add(1)
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+
+	rootModuleFile := filepath.Join(tmpDir, "MODULE.bazel")
+	rootContent := `module(name = "root", version = "1.0.0")
+bazel_dep(name = "local_dep")
+local_path_override(module_name = "local_dep", path = "./local_dep")`
+	if err := os.WriteFile(rootModuleFile, []byte(rootContent), 0644); err != nil {
+		t.Fatalf("write root MODULE.bazel: %v", err)
+	}
+
+	localOverrideDir := filepath.Join(tmpDir, "local_dep")
+	if err := os.MkdirAll(localOverrideDir, 0755); err != nil {
+		t.Fatalf("create local override dir: %v", err)
+	}
+	overrideModuleContent := `module(name = "local_dep", version = "1.2.3")
+bazel_dep(name = "remote_dep", version = "1.0.0")`
+	if err := os.WriteFile(filepath.Join(localOverrideDir, "MODULE.bazel"), []byte(overrideModuleContent), 0644); err != nil {
+		t.Fatalf("write override MODULE.bazel: %v", err)
+	}
+
+	result, err := ResolveFile(context.Background(), rootModuleFile, ResolutionOptions{
+		Registries: []string{server.URL},
+	})
+	if err != nil {
+		t.Fatalf("ResolveFile() error = %v", err)
+	}
+
+	modules := make(map[string]ModuleToResolve, len(result.Modules))
+	for _, m := range result.Modules {
+		modules[m.Name] = m
+	}
+
+	localDep, ok := modules["local_dep"]
+	if !ok {
+		t.Fatal("expected local_dep in resolved modules")
+	}
+	if localDep.Version != "" {
+		t.Fatalf("local_dep version = %q, want empty version for non-registry override", localDep.Version)
+	}
+	if _, ok := modules["remote_dep"]; !ok {
+		t.Fatal("expected transitive remote_dep from local override module")
+	}
+	if got := localFetchCount.Load(); got != 0 {
+		t.Fatalf("expected no registry fetches for local_dep, got %d", got)
+	}
+}
+
+func TestResolve_FileSourceHydratesLocalPathOverrideFromDisk(t *testing.T) {
+	var localFetchCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/remote_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "remote_dep", version = "1.0.0")`)
+		default:
+			if strings.Contains(r.URL.Path, "/modules/local_dep/") {
+				localFetchCount.Add(1)
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+
+	rootModuleFile := filepath.Join(tmpDir, "MODULE.bazel")
+	rootContent := `module(name = "root", version = "1.0.0")
+bazel_dep(name = "local_dep")
+local_path_override(module_name = "local_dep", path = "./local_dep")`
+	if err := os.WriteFile(rootModuleFile, []byte(rootContent), 0644); err != nil {
+		t.Fatalf("write root MODULE.bazel: %v", err)
+	}
+
+	localOverrideDir := filepath.Join(tmpDir, "local_dep")
+	if err := os.MkdirAll(localOverrideDir, 0755); err != nil {
+		t.Fatalf("create local override dir: %v", err)
+	}
+	overrideModuleContent := `module(name = "local_dep", version = "1.2.3")
+bazel_dep(name = "remote_dep", version = "1.0.0")`
+	if err := os.WriteFile(filepath.Join(localOverrideDir, "MODULE.bazel"), []byte(overrideModuleContent), 0644); err != nil {
+		t.Fatalf("write override MODULE.bazel: %v", err)
+	}
+
+	result, err := Resolve(context.Background(), FileSource(rootModuleFile), WithRegistries(server.URL))
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	modules := make(map[string]ModuleToResolve, len(result.Modules))
+	for _, m := range result.Modules {
+		modules[m.Name] = m
+	}
+	if _, ok := modules["local_dep"]; !ok {
+		t.Fatal("expected local_dep in resolved modules")
+	}
+	if _, ok := modules["remote_dep"]; !ok {
+		t.Fatal("expected transitive remote_dep from local override module")
+	}
+	if got := localFetchCount.Load(); got != 0 {
+		t.Fatalf("expected no registry fetches for local_dep, got %d", got)
 	}
 }
 

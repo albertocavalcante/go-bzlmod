@@ -62,6 +62,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 )
 
@@ -114,11 +115,7 @@ func Resolve(ctx context.Context, src ModuleSource, opts ...Option) (*Resolution
 	case ContentSource:
 		return resolveInternal(ctx, string(s), resOpts)
 	case FileSource:
-		content, err := os.ReadFile(string(s))
-		if err != nil {
-			return nil, fmt.Errorf("reading module file: %w", err)
-		}
-		return resolveInternal(ctx, string(content), resOpts)
+		return ResolveFile(ctx, string(s), resOpts)
 	case RegistrySource:
 		return resolveModuleInternal(ctx, s.Name, s.Version, resOpts)
 	default:
@@ -160,7 +157,54 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 
 	reg := registryFromOptions(opts)
 	resolver := newDependencyResolverWithOptions(reg, opts)
+	if err := hydrateLocalPathOverrides(resolver, moduleInfo, moduleFilePath); err != nil {
+		return nil, err
+	}
 	return resolver.ResolveDependencies(ctx, moduleInfo)
+}
+
+func hydrateLocalPathOverrides(resolver *dependencyResolver, moduleInfo *ModuleInfo, moduleFilePath string) error {
+	baseDir := filepath.Dir(moduleFilePath)
+	for _, override := range moduleInfo.Overrides {
+		if override.Type != overrideTypeLocalPath {
+			continue
+		}
+		if override.ModuleName == "" {
+			continue
+		}
+		if override.Path == "" {
+			return fmt.Errorf("local_path_override for module %s has empty path", override.ModuleName)
+		}
+
+		overridePath := override.Path
+		if !filepath.IsAbs(overridePath) {
+			overridePath = filepath.Join(baseDir, overridePath)
+		}
+		moduleFile, err := moduleFileForLocalOverride(overridePath)
+		if err != nil {
+			return fmt.Errorf("resolve local_path_override for module %s: %w", override.ModuleName, err)
+		}
+
+		overrideInfo, err := ParseModuleFile(moduleFile)
+		if err != nil {
+			return fmt.Errorf("parse local_path_override module %s: %w", override.ModuleName, err)
+		}
+		if err := resolver.AddOverrideModuleInfo(override.ModuleName, overrideInfo); err != nil {
+			return fmt.Errorf("register local_path_override module %s: %w", override.ModuleName, err)
+		}
+	}
+	return nil
+}
+
+func moduleFileForLocalOverride(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return filepath.Join(path, "MODULE.bazel"), nil
+	}
+	return path, nil
 }
 
 // ResolveModule resolves a module from the registry and returns its complete dependency graph.
