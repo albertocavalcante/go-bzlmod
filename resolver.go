@@ -84,7 +84,8 @@ type graphBuildContext struct {
 	// depGraph maps module name -> version -> request info
 	depGraph map[string]map[string]*depRequest
 
-	// moduleDeps maps module name -> list of dependency names (for graph building)
+	// moduleDeps maps "name@version" -> list of dependency names (for graph building).
+	// Keyed by name@version to ensure the selected version's deps are used after MVS.
 	moduleDeps map[string][]string
 
 	// moduleInfoCache maps "name@version" -> ModuleInfo for Bazel compatibility checking.
@@ -453,8 +454,9 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 			deps = append(deps, dep.Name)
 		}
 		if len(deps) > 0 && module.Name != "" {
+			depsKey := module.Name + "@" + module.Version
 			bc.mu.Lock()
-			bc.moduleDeps[module.Name] = deps
+			bc.moduleDeps[depsKey] = deps
 			bc.mu.Unlock()
 		}
 
@@ -775,8 +777,18 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		rootDeps = append(rootDeps, dep.Name)
 	}
 
+	// Resolve moduleDeps (keyed by name@version) to a name-only map using selected versions.
+	// This ensures each module's dependencies reflect the version MVS actually selected.
+	resolvedModuleDeps := make(map[string][]string, len(selectedVersions))
+	for name, req := range selectedVersions {
+		depsKey := name + "@" + req.Version
+		if deps, ok := moduleDeps[depsKey]; ok {
+			resolvedModuleDeps[name] = deps
+		}
+	}
+
 	// Calculate depth for each module using BFS
-	moduleDepths := calculateModuleDepths(rootDeps, moduleDeps, selectedNames)
+	moduleDepths := calculateModuleDepths(rootDeps, resolvedModuleDeps, selectedNames)
 
 	for moduleName, req := range selectedVersions {
 		registryURL := defaultRegistry
@@ -798,7 +810,7 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 
 		// Get dependencies for this module, filtered to only include selected modules
 		var deps []string
-		if rawDeps, ok := moduleDeps[moduleName]; ok {
+		if rawDeps, ok := resolvedModuleDeps[moduleName]; ok {
 			for _, dep := range rawDeps {
 				if selectedNames[dep] {
 					deps = append(deps, dep)

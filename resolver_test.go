@@ -2184,6 +2184,101 @@ func TestResolutionSummary_FieldWarnings(t *testing.T) {
 	}
 }
 
+// TestModuleDeps_SelectedVersionDependencies tests that the Dependencies field of a
+// resolved module reflects the SELECTED version's dependencies, not some other version's.
+//
+// Regression test for: moduleDeps was keyed by module name only, so when multiple
+// versions of the same module were fetched, the last goroutine to write would win.
+// After MVS selected the highest version, Dependencies could reflect a different version.
+func TestModuleDeps_SelectedVersionDependencies(t *testing.T) {
+	// Setup:
+	//   root -> lib_a@1.0.0 (production)
+	//   root -> bumper@1.0.0 (production)
+	//   bumper@1.0.0 -> lib_a@2.0.0 (MVS will select 2.0.0)
+	//   lib_a@1.0.0 depends on [old_dep@1.0.0]   (v1-only dep)
+	//   lib_a@2.0.0 depends on [new_dep@1.0.0]    (v2-only dep)
+	//
+	// Expected: After MVS selects lib_a@2.0.0, its Dependencies should be ["new_dep"],
+	// not ["old_dep"] (which was lib_a@1.0.0's dependency list).
+	//
+	// The server delays lib_a@1.0.0 so it is fetched AFTER lib_a@2.0.0, ensuring
+	// the stale v1 deps overwrite the correct v2 deps in the buggy code path.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/bumper/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bumper", version = "1.0.0")
+bazel_dep(name = "lib_a", version = "2.0.0")`)
+		case "/modules/lib_a/1.0.0/MODULE.bazel":
+			// Delay v1.0.0 to ensure it is processed AFTER v2.0.0
+			time.Sleep(200 * time.Millisecond)
+			fmt.Fprint(w, `module(name = "lib_a", version = "1.0.0")
+bazel_dep(name = "old_dep", version = "1.0.0")`)
+		case "/modules/lib_a/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "lib_a", version = "2.0.0")
+bazel_dep(name = "new_dep", version = "1.0.0")`)
+		case "/modules/old_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "old_dep", version = "1.0.0")`)
+		case "/modules/new_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "new_dep", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	reg := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(reg, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "lib_a", Version: "1.0.0"},
+			{Name: "bumper", Version: "1.0.0"},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies failed: %v", err)
+	}
+
+	// MVS should select lib_a@2.0.0
+	for _, m := range result.Modules {
+		if m.Name == "lib_a" {
+			if m.Version != "2.0.0" {
+				t.Fatalf("lib_a version = %s, want 2.0.0 (MVS should select highest)", m.Version)
+			}
+			// The critical check: Dependencies should reflect v2.0.0's deps
+			hasNewDep := false
+			hasOldDep := false
+			for _, dep := range m.Dependencies {
+				if dep == "new_dep" {
+					hasNewDep = true
+				}
+				if dep == "old_dep" {
+					hasOldDep = true
+				}
+			}
+			if !hasNewDep {
+				t.Errorf("lib_a@2.0.0 Dependencies = %v, missing 'new_dep': "+
+					"Dependencies should reflect selected version's deps",
+					m.Dependencies)
+			}
+			if hasOldDep {
+				t.Errorf("lib_a@2.0.0 Dependencies = %v, has 'old_dep': "+
+					"Dependencies contains stale dep from v1.0.0",
+					m.Dependencies)
+			}
+			return
+		}
+	}
+	t.Fatal("module 'lib_a' not found in resolution result")
+}
+
 // TestDevDependencyFlag_ProductionPathOverridesDevPath tests that when a module is
 // required as both a dev dependency (by root) and a production dependency (by another
 // module), it is correctly marked as DevDependency=false.
