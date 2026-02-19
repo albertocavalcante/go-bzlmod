@@ -204,8 +204,29 @@ func (rc *registryChain) GetModuleMetadata(ctx context.Context, moduleName strin
 	rc.moduleRegistryMu.RUnlock()
 
 	if found {
-		// We know which registry has this module, use it directly
-		return rc.clients[registryIdx].GetModuleMetadata(ctx, moduleName)
+		// Fast path: try cached registry first.
+		metadata, err := rc.clients[registryIdx].GetModuleMetadata(ctx, moduleName)
+		if err == nil {
+			return metadata, nil
+		}
+
+		// Fallback to other registries if cached registry fails.
+		var lastErr error = err
+		for i, client := range rc.clients {
+			if i == registryIdx {
+				continue
+			}
+			metadata, err := client.GetModuleMetadata(ctx, moduleName)
+			if err == nil {
+				return metadata, nil
+			}
+			lastErr = err
+		}
+
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("metadata for module %s not found in any registry", moduleName)
 	}
 
 	// Try each registry in order to find the metadata
@@ -269,8 +290,29 @@ func (rc *registryChain) GetModuleSource(ctx context.Context, moduleName, versio
 	rc.moduleRegistryMu.RUnlock()
 
 	if found {
-		// We know which registry has this module, use it directly
-		return rc.clients[registryIdx].GetModuleSource(ctx, moduleName, version)
+		// Fast path: try cached registry first.
+		source, err := rc.clients[registryIdx].GetModuleSource(ctx, moduleName, version)
+		if err == nil {
+			return source, nil
+		}
+
+		// Fallback to other registries if cached registry fails.
+		var lastErr error = err
+		for i, client := range rc.clients {
+			if i == registryIdx {
+				continue
+			}
+			source, err := client.GetModuleSource(ctx, moduleName, version)
+			if err == nil {
+				return source, nil
+			}
+			lastErr = err
+		}
+
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("source.json for module %s@%s not found in any registry", moduleName, version)
 	}
 
 	// Try each registry in order to find the source

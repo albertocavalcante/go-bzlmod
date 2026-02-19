@@ -442,3 +442,85 @@ func TestRegistryChain_CachedRegistryVersionMissFallsBack(t *testing.T) {
 		t.Fatalf("GetModuleFile() = %s@%s, want module_x@1.0.0", info.Name, info.Version)
 	}
 }
+
+func TestRegistryChain_CachedRegistryMetadataMissFallsBack(t *testing.T) {
+	// Registry 1 serves module file so module is cached there, but has no metadata.
+	reg1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/modules/module_meta/1.0.0/MODULE.bazel") {
+			fmt.Fprint(w, `module(name = "module_meta", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer reg1.Close()
+
+	// Registry 2 has metadata for the same module.
+	reg2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/modules/module_meta/metadata.json") {
+			fmt.Fprint(w, `{"versions":["1.0.0"]}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer reg2.Close()
+
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL})
+	if err != nil {
+		t.Fatalf("newRegistryChain() error = %v", err)
+	}
+	ctx := context.Background()
+
+	_, err = chain.GetModuleFile(ctx, "module_meta", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+
+	metadata, err := chain.GetModuleMetadata(ctx, "module_meta")
+	if err != nil {
+		t.Fatalf("GetModuleMetadata() should fallback on cached-registry miss, got error: %v", err)
+	}
+	if len(metadata.Versions) != 1 || metadata.Versions[0] != "1.0.0" {
+		t.Fatalf("GetModuleMetadata() = %+v, want versions [1.0.0]", metadata)
+	}
+}
+
+func TestRegistryChain_CachedRegistrySourceMissFallsBack(t *testing.T) {
+	// Registry 1 serves module file so module is cached there, but has no source.json.
+	reg1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/modules/module_src/1.0.0/MODULE.bazel") {
+			fmt.Fprint(w, `module(name = "module_src", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer reg1.Close()
+
+	// Registry 2 has source.json for that version.
+	reg2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/modules/module_src/1.0.0/source.json") {
+			fmt.Fprint(w, `{"url":"https://example.com/module_src-1.0.0.tar.gz","integrity":"sha256-test"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer reg2.Close()
+
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL})
+	if err != nil {
+		t.Fatalf("newRegistryChain() error = %v", err)
+	}
+	ctx := context.Background()
+
+	_, err = chain.GetModuleFile(ctx, "module_src", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() error = %v", err)
+	}
+
+	source, err := chain.GetModuleSource(ctx, "module_src", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleSource() should fallback on cached-registry miss, got error: %v", err)
+	}
+	if source.URL != "https://example.com/module_src-1.0.0.tar.gz" {
+		t.Fatalf("GetModuleSource().URL = %q, want %q", source.URL, "https://example.com/module_src-1.0.0.tar.gz")
+	}
+}
