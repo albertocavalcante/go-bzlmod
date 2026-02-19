@@ -95,7 +95,7 @@ type Dependency struct {
 }
 
 // Override represents version or source overrides for a module dependency.
-// Override types include: single_version, git, local_path, archive.
+// Override types include: single_version, multiple_version, git, local_path, archive.
 //
 // Reference: Bazel's override hierarchy includes:
 //   - SingleVersionOverride: Pins a module to a specific version within the registry.
@@ -103,7 +103,7 @@ type Dependency struct {
 //   - NonRegistryOverride: Base for overrides that bypass the registry (git, local_path, archive).
 //     See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/NonRegistryOverride.java
 type Override struct {
-	// Type is the override type: "single_version", "git", "local_path", or "archive".
+	// Type is the override type: "single_version", "multiple_version", "git", "local_path", or "archive".
 	Type string `json:"type"`
 
 	// ModuleName is the name of the module being overridden.
@@ -111,6 +111,9 @@ type Override struct {
 
 	// Version is the pinned version (for single_version overrides).
 	Version string `json:"version,omitempty"`
+
+	// Versions is the allowed version set (for multiple_version overrides).
+	Versions []string `json:"versions,omitempty"`
 
 	// Registry overrides the registry URL for this module.
 	Registry string `json:"registry,omitempty"`

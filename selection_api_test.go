@@ -251,6 +251,44 @@ bazel_dep(name = "root_dev", version = "1.0.0", dev_dependency = True)`
 	}
 }
 
+func TestResolveWithSelection_NodepDepRepoNameNoneHonoredOnlyWhenAlreadyPresent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_parent/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_parent", version = "1.0.0")`)
+		case "/modules/nodep_target/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "nodep_target", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	moduleContent := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "prod_parent", version = "1.0.0")
+bazel_dep(name = "nodep_target", version = "1.0.0", repo_name = None)`
+
+	opts := ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: true,
+	}
+	result, err := resolveWithSelection(context.Background(), moduleContent, opts)
+	if err != nil {
+		t.Fatalf("resolveWithSelection() error = %v", err)
+	}
+
+	modules := map[string]bool{}
+	for _, m := range result.Resolved.Modules {
+		modules[m.Name] = true
+	}
+	if !modules["prod_parent"] {
+		t.Fatal("expected prod_parent in resolved modules")
+	}
+	if modules["nodep_target"] {
+		t.Fatal("nodep_target should not be selected when only referenced via nodep dep")
+	}
+}
+
 func TestResolveWithSelection_Overrides(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -290,6 +328,54 @@ single_version_override(module_name = "bazel_skylib", version = "1.5.0")`
 			}
 		}
 		t.Error("bazel_skylib should be in resolved modules")
+	})
+
+	t.Run("multiple_version_override keeps multiple selected versions", func(t *testing.T) {
+		mvoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/modules/a/1.0.0/MODULE.bazel":
+				fmt.Fprint(w, `module(name = "a", version = "1.0.0")
+bazel_dep(name = "shared", version = "1.0.0")`)
+			case "/modules/b/1.0.0/MODULE.bazel":
+				fmt.Fprint(w, `module(name = "b", version = "1.0.0")
+bazel_dep(name = "shared", version = "2.0.0")`)
+			case "/modules/shared/1.0.0/MODULE.bazel":
+				fmt.Fprint(w, `module(name = "shared", version = "1.0.0")`)
+			case "/modules/shared/2.0.0/MODULE.bazel":
+				fmt.Fprint(w, `module(name = "shared", version = "2.0.0")`)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer mvoServer.Close()
+
+		moduleContent := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "a", version = "1.0.0")
+bazel_dep(name = "b", version = "1.0.0")
+multiple_version_override(module_name = "shared", versions = ["1.0.0", "2.0.0"])`
+
+		opts := ResolutionOptions{
+			Registries:     []string{mvoServer.URL},
+			IncludeDevDeps: false,
+		}
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+
+		hasSharedV1 := false
+		hasSharedV2 := false
+		for _, m := range result.Resolved.Modules {
+			if m.Name == "shared" && m.Version == "1.0.0" {
+				hasSharedV1 = true
+			}
+			if m.Name == "shared" && m.Version == "2.0.0" {
+				hasSharedV2 = true
+			}
+		}
+		if !hasSharedV1 || !hasSharedV2 {
+			t.Fatalf("expected both shared@1.0.0 and shared@2.0.0, got modules: %+v", result.Resolved.Modules)
+		}
 	})
 
 	t.Run("git_override skips registry fetch", func(t *testing.T) {
@@ -521,6 +607,7 @@ func TestConvertOverrides(t *testing.T) {
 
 	overrides := []Override{
 		{Type: "single_version", ModuleName: "foo", Version: "1.0.0"},
+		{Type: "multiple_version", ModuleName: "mv", Versions: []string{"1.0.0", "2.0.0"}},
 		{Type: "git", ModuleName: "bar"},
 		{Type: "local_path", ModuleName: "baz", Path: localPath},
 		{Type: "archive", ModuleName: "qux"},
@@ -528,13 +615,18 @@ func TestConvertOverrides(t *testing.T) {
 
 	converted := convertOverrides(overrides)
 
-	if len(converted) != 4 {
-		t.Errorf("expected 4 overrides, got %d", len(converted))
+	if len(converted) != 5 {
+		t.Errorf("expected 5 overrides, got %d", len(converted))
 	}
 
 	// Check single_version
 	if _, ok := converted["foo"]; !ok {
 		t.Error("foo should be in converted overrides")
+	}
+	if mv, ok := converted["mv"].(*selection.MultipleVersionOverride); !ok {
+		t.Errorf("mv override type = %T, want *selection.MultipleVersionOverride", converted["mv"])
+	} else if len(mv.Versions) != 2 || mv.Versions[0] != "1.0.0" || mv.Versions[1] != "2.0.0" {
+		t.Errorf("mv versions = %v, want [1.0.0 2.0.0]", mv.Versions)
 	}
 
 	// Check non-registry overrides

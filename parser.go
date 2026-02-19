@@ -68,8 +68,9 @@ func parseModule(filename string, content []byte) (*ModuleInfo, error) {
 // See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
 func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 	info := &ModuleInfo{
-		Dependencies: []Dependency{},
-		Overrides:    []Override{},
+		Dependencies:      []Dependency{},
+		NodepDependencies: []Dependency{},
+		Overrides:         []Override{},
 	}
 
 	foundModule := false
@@ -133,6 +134,11 @@ func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 			if dep.Name == "" {
 				return nil, fmt.Errorf("bazel_dep requires name")
 			}
+			if buildutil.IsNone(call, "repo_name") {
+				dep.IsNodepDep = true
+				info.NodepDependencies = append(info.NodepDependencies, dep)
+				continue
+			}
 			info.Dependencies = append(info.Dependencies, dep)
 
 		// Reference: ModuleFileGlobals.singleVersionOverride() - lines 476-534
@@ -143,6 +149,19 @@ func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 				Type:       "single_version",
 				ModuleName: buildutil.String(call, "module_name"),
 				Version:    buildutil.String(call, "version"),
+				Registry:   buildutil.String(call, "registry"),
+			}
+			if override.ModuleName != "" {
+				info.Overrides = append(info.Overrides, override)
+			}
+
+		// Reference: ModuleFileGlobals.multipleVersionOverride()
+		case "multiple_version_override":
+			seenOtherDirective = true
+			override := Override{
+				Type:       "multiple_version",
+				ModuleName: buildutil.String(call, "module_name"),
+				Versions:   buildutil.StringList(call, "versions"),
 				Registry:   buildutil.String(call, "registry"),
 			}
 			if override.ModuleName != "" {

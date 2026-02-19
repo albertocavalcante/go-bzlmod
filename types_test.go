@@ -2,6 +2,7 @@ package gobzlmod
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -193,6 +194,15 @@ func TestOverride_JSONSerialization(t *testing.T) {
 				ModuleName: "archive_module",
 			},
 		},
+		{
+			name: "multiple_version override",
+			override: Override{
+				Type:       "multiple_version",
+				ModuleName: "multi_module",
+				Versions:   []string{"1.0.0", "2.0.0"},
+				Registry:   "https://registry.example.com",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -208,7 +218,7 @@ func TestOverride_JSONSerialization(t *testing.T) {
 				t.Fatalf("Failed to unmarshal Override: %v", err)
 			}
 
-			if restored != tt.override {
+			if !reflect.DeepEqual(restored, tt.override) {
 				t.Errorf("Override mismatch: got %+v, want %+v", restored, tt.override)
 			}
 		})

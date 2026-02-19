@@ -15,6 +15,7 @@ import (
 // Override type constants.
 const (
 	overrideTypeSingleVersion = "single_version"
+	overrideTypeMultiple      = "multiple_version"
 	overrideTypeGit           = "git"
 	overrideTypeLocalPath     = "local_path"
 	overrideTypeArchive       = "archive"
@@ -151,9 +152,11 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 
 	rootDeps := buildDepSpecs(rootModule.Dependencies, true)
 
+	rootNodepDeps := buildDepSpecs(rootModule.NodepDependencies, true)
 	modules[rootKey] = &selection.Module{
 		Key:         rootKey,
 		Deps:        rootDeps,
+		NodepDeps:   rootNodepDeps,
 		CompatLevel: rootModule.CompatibilityLevel,
 	}
 
@@ -203,6 +206,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 							return nil, fmt.Errorf("parse local_path override for %s: %w", dep.Name, err)
 						}
 						localDeps := buildDepSpecs(localModule.Dependencies, false)
+						localNodepDeps := buildDepSpecs(localModule.NodepDependencies, false)
 
 						mu.Lock()
 						if !visited[key] {
@@ -210,9 +214,16 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 							modules[key] = &selection.Module{
 								Key:         key,
 								Deps:        localDeps,
+								NodepDeps:   localNodepDeps,
 								CompatLevel: localModule.CompatibilityLevel,
 							}
 							for _, d := range localDeps {
+								dk := d.ToModuleKey()
+								if !visited[dk] {
+									queue = append(queue, d)
+								}
+							}
+							for _, d := range localNodepDeps {
 								dk := d.ToModuleKey()
 								if !visited[dk] {
 									queue = append(queue, d)
@@ -275,15 +286,23 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 				}
 
 				deps := buildDepSpecs(moduleInfo.Dependencies, false)
+				nodepDeps := buildDepSpecs(moduleInfo.NodepDependencies, false)
 
 				mu.Lock()
 				modules[k] = &selection.Module{
 					Key:         k,
 					Deps:        deps,
+					NodepDeps:   nodepDeps,
 					CompatLevel: moduleInfo.CompatibilityLevel,
 				}
 				// Add new deps to queue
 				for _, d := range deps {
+					dk := d.ToModuleKey()
+					if !visited[dk] {
+						queue = append(queue, d)
+					}
+				}
+				for _, d := range nodepDeps {
 					dk := d.ToModuleKey()
 					if !visited[dk] {
 						queue = append(queue, d)
@@ -329,12 +348,16 @@ func convertOverrides(overrides []Override) map[string]selection.Override {
 				Version:  o.Version,
 				Registry: o.Registry,
 			}
+		case overrideTypeMultiple:
+			result[o.ModuleName] = &selection.MultipleVersionOverride{
+				Versions: o.Versions,
+				Registry: o.Registry,
+			}
 		case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
 			result[o.ModuleName] = &selection.NonRegistryOverride{
 				Type: o.Type,
 				Path: o.Path,
 			}
-			// Note: multiple_version_override would need additional fields in gobzlmod.Override
 		}
 	}
 	return result

@@ -80,6 +80,24 @@ func Bool(call *build.CallExpr, name string) bool {
 	return false
 }
 
+// IsNone returns true if the named attribute exists and is set to None.
+func IsNone(call *build.CallExpr, name string) bool {
+	for _, arg := range call.List {
+		assign, ok := arg.(*build.AssignExpr)
+		if !ok {
+			continue
+		}
+		lhs, ok := assign.LHS.(*build.Ident)
+		if !ok || lhs.Name != name {
+			continue
+		}
+		if ident, ok := assign.RHS.(*build.Ident); ok {
+			return ident.Name == "None"
+		}
+	}
+	return false
+}
+
 // StringList extracts a list of strings attribute from a function call by name.
 // Returns nil if the attribute is not found or not a list.
 // Non-string elements in the list are silently skipped.

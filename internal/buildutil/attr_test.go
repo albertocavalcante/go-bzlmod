@@ -172,6 +172,44 @@ func TestBool(t *testing.T) {
 	}
 }
 
+func TestIsNone(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		attrName string
+		want     bool
+	}{
+		{
+			name:     "attribute is None",
+			input:    `foo(repo_name = None)`,
+			attrName: "repo_name",
+			want:     true,
+		},
+		{
+			name:     "attribute is string",
+			input:    `foo(repo_name = "x")`,
+			attrName: "repo_name",
+			want:     false,
+		},
+		{
+			name:     "attribute missing",
+			input:    `foo(name = "x")`,
+			attrName: "repo_name",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			call := parseCall(t, tt.input)
+			got := IsNone(call, tt.attrName)
+			if got != tt.want {
+				t.Errorf("IsNone() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStringList(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -841,6 +841,48 @@ bazel_dep(name = "transitive_dev", version = "1.0.0", dev_dependency = True)`)
 	}
 }
 
+func TestResolveDependencies_NodepDepRepoNameNoneHonoredOnlyWhenAlreadyPresent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_parent/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_parent", version = "1.0.0")`)
+		case "/modules/nodep_target/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "nodep_target", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	content := `module(name = "root", version = "1.0.0")
+bazel_dep(name = "prod_parent", version = "1.0.0")
+bazel_dep(name = "nodep_target", version = "1.0.0", repo_name = None)`
+	rootModule, err := ParseModuleContent(content)
+	if err != nil {
+		t.Fatalf("ParseModuleContent() error = %v", err)
+	}
+	if len(rootModule.NodepDependencies) != 1 {
+		t.Fatalf("expected 1 nodep dependency, got %d", len(rootModule.NodepDependencies))
+	}
+
+	resolver := newDependencyResolver(newRegistryClient(server.URL), true)
+	result, err := resolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	modules := map[string]bool{}
+	for _, m := range result.Modules {
+		modules[m.Name] = true
+	}
+	if !modules["prod_parent"] {
+		t.Fatal("expected prod_parent in resolved modules")
+	}
+	if modules["nodep_target"] {
+		t.Fatal("nodep_target should not be selected when only referenced via nodep dep")
+	}
+}
+
 func TestResolveDependencies_EmptyVersionWithoutNonRegistryOverrideFails(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()

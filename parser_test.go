@@ -3,6 +3,7 @@ package gobzlmod
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -83,17 +84,20 @@ func TestParseModuleContent(t *testing.T) {
 			
 			git_override(module_name = "gazelle")
 			local_path_override(module_name = "local_dep")
-			archive_override(module_name = "archive_dep")`,
+			archive_override(module_name = "archive_dep")
+			multiple_version_override(module_name = "multi_dep", versions = ["1.0.0", "1.2.0"])`,
 			want: &ModuleInfo{
 				Name:               "test_module",
 				Version:            "1.0.0",
 				CompatibilityLevel: 0,
 				Dependencies:       []Dependency{},
+				NodepDependencies:  []Dependency{},
 				Overrides: []Override{
 					{Type: "single_version", ModuleName: "rules_go", Version: "0.40.0", Registry: "https://bcr.bazel.build"},
 					{Type: "git", ModuleName: "gazelle"},
 					{Type: "local_path", ModuleName: "local_dep"},
 					{Type: "archive", ModuleName: "archive_dep"},
+					{Type: "multiple_version", ModuleName: "multi_dep", Versions: []string{"1.0.0", "1.2.0"}},
 				},
 			},
 			wantErr: false,
@@ -124,6 +128,26 @@ func TestParseModuleContent(t *testing.T) {
 				Overrides: []Override{
 					{Type: "single_version", ModuleName: "rules_go", Version: "0.40.0"},
 				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "repo_name none creates nodep dependency",
+			content: `module(name = "nodep_test", version = "1.0.0")
+
+			bazel_dep(name = "normal_dep", version = "1.0.0")
+			bazel_dep(name = "nodep_dep", version = "2.0.0", repo_name = None)`,
+			want: &ModuleInfo{
+				Name:               "nodep_test",
+				Version:            "1.0.0",
+				CompatibilityLevel: 0,
+				Dependencies: []Dependency{
+					{Name: "normal_dep", Version: "1.0.0", DevDependency: false},
+				},
+				NodepDependencies: []Dependency{
+					{Name: "nodep_dep", Version: "2.0.0", DevDependency: false, IsNodepDep: true},
+				},
+				Overrides: []Override{},
 			},
 			wantErr: false,
 		},
@@ -422,16 +446,16 @@ func moduleInfoEqual(a, b *ModuleInfo) bool {
 		}
 	}
 
-	if len(a.Overrides) != len(b.Overrides) {
+	if len(a.NodepDependencies) != len(b.NodepDependencies) {
 		return false
 	}
-	for i := range a.Overrides {
-		if a.Overrides[i] != b.Overrides[i] {
+	for i := range a.NodepDependencies {
+		if a.NodepDependencies[i] != b.NodepDependencies[i] {
 			return false
 		}
 	}
 
-	return true
+	return reflect.DeepEqual(a.Overrides, b.Overrides)
 }
 
 func TestExtractModuleInfo_EdgeCases(t *testing.T) {
@@ -447,9 +471,10 @@ func TestExtractModuleInfo_EdgeCases(t *testing.T) {
 single_version_override(version = "1.0.0")
 single_version_override(module_name = "valid_override", version = "1.0.0")`,
 			want: &ModuleInfo{
-				Name:         "test",
-				Version:      "1.0.0",
-				Dependencies: []Dependency{},
+				Name:              "test",
+				Version:           "1.0.0",
+				Dependencies:      []Dependency{},
+				NodepDependencies: []Dependency{},
 				Overrides: []Override{
 					{Type: "single_version", ModuleName: "valid_override", Version: "1.0.0"},
 				},
