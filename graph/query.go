@@ -291,10 +291,16 @@ func (g *Graph) Stats() GraphStats {
 
 func (g *Graph) calculateMaxDepth() int {
 	depths := make(map[ModuleKey]int)
+	onPath := make(map[ModuleKey]bool)
 	var maxDepth int
 
 	var dfs func(key ModuleKey, depth int)
 	dfs = func(key ModuleKey, depth int) {
+		// Follow Bazel's cycle-safe traversal pattern (ModExecutor.notCycle):
+		// if a node is already on the current DFS path, this edge is a cycle back-edge.
+		if onPath[key] {
+			return
+		}
 		if existingDepth, ok := depths[key]; ok && existingDepth >= depth {
 			return
 		}
@@ -308,9 +314,11 @@ func (g *Graph) calculateMaxDepth() int {
 			return
 		}
 
+		onPath[key] = true
 		for _, dep := range node.Dependencies {
 			dfs(dep, depth+1)
 		}
+		delete(onPath, key)
 	}
 
 	dfs(g.Root, 0)

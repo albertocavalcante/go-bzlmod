@@ -2,6 +2,8 @@ package graph
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -288,6 +290,34 @@ func TestGraph_Stats(t *testing.T) {
 	}
 	if stats.MaxDepth != 2 {
 		t.Errorf("MaxDepth: expected 2, got %d", stats.MaxDepth)
+	}
+}
+
+func TestGraph_Stats_CyclicGraphDoesNotCrash(t *testing.T) {
+	const helperEnv = "GO_BZLMOD_STATS_CYCLE_HELPER"
+	if os.Getenv(helperEnv) == "1" {
+		a := ModuleKey{Name: "a", Version: "1.0.0"}
+		b := ModuleKey{Name: "b", Version: "1.0.0"}
+		c := ModuleKey{Name: "c", Version: "1.0.0"}
+
+		cyclicGraph := Build(a, []SimpleModule{
+			{Name: "a", Version: "1.0.0", Dependencies: []ModuleKey{b}},
+			{Name: "b", Version: "1.0.0", Dependencies: []ModuleKey{a, c}},
+			{Name: "c", Version: "1.0.0", Dependencies: nil},
+		})
+
+		stats := cyclicGraph.Stats()
+		if stats.MaxDepth != 2 {
+			t.Fatalf("MaxDepth: expected 2, got %d", stats.MaxDepth)
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestGraph_Stats_CyclicGraphDoesNotCrash$")
+	cmd.Env = append(os.Environ(), helperEnv+"=1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Stats() crashed on cyclic graph: %v\n%s", err, output)
 	}
 }
 
