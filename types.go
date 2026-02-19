@@ -114,6 +114,9 @@ type Override struct {
 
 	// Registry overrides the registry URL for this module.
 	Registry string `json:"registry,omitempty"`
+
+	// Path is the local filesystem path for local_path overrides.
+	Path string `json:"path,omitempty"`
 }
 
 // ResolutionList contains the final resolved dependency set after MVS.

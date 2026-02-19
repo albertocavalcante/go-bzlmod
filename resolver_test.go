@@ -396,7 +396,7 @@ func TestBuildResolutionList(t *testing.T) {
 		},
 	}
 
-	moduleDeps := make(map[string][]string)        // Empty for this test
+	moduleDeps := make(map[string][]string)         // Empty for this test
 	moduleInfoCache := make(map[string]*ModuleInfo) // Empty for this test
 	list, err := resolver.buildResolutionList(context.Background(), selectedVersions, moduleDeps, moduleInfoCache, rootModule)
 	if err != nil {
@@ -744,6 +744,29 @@ func TestResolveDependencies_GitOverrideHydratesProvidedModule(t *testing.T) {
 	}
 	if fetchedLocal.Load() {
 		t.Fatal("Expected local_mod to be hydrated from override content without registry fetch")
+	}
+}
+
+func TestResolveDependencies_EmptyVersionWithoutNonRegistryOverrideFails(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	resolver := newDependencyResolver(newRegistryClient(server.URL), false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "no_version_dep"},
+		},
+	}
+
+	_, err := resolver.ResolveDependencies(context.Background(), rootModule)
+	if err == nil {
+		t.Fatal("ResolveDependencies() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "empty version and no non-registry override") {
+		t.Fatalf("ResolveDependencies() error = %q, want message about empty version without non-registry override", err.Error())
 	}
 }
 
@@ -1928,6 +1951,7 @@ func TestNodepDependencies_FieldExists(t *testing.T) {
 // - Round 1: Discover A, B, C, D (via regular deps)
 //   - Root's nodep on D is unfulfilled initially
 //   - But D gets discovered via C's regular dep
+//
 // - Round 2: D is now in the graph, so root's nodep on D can be fulfilled
 //
 // The nodep should participate in version selection.
@@ -2330,7 +2354,7 @@ bazel_dep(name = "shared", version = "1.0.0")`)
 	for _, m := range result.Modules {
 		if m.Name == "shared" {
 			if m.DevDependency {
-				t.Errorf("module 'shared' has DevDependency=true, want false: "+
+				t.Errorf("module 'shared' has DevDependency=true, want false: " +
 					"it is required as a production dep by lib_a")
 			}
 			return
@@ -2383,7 +2407,7 @@ func TestDevDependencyFlag_AllDevRequesters(t *testing.T) {
 	for _, m := range result.Modules {
 		if m.Name == "dev_only" {
 			if !m.DevDependency {
-				t.Errorf("module 'dev_only' has DevDependency=false, want true: "+
+				t.Errorf("module 'dev_only' has DevDependency=false, want true: " +
 					"it is only required via dev dependency paths")
 			}
 			return
@@ -2526,7 +2550,7 @@ func TestFindNonYankedVersion_NotYanked(t *testing.T) {
 // all workers were sending, leaving no receiver available.
 func TestResolveDependencies_WideFanoutDoesNotDeadlock(t *testing.T) {
 	const (
-		numBranches       = 5  // matches defaultMaxConcurrency
+		numBranches       = 5   // matches defaultMaxConcurrency
 		depsPerBranch     = 400 // total enqueue burst = 2000 (> minTaskBufferSize=100)
 		resolveTimeoutSec = 2
 	)

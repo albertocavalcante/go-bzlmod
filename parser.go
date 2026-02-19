@@ -130,8 +130,8 @@ func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 				RepoName:              buildutil.String(call, "repo_name"),
 				DevDependency:         buildutil.Bool(call, "dev_dependency"),
 			}
-			if dep.Name == "" || dep.Version == "" {
-				return nil, fmt.Errorf("bazel_dep requires name and version")
+			if dep.Name == "" {
+				return nil, fmt.Errorf("bazel_dep requires name")
 			}
 			info.Dependencies = append(info.Dependencies, dep)
 
@@ -168,6 +168,7 @@ func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 			override := Override{
 				Type:       "local_path",
 				ModuleName: buildutil.String(call, "module_name"),
+				Path:       buildutil.String(call, "path"),
 			}
 			if override.ModuleName != "" {
 				info.Overrides = append(info.Overrides, override)

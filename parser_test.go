@@ -53,6 +53,25 @@ func TestParseModuleContent(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "module with local path override and empty dep version",
+			content: `module(name = "root", version = "1.0.0")
+
+			bazel_dep(name = "local_dep")
+			local_path_override(module_name = "local_dep", path = "./local_dep")`,
+			want: &ModuleInfo{
+				Name:               "root",
+				Version:            "1.0.0",
+				CompatibilityLevel: 0,
+				Dependencies: []Dependency{
+					{Name: "local_dep", Version: "", DevDependency: false},
+				},
+				Overrides: []Override{
+					{Type: "local_path", ModuleName: "local_dep", Path: "./local_dep"},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "module with overrides",
 			content: `module(name = "test_module", version = "1.0.0")
 			
@@ -533,11 +552,11 @@ module(name = "test", version = "1.0.0")`,
 
 func TestParseModuleContent_BazelCompatibility(t *testing.T) {
 	tests := []struct {
-		name               string
-		content            string
-		wantErr            bool
-		errContains        string
-		wantCompatibility  []string
+		name              string
+		content           string
+		wantErr           bool
+		errContains       string
+		wantCompatibility []string
 	}{
 		{
 			name: "valid bazel_compatibility with >=",

@@ -499,6 +499,9 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 					skipFetch = true
 				}
 			}
+			if effectiveVersion == "" && !skipFetch {
+				return fmt.Errorf("bazel_dep(%s) has empty version and no non-registry override", dep.Name)
+			}
 
 			bc.mu.Lock()
 			if bc.depGraph[dep.Name] == nil {
