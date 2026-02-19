@@ -2517,3 +2517,83 @@ func TestFindNonYankedVersion_NotYanked(t *testing.T) {
 		t.Errorf("findNonYankedVersion() = %q, want \"1.0.0\" (not yanked)", result)
 	}
 }
+
+// TestResolveDependencies_WideFanoutDoesNotDeadlock ensures discovery doesn't deadlock
+// when workers concurrently enqueue many transitive dependencies.
+//
+// Regression test for channel producer/consumer deadlock in buildDependencyGraph:
+// workers both consumed and produced on a bounded channel, which could fill up while
+// all workers were sending, leaving no receiver available.
+func TestResolveDependencies_WideFanoutDoesNotDeadlock(t *testing.T) {
+	const (
+		numBranches       = 5  // matches defaultMaxConcurrency
+		depsPerBranch     = 400 // total enqueue burst = 2000 (> minTaskBufferSize=100)
+		resolveTimeoutSec = 2
+	)
+
+	moduleFiles := make(map[string]string)
+	var rootDeps []Dependency
+
+	for i := 0; i < numBranches; i++ {
+		branch := fmt.Sprintf("branch_%d", i)
+		rootDeps = append(rootDeps, Dependency{Name: branch, Version: "1.0.0"})
+
+		var branchModule strings.Builder
+		fmt.Fprintf(&branchModule, "module(name = %q, version = %q)\n", branch, "1.0.0")
+
+		for j := 0; j < depsPerBranch; j++ {
+			leaf := fmt.Sprintf("leaf_%d_%d", i, j)
+			fmt.Fprintf(&branchModule, "bazel_dep(name = %q, version = %q)\n", leaf, "1.0.0")
+
+			moduleFiles[fmt.Sprintf("/modules/%s/1.0.0/MODULE.bazel", leaf)] =
+				fmt.Sprintf("module(name = %q, version = %q)", leaf, "1.0.0")
+		}
+
+		moduleFiles[fmt.Sprintf("/modules/%s/1.0.0/MODULE.bazel", branch)] = branchModule.String()
+	}
+
+	var branchFetches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Barrier: wait until all branch modules are being fetched so workers fan out together.
+		if strings.HasPrefix(r.URL.Path, "/modules/branch_") && strings.HasSuffix(r.URL.Path, "/MODULE.bazel") {
+			branchFetches.Add(1)
+			start := time.Now()
+			for branchFetches.Load() < numBranches {
+				if r.Context().Err() != nil {
+					return
+				}
+				if time.Since(start) > 500*time.Millisecond {
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+
+		if content, ok := moduleFiles[r.URL.Path]; ok {
+			fmt.Fprint(w, content)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	resolver := newDependencyResolver(newRegistryClient(server.URL), false)
+	rootModule := &ModuleInfo{
+		Name:         "root",
+		Version:      "1.0.0",
+		Dependencies: rootDeps,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), resolveTimeoutSec*time.Second)
+	defer cancel()
+
+	result, err := resolver.ResolveDependencies(ctx, rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	wantTotal := numBranches + (numBranches * depsPerBranch)
+	if result.Summary.TotalModules != wantTotal {
+		t.Fatalf("Summary.TotalModules = %d, want %d", result.Summary.TotalModules, wantTotal)
+	}
+}

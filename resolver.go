@@ -406,10 +406,15 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 		path    []string
 	}
 
-	// Use a larger buffer to prevent deadlocks when many deps are added at once
-	// (e.g., MODULE.tools injection can add 8-14 dependencies depending on Bazel version)
-	bufferSize := max(len(module.Dependencies)*taskBufferMultiplier, minTaskBufferSize)
-	tasks := make(chan depTask, bufferSize)
+	// Unbounded task queue guarded by mutex/condition to avoid producer deadlocks.
+	// Workers both consume and discover new work; a bounded channel can deadlock when all
+	// workers are blocked sending and no receiver is available.
+	var (
+		queueMu    sync.Mutex
+		queueCond  = sync.NewCond(&queueMu)
+		taskQueue  []depTask
+		queueClose bool
+	)
 	var tasksWG sync.WaitGroup
 	var workersWG sync.WaitGroup
 
@@ -449,11 +454,15 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 		}
 
 		tasksWG.Add(1)
-		select {
-		case tasks <- depTask{name: depName, version: depVersion, path: depPath}:
-		case <-ctx.Done():
+		queueMu.Lock()
+		if queueClose || ctx.Err() != nil {
+			queueMu.Unlock()
 			tasksWG.Done()
+			return
 		}
+		taskQueue = append(taskQueue, depTask{name: depName, version: depVersion, path: depPath})
+		queueCond.Signal()
+		queueMu.Unlock()
 	}
 
 	var processDeps func(module *ModuleInfo, path []string) error
@@ -592,7 +601,19 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 	worker := func() {
 		defer workersWG.Done()
 		logger := r.log()
-		for task := range tasks {
+		for {
+			queueMu.Lock()
+			for len(taskQueue) == 0 && !queueClose {
+				queueCond.Wait()
+			}
+			if len(taskQueue) == 0 && queueClose {
+				queueMu.Unlock()
+				return
+			}
+			task := taskQueue[0]
+			taskQueue = taskQueue[1:]
+			queueMu.Unlock()
+
 			if ctx.Err() != nil {
 				tasksWG.Done()
 				continue
@@ -685,7 +706,10 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 
 	go func() {
 		tasksWG.Wait()
-		close(tasks)
+		queueMu.Lock()
+		queueClose = true
+		queueCond.Broadcast()
+		queueMu.Unlock()
 	}()
 
 	workersWG.Wait()
