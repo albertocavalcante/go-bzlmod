@@ -129,8 +129,31 @@ func (rc *registryChain) GetModuleFile(ctx context.Context, moduleName, version 
 	rc.moduleRegistryMu.RUnlock()
 
 	if found {
-		// We know which registry has this module, use it directly
-		return rc.clients[registryIdx].GetModuleFile(ctx, moduleName, version)
+		// Fast path: try the cached registry first.
+		moduleInfo, err := rc.clients[registryIdx].GetModuleFile(ctx, moduleName, version)
+		if err == nil {
+			return moduleInfo, nil
+		}
+
+		// If the cached registry can't serve this version, fallback to others.
+		// This improves resilience for partial mirrors/inconsistent registries.
+		notFoundErrors := []string{fmt.Sprintf("%s: %v", rc.clients[registryIdx].BaseURL(), err)}
+		for i, client := range rc.clients {
+			if i == registryIdx {
+				continue
+			}
+			moduleInfo, err := client.GetModuleFile(ctx, moduleName, version)
+			if err == nil {
+				return moduleInfo, nil
+			}
+			notFoundErrors = append(notFoundErrors, fmt.Sprintf("%s: %v", client.BaseURL(), err))
+		}
+
+		if len(notFoundErrors) == 1 {
+			return nil, fmt.Errorf("module %s@%s not found: %s", moduleName, version, notFoundErrors[0])
+		}
+		return nil, fmt.Errorf("module %s@%s not found in any registry:\n  - %s",
+			moduleName, version, strings.Join(notFoundErrors, "\n  - "))
 	}
 
 	// Try each registry in order to find the module

@@ -398,3 +398,47 @@ func TestRegistryChain_FallbackOnError(t *testing.T) {
 		t.Errorf("module_error should be mapped to second registry")
 	}
 }
+
+func TestRegistryChain_CachedRegistryVersionMissFallsBack(t *testing.T) {
+	// Registry 1 serves only module_x@2.0.0
+	reg1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/modules/module_x/2.0.0/MODULE.bazel") {
+			fmt.Fprint(w, `module(name = "module_x", version = "2.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer reg1.Close()
+
+	// Registry 2 serves only module_x@1.0.0
+	reg2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/modules/module_x/1.0.0/MODULE.bazel") {
+			fmt.Fprint(w, `module(name = "module_x", version = "1.0.0")`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer reg2.Close()
+
+	chain, err := newRegistryChain([]string{reg1.URL, reg2.URL})
+	if err != nil {
+		t.Fatalf("newRegistryChain() error = %v", err)
+	}
+	ctx := context.Background()
+
+	// First lookup caches module_x to registry 1.
+	_, err = chain.GetModuleFile(ctx, "module_x", "2.0.0")
+	if err != nil {
+		t.Fatalf("first lookup failed: %v", err)
+	}
+
+	// Second lookup requests a version missing from cached registry.
+	// Expected behavior: fallback to registry 2 rather than failing immediately.
+	info, err := chain.GetModuleFile(ctx, "module_x", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() should fallback on cached-registry miss, got error: %v", err)
+	}
+	if info.Name != "module_x" || info.Version != "1.0.0" {
+		t.Fatalf("GetModuleFile() = %s@%s, want module_x@1.0.0", info.Name, info.Version)
+	}
+}
