@@ -146,6 +146,59 @@ bazel_dep(name = "rules_testing", version = "0.1.0", dev_dependency = True)`
 	})
 }
 
+func TestResolveWithSelection_DevDeps_TransitiveDevMarkedCorrectly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_lib/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_lib", version = "1.0.0")`)
+		case "/modules/dev_tool/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dev_tool", version = "1.0.0")
+bazel_dep(name = "dev_helper", version = "1.0.0")`)
+		case "/modules/dev_helper/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "dev_helper", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	moduleContent := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "prod_lib", version = "1.0.0")
+bazel_dep(name = "dev_tool", version = "1.0.0", dev_dependency = True)`
+
+	opts := ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: true,
+	}
+
+	result, err := resolveWithSelection(context.Background(), moduleContent, opts)
+	if err != nil {
+		t.Fatalf("resolveWithSelection() error = %v", err)
+	}
+
+	modules := map[string]ModuleToResolve{}
+	for _, m := range result.Resolved.Modules {
+		modules[m.Name] = m
+	}
+
+	if !modules["dev_tool"].DevDependency {
+		t.Fatalf("dev_tool should be DevDependency=true, got false")
+	}
+	if !modules["dev_helper"].DevDependency {
+		t.Fatalf("dev_helper should be DevDependency=true (transitive dev-only), got false")
+	}
+	if modules["prod_lib"].DevDependency {
+		t.Fatalf("prod_lib should be DevDependency=false, got true")
+	}
+
+	if result.Resolved.Summary.DevModules != 2 {
+		t.Fatalf("Summary.DevModules = %d, want 2", result.Resolved.Summary.DevModules)
+	}
+	if result.Resolved.Summary.ProductionModules != 1 {
+		t.Fatalf("Summary.ProductionModules = %d, want 1", result.Resolved.Summary.ProductionModules)
+	}
+}
+
 func TestResolveWithSelection_Overrides(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

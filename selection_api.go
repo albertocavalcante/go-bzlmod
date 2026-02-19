@@ -299,13 +299,34 @@ func convertOverrides(overrides []Override) map[string]selection.Override {
 func (r *selectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo) (*selectionResult, error) {
 	defaultRegistry := r.registry.BaseURL()
 
-	// Build set of root's direct dev dependencies for tracking
+	// Build sets of root direct dependency types.
 	rootDevDeps := make(map[string]bool)
+	rootProdDeps := make(map[string]bool)
 	for _, dep := range rootModule.Dependencies {
 		if dep.DevDependency {
 			rootDevDeps[dep.Name] = true
+		} else {
+			rootProdDeps[dep.Name] = true
 		}
 	}
+
+	// Compute reachability from root's production and dev dependency fronts.
+	// A module is dev-only iff reachable from dev deps and not reachable from prod deps.
+	var prodStarts, devStarts []selection.ModuleKey
+	rootKey := selection.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}
+	if rootNode, ok := result.ResolvedGraph[rootKey]; ok {
+		for _, dep := range rootNode.Deps {
+			depKey := dep.ToModuleKey()
+			if rootProdDeps[dep.Name] {
+				prodStarts = append(prodStarts, depKey)
+			}
+			if rootDevDeps[dep.Name] && !rootProdDeps[dep.Name] {
+				devStarts = append(devStarts, depKey)
+			}
+		}
+	}
+	prodReachable := computeReachableKeys(result.ResolvedGraph, prodStarts)
+	devReachable := computeReachableKeys(result.ResolvedGraph, devStarts)
 
 	resolved := &ResolutionList{
 		Modules: make([]ModuleToResolve, 0, len(result.ResolvedGraph)),
@@ -335,9 +356,8 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 			}
 		}
 
-		// Check if this is a dev dependency (currently only tracks direct deps from root)
-		// TODO: Full dev dependency tracking requires graph reachability analysis
-		isDevDep := rootDevDeps[key.Name] && len(requiredBy) == 1 && requiredBy[0] == rootModule.Name+"@"+rootModule.Version
+		// Dev-only means reachable from root dev deps and not from root production deps.
+		isDevDep := devReachable[key] && !prodReachable[key]
 
 		resolved.Modules = append(resolved.Modules, ModuleToResolve{
 			Name:          key.Name,
@@ -441,4 +461,35 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		Unpruned: unpruned,
 		BFSOrder: bfsOrder,
 	}, nil
+}
+
+func computeReachableKeys(
+	graph map[selection.ModuleKey]*selection.Module,
+	starts []selection.ModuleKey,
+) map[selection.ModuleKey]bool {
+	reachable := make(map[selection.ModuleKey]bool, len(starts))
+	queue := make([]selection.ModuleKey, 0, len(starts))
+	for _, k := range starts {
+		if !reachable[k] {
+			reachable[k] = true
+			queue = append(queue, k)
+		}
+	}
+
+	for len(queue) > 0 {
+		key := queue[0]
+		queue = queue[1:]
+		module, ok := graph[key]
+		if !ok {
+			continue
+		}
+		for _, dep := range module.Deps {
+			depKey := dep.ToModuleKey()
+			if !reachable[depKey] {
+				reachable[depKey] = true
+				queue = append(queue, depKey)
+			}
+		}
+	}
+	return reachable
 }
