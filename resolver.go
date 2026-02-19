@@ -1084,8 +1084,10 @@ func (r *dependencyResolver) findNonYankedVersion(ctx context.Context, moduleNam
 	}
 	requestedCompatLevel := requestedModule.CompatibilityLevel
 
-	// Look through versions to find a non-yanked replacement
+	// Look through versions to find a non-yanked replacement.
+	// Sort to ensure we find the closest (lowest) valid replacement.
 	nonYankedVersions := metadata.NonYankedVersions()
+	version.Sort(nonYankedVersions)
 	for _, candidateVersion := range nonYankedVersions {
 		// Skip versions older than requested
 		if version.Compare(candidateVersion, requestedVersion) < 0 {

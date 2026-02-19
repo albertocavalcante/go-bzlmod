@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/albertocavalcante/go-bzlmod/registry"
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
 
@@ -2442,5 +2443,77 @@ bazel_dep(name = "shared", version = "1.0.0")`)
 	}
 	if result.Summary.DevModules != wantDev {
 		t.Errorf("Summary.DevModules = %d, want %d", result.Summary.DevModules, wantDev)
+	}
+}
+
+// TestFindNonYankedVersion_PicksClosestVersion tests that yanked version substitution
+// selects the closest (lowest) non-yanked replacement, not just the first one encountered
+// in an arbitrarily-ordered version list.
+//
+// Regression test for: findNonYankedVersion iterated NonYankedVersions() without sorting,
+// so an unsorted metadata.json Versions list could cause it to pick a much higher version
+// than necessary (e.g., 5.0.0 instead of 2.0.0).
+func TestFindNonYankedVersion_PicksClosestVersion(t *testing.T) {
+	// Mock registry with unsorted metadata.json versions.
+	// Requested version 1.0.0 is yanked. Non-yanked versions available:
+	//   5.0.0 (compat=0) - far from requested
+	//   2.0.0 (compat=0) - closest replacement
+	//   3.0.0 (compat=0)
+	// Metadata returns versions in arbitrary (non-ascending) order: [5.0.0, 2.0.0, 3.0.0]
+	// The correct replacement is 2.0.0 (closest >= 1.0.0 with same compat level).
+	mock := &mockRegistry{
+		getModuleMetadata: func(_ context.Context, name string) (*registry.Metadata, error) {
+			if name == "lib" {
+				return &registry.Metadata{
+					Versions:       []string{"1.0.0", "5.0.0", "2.0.0", "3.0.0"}, // unsorted
+					YankedVersions: map[string]string{"1.0.0": "security issue"},
+				}, nil
+			}
+			return nil, &RegistryError{StatusCode: 404}
+		},
+		getModuleFile: func(_ context.Context, name, ver string) (*ModuleInfo, error) {
+			if name == "lib" {
+				return &ModuleInfo{
+					Name:               name,
+					Version:            ver,
+					CompatibilityLevel: 0,
+				}, nil
+			}
+			return nil, &RegistryError{StatusCode: 404}
+		},
+	}
+
+	resolver := &dependencyResolver{
+		registry: mock,
+		options:  ResolutionOptions{SubstituteYanked: true},
+	}
+
+	ctx := context.Background()
+	replacement := resolver.findNonYankedVersion(ctx, "lib", "1.0.0")
+
+	if replacement != "2.0.0" {
+		t.Errorf("findNonYankedVersion() = %q, want \"2.0.0\" (closest non-yanked version)", replacement)
+	}
+}
+
+// TestFindNonYankedVersion_NotYanked tests that non-yanked versions are returned unchanged.
+func TestFindNonYankedVersion_NotYanked(t *testing.T) {
+	mock := &mockRegistry{
+		getModuleMetadata: func(_ context.Context, name string) (*registry.Metadata, error) {
+			return &registry.Metadata{
+				Versions: []string{"1.0.0", "2.0.0"},
+			}, nil
+		},
+	}
+
+	resolver := &dependencyResolver{
+		registry: mock,
+		options:  ResolutionOptions{SubstituteYanked: true},
+	}
+
+	ctx := context.Background()
+	result := resolver.findNonYankedVersion(ctx, "lib", "1.0.0")
+	if result != "1.0.0" {
+		t.Errorf("findNonYankedVersion() = %q, want \"1.0.0\" (not yanked)", result)
 	}
 }
