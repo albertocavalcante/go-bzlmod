@@ -71,7 +71,7 @@ func (v *vendorRegistry) GetModuleMetadata(ctx context.Context, moduleName strin
 		return v.synthesizeMetadata(moduleName)
 	}
 
-	return nil, err
+	return nil, fmt.Errorf("get vendor module metadata %s: %w", moduleName, err)
 }
 
 // GetModuleSource reads source.json from the vendor directory.
@@ -92,7 +92,7 @@ func (v *vendorRegistry) GetModuleSource(ctx context.Context, moduleName, versio
 		}, nil
 	}
 
-	return nil, err
+	return nil, fmt.Errorf("get vendor module source %s@%s: %w", moduleName, version, err)
 }
 
 // synthesizeMetadata creates a Metadata object by scanning the vendor directory
