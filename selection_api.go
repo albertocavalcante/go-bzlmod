@@ -288,6 +288,7 @@ func convertOverrides(overrides []Override) map[string]selection.Override {
 		case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
 			result[o.ModuleName] = &selection.NonRegistryOverride{
 				Type: o.Type,
+				Path: o.Path,
 			}
 			// Note: multiple_version_override would need additional fields in gobzlmod.Override
 		}

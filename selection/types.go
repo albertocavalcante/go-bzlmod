@@ -102,6 +102,9 @@ func (o *MultipleVersionOverride) isOverride() {}
 type NonRegistryOverride struct {
 	// Type is "git", "local_path", or "archive"
 	Type string
+
+	// Path is the local filesystem path for local_path overrides.
+	Path string
 }
 
 func (o *NonRegistryOverride) isOverride() {}

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/albertocavalcante/go-bzlmod/selection"
 )
 
 // resolveWithSelection is a test helper that mimics the old resolveWithSelection API.
@@ -387,7 +389,7 @@ func TestConvertOverrides(t *testing.T) {
 	overrides := []Override{
 		{Type: "single_version", ModuleName: "foo", Version: "1.0.0"},
 		{Type: "git", ModuleName: "bar"},
-		{Type: "local_path", ModuleName: "baz"},
+		{Type: "local_path", ModuleName: "baz", Path: "/tmp/baz"},
 		{Type: "archive", ModuleName: "qux"},
 	}
 
@@ -407,6 +409,14 @@ func TestConvertOverrides(t *testing.T) {
 		if _, ok := converted[name]; !ok {
 			t.Errorf("%s should be in converted overrides", name)
 		}
+	}
+
+	bazOverride, ok := converted["baz"].(*selection.NonRegistryOverride)
+	if !ok {
+		t.Fatalf("baz override type = %T, want *selection.NonRegistryOverride", converted["baz"])
+	}
+	if bazOverride.Path != "/tmp/baz" {
+		t.Fatalf("baz override path = %q, want %q", bazOverride.Path, "/tmp/baz")
 	}
 }
 
