@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/albertocavalcante/go-bzlmod/selection"
@@ -202,6 +205,52 @@ bazel_dep(name = "dev_tool", version = "1.0.0", dev_dependency = True)`
 	}
 }
 
+func TestResolveWithSelection_DevDeps_NonRootDevDepsIgnored(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_parent/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_parent", version = "1.0.0")
+bazel_dep(name = "transitive_dev", version = "1.0.0", dev_dependency = True)`)
+		case "/modules/root_dev/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "root_dev", version = "1.0.0")`)
+		case "/modules/transitive_dev/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "transitive_dev", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	moduleContent := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "prod_parent", version = "1.0.0")
+bazel_dep(name = "root_dev", version = "1.0.0", dev_dependency = True)`
+
+	opts := ResolutionOptions{
+		Registries:     []string{server.URL},
+		IncludeDevDeps: true,
+	}
+
+	result, err := resolveWithSelection(context.Background(), moduleContent, opts)
+	if err != nil {
+		t.Fatalf("resolveWithSelection() error = %v", err)
+	}
+
+	modules := map[string]ModuleToResolve{}
+	for _, m := range result.Resolved.Modules {
+		modules[m.Name] = m
+	}
+
+	if _, ok := modules["prod_parent"]; !ok {
+		t.Fatal("expected prod_parent in resolved modules")
+	}
+	if _, ok := modules["root_dev"]; !ok {
+		t.Fatal("expected root_dev in resolved modules")
+	}
+	if _, ok := modules["transitive_dev"]; ok {
+		t.Fatal("transitive_dev should be ignored because non-root dev_dependency is always ignored")
+	}
+}
+
 func TestResolveWithSelection_Overrides(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -260,6 +309,87 @@ git_override(module_name = "bazel_skylib", remote = "https://github.com/bazelbui
 		// Should resolve successfully even though we didn't mock bazel_skylib in registry
 		if result.Resolved == nil {
 			t.Error("should resolve with git_override")
+		}
+	})
+
+	t.Run("git_override forces empty version", func(t *testing.T) {
+		moduleContent := `module(name = "test", version = "1.0.0")
+bazel_dep(name = "local_mod", version = "0.0.0")
+git_override(module_name = "local_mod", remote = "https://example.com/local_mod.git", commit = "abc123")`
+
+		opts := ResolutionOptions{
+			Registries:     []string{server.URL},
+			IncludeDevDeps: false,
+		}
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+
+		for _, m := range result.Resolved.Modules {
+			if m.Name == "local_mod" {
+				if m.Version != "" {
+					t.Fatalf("local_mod version = %q, want empty version for non-registry override", m.Version)
+				}
+				return
+			}
+		}
+		t.Fatal("local_mod should be in resolved modules")
+	})
+
+	t.Run("local_path_override hydrates local module deps", func(t *testing.T) {
+		var fetchedLocal atomic.Int32
+
+		localModDir := t.TempDir()
+		localModContent := `module(name = "local_mod", version = "1.2.3")
+bazel_dep(name = "remote_dep", version = "1.0.0")`
+		if err := os.WriteFile(filepath.Join(localModDir, "MODULE.bazel"), []byte(localModContent), 0644); err != nil {
+			t.Fatalf("write local MODULE.bazel: %v", err)
+		}
+
+		localPath := filepath.ToSlash(localModDir)
+		moduleContent := fmt.Sprintf(`module(name = "test", version = "1.0.0")
+bazel_dep(name = "local_mod", version = "0.0.0")
+local_path_override(module_name = "local_mod", path = %q)`, localPath)
+
+		localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/modules/remote_dep/1.0.0/MODULE.bazel":
+				fmt.Fprint(w, `module(name = "remote_dep", version = "1.0.0")`)
+			default:
+				if strings.Contains(r.URL.Path, "/modules/local_mod/") {
+					fetchedLocal.Add(1)
+				}
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer localServer.Close()
+
+		opts := ResolutionOptions{
+			Registries:     []string{localServer.URL},
+			IncludeDevDeps: false,
+		}
+		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+
+		modules := map[string]ModuleToResolve{}
+		for _, m := range result.Resolved.Modules {
+			modules[m.Name] = m
+		}
+		localMod, ok := modules["local_mod"]
+		if !ok {
+			t.Fatal("local_mod should be in resolved modules")
+		}
+		if localMod.Version != "" {
+			t.Fatalf("local_mod version = %q, want empty version for non-registry override", localMod.Version)
+		}
+		if _, ok := modules["remote_dep"]; !ok {
+			t.Fatal("expected remote_dep from local override module")
+		}
+		if got := fetchedLocal.Load(); got != 0 {
+			t.Fatalf("expected no registry fetches for local_mod, got %d", got)
 		}
 	})
 }

@@ -673,8 +673,8 @@ func TestResolveDependencies_GitOverrideKeepsModuleWithoutRegistryFetch(t *testi
 	for _, mod := range list.Modules {
 		if mod.Name == "local_mod" {
 			found = true
-			if mod.Version != "1.0.0" {
-				t.Fatalf("Expected local_mod version 1.0.0, got %q", mod.Version)
+			if mod.Version != "" {
+				t.Fatalf("Expected local_mod version to be empty for non-registry override, got %q", mod.Version)
 			}
 			break
 		}
@@ -682,6 +682,53 @@ func TestResolveDependencies_GitOverrideKeepsModuleWithoutRegistryFetch(t *testi
 	if !found {
 		t.Fatal("Expected local_mod to remain in the resolution list")
 	}
+}
+
+func TestResolveDependencies_NonRegistryOverrideForcesEmptyVersion(t *testing.T) {
+	var fetchedLocal atomic.Bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/modules/local_mod/") {
+			fetchedLocal.Store(true)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	registry := newRegistryClient(server.URL)
+	resolver := newDependencyResolver(registry, false)
+
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "local_mod", Version: "0.0.0"},
+		},
+		Overrides: []Override{
+			{
+				Type:       "git",
+				ModuleName: "local_mod",
+			},
+		},
+	}
+
+	list, err := resolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	for _, mod := range list.Modules {
+		if mod.Name == "local_mod" {
+			if mod.Version != "" {
+				t.Fatalf("local_mod version = %q, want empty version for non-registry override", mod.Version)
+			}
+			if fetchedLocal.Load() {
+				t.Fatal("expected local_mod to not be fetched from registry for non-registry override")
+			}
+			return
+		}
+	}
+	t.Fatal("expected local_mod in resolved modules")
 }
 
 func TestResolveDependencies_GitOverrideHydratesProvidedModule(t *testing.T) {
@@ -736,14 +783,61 @@ func TestResolveDependencies_GitOverrideHydratesProvidedModule(t *testing.T) {
 		versions[mod.Name] = mod.Version
 	}
 
-	if got := versions["local_mod"]; got != "1.0.0" {
-		t.Fatalf("Expected local_mod version 1.0.0, got %q", got)
+	if got := versions["local_mod"]; got != "" {
+		t.Fatalf("Expected local_mod version to be empty for non-registry override, got %q", got)
 	}
 	if got := versions["dep"]; got != "1.0.0" {
 		t.Fatalf("Expected dep version 1.0.0, got %q", got)
 	}
 	if fetchedLocal.Load() {
 		t.Fatal("Expected local_mod to be hydrated from override content without registry fetch")
+	}
+}
+
+func TestResolveDependencies_TransitiveDevDepsIgnoredForNonRootModules(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/prod_parent/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "prod_parent", version = "1.0.0")
+bazel_dep(name = "transitive_dev", version = "1.0.0", dev_dependency = True)`)
+		case "/modules/root_dev/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "root_dev", version = "1.0.0")`)
+		case "/modules/transitive_dev/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "transitive_dev", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	resolver := newDependencyResolver(newRegistryClient(server.URL), true)
+	rootModule := &ModuleInfo{
+		Name:    "root",
+		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "prod_parent", Version: "1.0.0"},
+			{Name: "root_dev", Version: "1.0.0", DevDependency: true},
+		},
+	}
+
+	result, err := resolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	modules := make(map[string]ModuleToResolve, len(result.Modules))
+	for _, m := range result.Modules {
+		modules[m.Name] = m
+	}
+
+	if _, ok := modules["prod_parent"]; !ok {
+		t.Fatal("expected prod_parent in resolved modules")
+	}
+	if _, ok := modules["root_dev"]; !ok {
+		t.Fatal("expected root_dev in resolved modules")
+	}
+	if _, ok := modules["transitive_dev"]; ok {
+		t.Fatal("transitive_dev should be ignored because non-root dev_dependency is always ignored")
 	}
 }
 

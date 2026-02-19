@@ -467,10 +467,13 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 
 	var processDeps func(module *ModuleInfo, path []string) error
 	processDeps = func(module *ModuleInfo, path []string) error {
+		isRootModule := len(path) == 1 && path[0] == "<root>"
+
 		// Capture this module's dependencies for graph building (O(n) - just collect names)
 		var deps []string
 		for _, dep := range module.Dependencies {
-			if dep.DevDependency && !r.options.IncludeDevDeps {
+			// Match Bazel: non-root modules always ignore dev dependencies.
+			if dep.DevDependency && (!isRootModule || !r.options.IncludeDevDeps) {
 				continue
 			}
 			deps = append(deps, dep.Name)
@@ -483,7 +486,8 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 		}
 
 		for _, dep := range module.Dependencies {
-			if dep.DevDependency && !r.options.IncludeDevDeps {
+			// Match Bazel: non-root modules always ignore dev dependencies.
+			if dep.DevDependency && (!isRootModule || !r.options.IncludeDevDeps) {
 				continue
 			}
 
@@ -497,6 +501,8 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 					}
 				case "git", "local_path", "archive":
 					skipFetch = true
+					// Match Bazel: non-registry overrides use empty version.
+					effectiveVersion = ""
 				}
 			}
 			if effectiveVersion == "" && !skipFetch {
@@ -555,7 +561,8 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 		//
 		// Reference: Discovery.java lines 62-78
 		for _, nodepDep := range module.NodepDependencies {
-			if nodepDep.DevDependency && !r.options.IncludeDevDeps {
+			// Match Bazel: non-root modules always ignore dev dependencies.
+			if nodepDep.DevDependency && (!isRootModule || !r.options.IncludeDevDeps) {
 				continue
 			}
 
@@ -563,6 +570,10 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 			if override, ok := bc.overrides[nodepDep.Name]; ok {
 				if override.Type == "single_version" && override.Version != "" {
 					effectiveVersion = override.Version
+				}
+				if override.Type == "git" || override.Type == "local_path" || override.Type == "archive" {
+					// Match Bazel: non-registry overrides use empty version.
+					effectiveVersion = ""
 				}
 			}
 

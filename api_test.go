@@ -333,8 +333,8 @@ func TestResolveFromContent_WithOverrideModules(t *testing.T) {
 		versions[module.Name] = module.Version
 	}
 
-	if versions["local_mod"] != "1.0.0" {
-		t.Errorf("Expected local_mod version 1.0.0, got %s", versions["local_mod"])
+	if versions["local_mod"] != "" {
+		t.Errorf("Expected local_mod version to be empty for non-registry override, got %s", versions["local_mod"])
 	}
 	if versions["dep"] != "1.0.0" {
 		t.Errorf("Expected dep version 1.0.0, got %s", versions["dep"])

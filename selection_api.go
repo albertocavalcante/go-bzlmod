@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -95,28 +97,59 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 	modules := make(map[selection.ModuleKey]*selection.Module)
 	overrideIndex := indexOverrides(rootModule.Overrides)
 
+	buildDepSpecs := func(deps []Dependency, isRoot bool) []selection.DepSpec {
+		specs := make([]selection.DepSpec, 0, len(deps))
+		for _, dep := range deps {
+			// Match Bazel: non-root modules always ignore dev dependencies.
+			if dep.DevDependency && (!isRoot || !r.options.IncludeDevDeps) {
+				continue
+			}
+
+			depVersion := dep.Version
+			if override, ok := overrideIndex[dep.Name]; ok {
+				switch override.Type {
+				case overrideTypeSingleVersion:
+					if override.Version != "" {
+						depVersion = override.Version
+					}
+				case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
+					// Match Bazel: non-registry overrides use empty version.
+					depVersion = ""
+				}
+			}
+
+			maxCL := dep.MaxCompatibilityLevel
+			if maxCL == 0 {
+				maxCL = -1
+			}
+			specs = append(specs, selection.DepSpec{
+				Name:                  dep.Name,
+				Version:               depVersion,
+				MaxCompatibilityLevel: maxCL,
+			})
+		}
+		return specs
+	}
+
+	parseLocalPathOverrideModule := func(path string) (*ModuleInfo, error) {
+		moduleFile := path
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if info.IsDir() {
+			moduleFile = filepath.Join(path, "MODULE.bazel")
+		}
+		return ParseModuleFile(moduleFile)
+	}
+
 	// Create root module entry
 	rootKey := selection.ModuleKey{
 		Name:    rootModule.Name,
 		Version: rootModule.Version,
 	}
 
-	rootDeps := make([]selection.DepSpec, 0, len(rootModule.Dependencies))
-	for _, dep := range rootModule.Dependencies {
-		if dep.DevDependency && !r.options.IncludeDevDeps {
-			continue
-		}
-		// MaxCompatibilityLevel: 0 means not set in MODULE.bazel, use -1 for selection
-		maxCL := dep.MaxCompatibilityLevel
-		if maxCL == 0 {
-			maxCL = -1
-		}
-		rootDeps = append(rootDeps, selection.DepSpec{
-			Name:                  dep.Name,
-			Version:               dep.Version,
-			MaxCompatibilityLevel: maxCL,
-		})
-	}
+	rootDeps := buildDepSpecs(rootModule.Dependencies, true)
 
 	modules[rootKey] = &selection.Module{
 		Key:         rootKey,
@@ -159,6 +192,37 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 			if override, ok := overrideIndex[dep.Name]; ok {
 				switch override.Type {
 				case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
+					// Match Bazel: non-registry overrides resolve to empty version.
+					key = selection.ModuleKey{Name: dep.Name, Version: ""}
+
+					if override.Type == overrideTypeLocalPath && override.Path != "" {
+						localModule, err := parseLocalPathOverrideModule(override.Path)
+						if err != nil {
+							cancel()
+							wg.Wait()
+							return nil, fmt.Errorf("parse local_path override for %s: %w", dep.Name, err)
+						}
+						localDeps := buildDepSpecs(localModule.Dependencies, false)
+
+						mu.Lock()
+						if !visited[key] {
+							visited[key] = true
+							modules[key] = &selection.Module{
+								Key:         key,
+								Deps:        localDeps,
+								CompatLevel: localModule.CompatibilityLevel,
+							}
+							for _, d := range localDeps {
+								dk := d.ToModuleKey()
+								if !visited[dk] {
+									queue = append(queue, d)
+								}
+							}
+						}
+						mu.Unlock()
+						continue
+					}
+
 					mu.Lock()
 					if !visited[key] {
 						visited[key] = true
@@ -210,27 +274,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 					return
 				}
 
-				deps := make([]selection.DepSpec, 0, len(moduleInfo.Dependencies))
-				for _, d := range moduleInfo.Dependencies {
-					if d.DevDependency && !r.options.IncludeDevDeps {
-						continue
-					}
-					// Apply single_version_override to transitive deps
-					depVersion := d.Version
-					if override, ok := overrideIndex[d.Name]; ok && override.Type == overrideTypeSingleVersion && override.Version != "" {
-						depVersion = override.Version
-					}
-					// MaxCompatibilityLevel: 0 means not set, use -1 for selection
-					maxCL := d.MaxCompatibilityLevel
-					if maxCL == 0 {
-						maxCL = -1
-					}
-					deps = append(deps, selection.DepSpec{
-						Name:                  d.Name,
-						Version:               depVersion,
-						MaxCompatibilityLevel: maxCL,
-					})
-				}
+				deps := buildDepSpecs(moduleInfo.Dependencies, false)
 
 				mu.Lock()
 				modules[k] = &selection.Module{
