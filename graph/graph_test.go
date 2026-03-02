@@ -293,27 +293,33 @@ func TestGraph_Stats(t *testing.T) {
 	}
 }
 
-func TestGraph_Stats_CyclicGraphDoesNotCrash(t *testing.T) {
+func TestGraph_Stats_CyclicGraphWithDeeperReentryDoesNotCrash(t *testing.T) {
 	const helperEnv = "GO_BZLMOD_STATS_CYCLE_HELPER"
 	if os.Getenv(helperEnv) == "1" {
 		a := ModuleKey{Name: "a", Version: "1.0.0"}
 		b := ModuleKey{Name: "b", Version: "1.0.0"}
 		c := ModuleKey{Name: "c", Version: "1.0.0"}
+		d := ModuleKey{Name: "d", Version: "1.0.0"}
+		e := ModuleKey{Name: "e", Version: "1.0.0"}
+		f := ModuleKey{Name: "f", Version: "1.0.0"}
 
 		cyclicGraph := Build(a, []SimpleModule{
-			{Name: "a", Version: "1.0.0", Dependencies: []ModuleKey{b}},
-			{Name: "b", Version: "1.0.0", Dependencies: []ModuleKey{a, c}},
-			{Name: "c", Version: "1.0.0", Dependencies: nil},
+			{Name: "a", Version: "1.0.0", Dependencies: []ModuleKey{b, d}},
+			{Name: "b", Version: "1.0.0", Dependencies: []ModuleKey{c}},
+			{Name: "c", Version: "1.0.0", Dependencies: []ModuleKey{b, e}},
+			{Name: "d", Version: "1.0.0", Dependencies: []ModuleKey{f}},
+			{Name: "e", Version: "1.0.0", Dependencies: nil},
+			{Name: "f", Version: "1.0.0", Dependencies: []ModuleKey{c}},
 		})
 
 		stats := cyclicGraph.Stats()
-		if stats.MaxDepth != 2 {
-			t.Fatalf("MaxDepth: expected 2, got %d", stats.MaxDepth)
+		if stats.MaxDepth != 4 {
+			t.Fatalf("MaxDepth: expected 4, got %d", stats.MaxDepth)
 		}
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestGraph_Stats_CyclicGraphDoesNotCrash$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestGraph_Stats_CyclicGraphWithDeeperReentryDoesNotCrash$")
 	cmd.Env = append(os.Environ(), helperEnv+"=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {

@@ -1314,6 +1314,18 @@ bazel_dep(name = "cycle_a", version = "1.0.0")`
 			t.Errorf("Expected module %s in resolution list", expected)
 		}
 	}
+
+	if list.Graph == nil {
+		t.Fatal("Expected resolution graph to be populated")
+	}
+	if !list.Graph.HasCycles() {
+		t.Fatal("Expected resolution graph to retain the mutual dependency cycle")
+	}
+
+	stats := list.Graph.Stats()
+	if stats.MaxDepth != 2 {
+		t.Errorf("Expected max depth 2 for root -> cycle_a -> cycle_b, got %d", stats.MaxDepth)
+	}
 }
 
 // TestResolve_DiamondDependency tests diamond dependency resolution

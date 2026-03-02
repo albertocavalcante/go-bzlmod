@@ -304,6 +304,10 @@ func (g *Graph) calculateMaxDepth() int {
 		if existingDepth, ok := depths[key]; ok && existingDepth >= depth {
 			return
 		}
+
+		onPath[key] = true
+		defer delete(onPath, key)
+
 		depths[key] = depth
 		if depth > maxDepth {
 			maxDepth = depth
@@ -313,12 +317,9 @@ func (g *Graph) calculateMaxDepth() int {
 		if node == nil {
 			return
 		}
-
-		onPath[key] = true
 		for _, dep := range node.Dependencies {
 			dfs(dep, depth+1)
 		}
-		delete(onPath, key)
 	}
 
 	dfs(g.Root, 0)
