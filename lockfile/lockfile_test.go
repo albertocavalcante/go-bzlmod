@@ -1,6 +1,7 @@
 package lockfile
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -94,6 +95,67 @@ func TestLockfile_RegistryHash(t *testing.T) {
 	}
 }
 
+func TestLockfile_RegistryHashMissing(t *testing.T) {
+	lf := New()
+
+	url := "https://bcr.bazel.build/modules/missing/1.0.0/MODULE.bazel"
+	lf.SetMissingRegistryHash(url)
+
+	if !lf.HasRegistryHash(url) {
+		t.Fatal("HasRegistryHash should be true for recorded missing entries")
+	}
+	if !lf.IsRegistryHashMissing(url) {
+		t.Fatal("IsRegistryHashMissing should be true for recorded missing entries")
+	}
+	if got := lf.GetRegistryHash(url); got != "" {
+		t.Fatalf("GetRegistryHash = %q, want empty string for missing entry", got)
+	}
+
+	hash, ok := lf.GetRegistryHashValue(url)
+	if !ok {
+		t.Fatal("GetRegistryHashValue should report the entry as present")
+	}
+	if hash != nil {
+		t.Fatalf("GetRegistryHashValue = %q, want nil", *hash)
+	}
+
+	data, err := lf.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"https://bcr.bazel.build/modules/missing/1.0.0/MODULE.bazel": null`)) {
+		t.Fatalf("Marshal() = %s, want null registry hash entry", data)
+	}
+
+	restored, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if !restored.IsRegistryHashMissing(url) {
+		t.Fatal("parsed lockfile should preserve missing registry entries")
+	}
+}
+
+func TestFromResolution_UsesRawHexHashes(t *testing.T) {
+	lf := FromResolution([]ModuleResolution{
+		{
+			Name:              "rules_go",
+			Version:           "0.50.1",
+			RegistryURL:       "https://bcr.bazel.build",
+			ModuleFileContent: []byte("module(name = \"rules_go\", version = \"0.50.1\")"),
+		},
+	})
+
+	for url, hash := range lf.RegistryFileHashes {
+		if hash == nil {
+			t.Fatalf("RegistryFileHashes[%s] = nil, want hash", url)
+		}
+		if bytes.HasPrefix([]byte(*hash), []byte("sha256:")) {
+			t.Fatalf("RegistryFileHashes[%s] = %q, want raw hex without sha256 prefix", url, *hash)
+		}
+	}
+}
+
 func TestLockfile_YankedVersion(t *testing.T) {
 	lf := New()
 
@@ -166,8 +228,8 @@ func TestLockfile_JSONRoundTrip(t *testing.T) {
 			len(restored.RegistryFileHashes), len(original.RegistryFileHashes))
 	}
 	for url, hash := range original.RegistryFileHashes {
-		if restored.RegistryFileHashes[url] != hash {
-			t.Errorf("RegistryFileHashes[%s] = %q, want %q", url, restored.RegistryFileHashes[url], hash)
+		if !registryHashEqual(restored.RegistryFileHashes[url], hash) {
+			t.Errorf("RegistryFileHashes[%s] = %q, want %q", url, registryHashString(restored.RegistryFileHashes[url]), registryHashString(hash))
 		}
 	}
 }
@@ -282,19 +344,19 @@ func TestLockfile_Diff(t *testing.T) {
 	if len(diff.AddedHashes) != 1 {
 		t.Errorf("AddedHashes = %d, want 1", len(diff.AddedHashes))
 	}
-	if diff.AddedHashes["url3"] != "hash3" {
+	if !registryHashEqual(diff.AddedHashes["url3"], stringPointer("hash3")) {
 		t.Error("url3 should be in added")
 	}
 	if len(diff.RemovedHashes) != 1 {
 		t.Errorf("RemovedHashes = %d, want 1", len(diff.RemovedHashes))
 	}
-	if diff.RemovedHashes["url1"] != "hash1" {
+	if !registryHashEqual(diff.RemovedHashes["url1"], stringPointer("hash1")) {
 		t.Error("url1 should be in removed")
 	}
 	if len(diff.ChangedHashes) != 1 {
 		t.Errorf("ChangedHashes = %d, want 1", len(diff.ChangedHashes))
 	}
-	if diff.ChangedHashes["url2"] != [2]string{"hash2", "hash2_changed"} {
+	if got := diff.ChangedHashes["url2"]; !registryHashEqual(got[0], stringPointer("hash2")) || !registryHashEqual(got[1], stringPointer("hash2_changed")) {
 		t.Error("url2 should be in changed")
 	}
 }

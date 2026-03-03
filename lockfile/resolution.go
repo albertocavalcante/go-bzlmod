@@ -55,6 +55,20 @@ func FromResolution(modules []ModuleResolution) *Lockfile {
 	return lf
 }
 
+// FromRegistryFileHashes creates a lockfile from an existing Bazel-style
+// registry trace. Nil hash values are preserved as explicit "not found" entries.
+func FromRegistryFileHashes(registryFileHashes map[string]*string) *Lockfile {
+	lf := New()
+	for url, hash := range registryFileHashes {
+		if hash == nil {
+			lf.SetMissingRegistryHash(url)
+			continue
+		}
+		lf.SetRegistryHash(url, *hash)
+	}
+	return lf
+}
+
 // buildModuleFileURL constructs the full URL for a module's MODULE.bazel file.
 func buildModuleFileURL(registryURL, moduleName, version string) string {
 	// Normalize registry URL
@@ -72,7 +86,7 @@ func buildModuleFileURL(registryURL, moduleName, version string) string {
 // computeSHA256 computes the SHA256 hash of data and returns it as a hex string.
 func computeSHA256(data []byte) string {
 	h := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(h[:])
+	return hex.EncodeToString(h[:])
 }
 
 // Diff compares two lockfiles and returns the differences.
@@ -97,8 +111,8 @@ type Diff struct {
 // HashChange represents a hash change for a URL.
 type HashChange struct {
 	URL     string
-	OldHash string
-	NewHash string
+	OldHash *string
+	NewHash *string
 }
 
 // IsEmpty returns true if there are no differences.
@@ -112,18 +126,18 @@ func Compare(old, new *Lockfile) *Diff {
 	diff := &Diff{}
 
 	// Compare registry file hashes
-	oldURLs := make(map[string]string)
+	oldURLs := make(map[string]*string)
 	for url, hash := range old.RegistryFileHashes {
-		oldURLs[url] = hash
+		oldURLs[url] = cloneStringPointer(hash)
 	}
 
 	for url, newHash := range new.RegistryFileHashes {
 		if oldHash, exists := oldURLs[url]; exists {
-			if oldHash != newHash {
+			if !registryHashEqual(oldHash, newHash) {
 				diff.Changed = append(diff.Changed, HashChange{
 					URL:     url,
-					OldHash: oldHash,
-					NewHash: newHash,
+					OldHash: cloneStringPointer(oldHash),
+					NewHash: cloneStringPointer(newHash),
 				})
 			}
 			delete(oldURLs, url)

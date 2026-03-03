@@ -44,6 +44,7 @@ import (
 // By always falling back, we provide better resilience than Bazel itself.
 type registryChain struct {
 	clients []Registry
+	trace   *registryFileTrace
 
 	// moduleRegistry tracks which registry provides each module (by module name)
 	// Once a module is found in a registry, all versions come from that registry
@@ -94,13 +95,17 @@ func newRegistryChainWithOptions(registryURLs []string, httpClient *http.Client,
 // If timeout is positive, it overrides the httpClient's timeout.
 // If logger is nil, logging is disabled.
 func newRegistryChainWithAllOptions(registryURLs []string, httpClient *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) (*registryChain, error) {
+	return newRegistryChainWithAllOptionsAndTrace(registryURLs, httpClient, cache, timeout, logger, nil)
+}
+
+func newRegistryChainWithAllOptionsAndTrace(registryURLs []string, httpClient *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, trace *registryFileTrace) (*registryChain, error) {
 	if len(registryURLs) == 0 {
 		return nil, errors.New("no registry URLs provided")
 	}
 
 	clients := make([]Registry, 0, len(registryURLs))
 	for _, url := range registryURLs {
-		client, err := createRegistryClientWithAllOptions(url, httpClient, cache, timeout, logger)
+		client, err := createRegistryClientWithAllOptionsAndTrace(url, httpClient, cache, timeout, logger, trace)
 		if err != nil {
 			// Log error but continue with other registries
 			// In production, consider adding a warning mechanism
@@ -115,6 +120,7 @@ func newRegistryChainWithAllOptions(registryURLs []string, httpClient *http.Clie
 
 	return &registryChain{
 		clients:        clients,
+		trace:          trace,
 		moduleRegistry: make(map[string]int),
 	}, nil
 }
@@ -280,6 +286,26 @@ func (rc *registryChain) GetRegistryForModule(moduleName string) string {
 		return rc.clients[idx].BaseURL()
 	}
 	return ""
+}
+
+func (rc *registryChain) registryFileHashesSnapshot() map[string]*string {
+	if rc.trace != nil {
+		return rc.trace.snapshot()
+	}
+
+	var hashes map[string]*string
+	for _, client := range rc.clients {
+		provider, ok := client.(registryFileTraceProvider)
+		if !ok {
+			continue
+		}
+		hashes = mergeRegistryFileHashes(hashes, provider.registryFileHashesSnapshot())
+	}
+	return hashes
+}
+
+func (rc *registryChain) registryFileTrace() *registryFileTrace {
+	return rc.trace
 }
 
 // GetModuleSource fetches source.json using the registry that provides this module.

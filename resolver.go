@@ -139,10 +139,24 @@ func newDependencyResolverWithOptions(registry Registry, opts ResolutionOptions)
 
 	// Registries in options takes precedence
 	if len(opts.Registries) > 0 {
-		reg = registryWithAllOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger, opts.Registries...)
+		reg = registryWithAllOptionsAndTrace(
+			opts.HTTPClient,
+			opts.Cache,
+			opts.Timeout,
+			opts.Logger,
+			newRegistryTraceIfEnabled(opts.TraceRegistryFiles),
+			opts.Registries...,
+		)
 	} else if reg == nil {
 		// No registry provided and no Registries in options, use BCR default
-		reg = registryWithAllOptions(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger)
+		reg = registryWithAllOptionsAndTrace(
+			opts.HTTPClient,
+			opts.Cache,
+			opts.Timeout,
+			opts.Logger,
+			newRegistryTraceIfEnabled(opts.TraceRegistryFiles),
+			DefaultRegistries...,
+		)
 	}
 
 	// Prepend vendor registry if VendorDir is set
@@ -646,8 +660,16 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 			registryToUse := r.registry
 			if override, ok := bc.overrides[task.name]; ok && override.Registry != "" {
 				logger.Debug("using registry override", "name", task.name, "registry", override.Registry)
-				// Use the overridden registry for this specific module with the configured timeout
-				registryToUse = newRegistryClientWithTimeout(override.Registry, r.options.Timeout)
+				// Use the overridden registry for this specific module while sharing
+				// the trace collector with the main resolver registry.
+				registryToUse = registryWithAllOptionsAndTrace(
+					r.options.HTTPClient,
+					r.options.Cache,
+					r.options.Timeout,
+					r.options.Logger,
+					sharedRegistryFileTrace(r.registry),
+					override.Registry,
+				)
 			}
 
 			transitiveDep, err := registryToUse.GetModuleFile(ctx, task.name, task.version)
@@ -829,6 +851,7 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 	}
 
 	defaultRegistry := r.registry.BaseURL()
+	overridesByModule := overrideIndex(rootModule.Overrides)
 
 	// Build a set of selected module names for filtering dependencies
 	selectedNames := make(map[string]bool, len(selectedVersions))
@@ -859,15 +882,7 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 	moduleDepths := calculateModuleDepths(rootDeps, resolvedModuleDeps, selectedNames)
 
 	for moduleName, req := range selectedVersions {
-		registryURL := defaultRegistry
-
-		// Check for registry override in root module
-		for _, override := range rootModule.Overrides {
-			if override.ModuleName == moduleName && override.Registry != "" {
-				registryURL = override.Registry
-				break
-			}
-		}
+		registryURL := registryURLForModule(defaultRegistry, moduleName, overridesByModule)
 
 		// For multi-registry chains, get the actual registry that provided this module
 		if chain, ok := r.registry.(*registryChain); ok && registryURL == defaultRegistry {
@@ -1004,6 +1019,10 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 				fmt.Sprintf("direct dependency %s declared as %s but resolved to %s",
 					m.Name, m.DeclaredVersion, m.ResolvedVersion))
 		}
+	}
+
+	if err := enrichResolutionList(ctx, r.registry, r.options, rootModule.Overrides, list); err != nil {
+		return nil, err
 	}
 
 	// Build dependency graph - O(n) where n = number of modules

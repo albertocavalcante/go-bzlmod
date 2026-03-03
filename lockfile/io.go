@@ -31,7 +31,7 @@ func Parse(data []byte) (*Lockfile, error) {
 
 	// Initialize nil maps to empty maps for consistency
 	if lf.RegistryFileHashes == nil {
-		lf.RegistryFileHashes = make(map[string]string)
+		lf.RegistryFileHashes = make(map[string]*string)
 	}
 	if lf.SelectedYankedVersions == nil {
 		lf.SelectedYankedVersions = make(map[string]string)
@@ -90,7 +90,7 @@ func marshalDeterministic(l *Lockfile) ([]byte, error) {
 	// Create ordered representation
 	ordered := orderedLockfile{
 		Version:                l.Version,
-		RegistryFileHashes:     sortedStringMap(l.RegistryFileHashes),
+		RegistryFileHashes:     sortedNullableStringMap(l.RegistryFileHashes),
 		SelectedYankedVersions: sortedStringMap(l.SelectedYankedVersions),
 		ModuleExtensions:       sortedExtensions(l.ModuleExtensions),
 		Facts:                  sortedFacts(l.Facts),
@@ -108,11 +108,47 @@ func marshalDeterministic(l *Lockfile) ([]byte, error) {
 
 // orderedLockfile is used for deterministic JSON output.
 type orderedLockfile struct {
-	Version                int                  `json:"lockFileVersion"`
-	RegistryFileHashes     orderedStringMap     `json:"registryFileHashes"`
-	SelectedYankedVersions orderedStringMap     `json:"selectedYankedVersions"`
-	ModuleExtensions       orderedExtensionMap  `json:"moduleExtensions"`
-	Facts                  orderedRawMessageMap `json:"facts"`
+	Version                int                      `json:"lockFileVersion"`
+	RegistryFileHashes     orderedNullableStringMap `json:"registryFileHashes"`
+	SelectedYankedVersions orderedStringMap         `json:"selectedYankedVersions"`
+	ModuleExtensions       orderedExtensionMap      `json:"moduleExtensions"`
+	Facts                  orderedRawMessageMap     `json:"facts"`
+}
+
+// orderedNullableStringMap maintains insertion order for JSON marshaling.
+type orderedNullableStringMap struct {
+	keys   []string
+	values map[string]*string
+}
+
+func sortedNullableStringMap(m map[string]*string) orderedNullableStringMap {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return orderedNullableStringMap{keys: keys, values: m}
+}
+
+func (o orderedNullableStringMap) MarshalJSON() ([]byte, error) {
+	if len(o.keys) == 0 {
+		return []byte("{}"), nil
+	}
+
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range o.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyJSON, _ := json.Marshal(k)
+		valJSON, _ := json.Marshal(o.values[k])
+		buf.Write(keyJSON)
+		buf.WriteByte(':')
+		buf.Write(valJSON)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 // orderedStringMap maintains insertion order for JSON marshaling.

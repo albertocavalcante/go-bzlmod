@@ -17,8 +17,9 @@ type Lockfile struct {
 
 	// RegistryFileHashes maps registry URLs to their content hashes.
 	// Keys are full URLs like "https://bcr.bazel.build/modules/foo/1.0/MODULE.bazel".
-	// Values are SHA256 hashes of the file contents.
-	RegistryFileHashes map[string]string `json:"registryFileHashes"`
+	// Values are SHA256 hashes of the file contents. A nil value means the file
+	// was probed but not found, matching Bazel's lockfile semantics.
+	RegistryFileHashes map[string]*string `json:"registryFileHashes"`
 
 	// SelectedYankedVersions maps ModuleKey strings to yank reasons.
 	// These are yanked versions that were explicitly allowed.
@@ -113,7 +114,7 @@ func (k *ModuleKey) UnmarshalText(text []byte) error {
 func New() *Lockfile {
 	return &Lockfile{
 		Version:                CurrentVersion,
-		RegistryFileHashes:     make(map[string]string),
+		RegistryFileHashes:     make(map[string]*string),
 		SelectedYankedVersions: make(map[string]string),
 		ModuleExtensions:       make(map[string]ModuleExtensionEntry),
 		Facts:                  make(map[string]json.RawMessage),
@@ -123,20 +124,50 @@ func New() *Lockfile {
 // SetRegistryHash records the hash for a registry file URL.
 func (l *Lockfile) SetRegistryHash(url, hash string) {
 	if l.RegistryFileHashes == nil {
-		l.RegistryFileHashes = make(map[string]string)
+		l.RegistryFileHashes = make(map[string]*string)
 	}
-	l.RegistryFileHashes[url] = hash
+	l.RegistryFileHashes[url] = stringPointer(hash)
+}
+
+// SetMissingRegistryHash records that a registry file URL was probed but not found.
+func (l *Lockfile) SetMissingRegistryHash(url string) {
+	if l.RegistryFileHashes == nil {
+		l.RegistryFileHashes = make(map[string]*string)
+	}
+	l.RegistryFileHashes[url] = nil
 }
 
 // GetRegistryHash returns the recorded hash for a URL, or empty if not found.
+// It also returns an empty string for recorded "not found" entries.
 func (l *Lockfile) GetRegistryHash(url string) string {
-	return l.RegistryFileHashes[url]
+	hash := l.RegistryFileHashes[url]
+	if hash == nil {
+		return ""
+	}
+	return *hash
+}
+
+// GetRegistryHashValue returns the raw recorded value for a URL.
+// The bool reports whether the URL exists in the lockfile.
+func (l *Lockfile) GetRegistryHashValue(url string) (*string, bool) {
+	hash, ok := l.RegistryFileHashes[url]
+	if !ok {
+		return nil, false
+	}
+	return cloneStringPointer(hash), true
 }
 
 // HasRegistryHash returns true if a hash is recorded for the URL.
 func (l *Lockfile) HasRegistryHash(url string) bool {
 	_, ok := l.RegistryFileHashes[url]
 	return ok
+}
+
+// IsRegistryHashMissing returns true if the URL is present and explicitly
+// recorded as not found.
+func (l *Lockfile) IsRegistryHashMissing(url string) bool {
+	hash, ok := l.RegistryFileHashes[url]
+	return ok && hash == nil
 }
 
 // AllowYankedVersion records that a yanked version was explicitly allowed.
@@ -165,6 +196,19 @@ func (l *Lockfile) RegistryURLs() []string {
 		urls = append(urls, url)
 	}
 	return urls
+}
+
+func cloneStringPointer(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	value := *s
+	return &value
+}
+
+func stringPointer(s string) *string {
+	value := s
+	return &value
 }
 
 // ExtensionIDs returns all module extension identifiers in the lockfile.

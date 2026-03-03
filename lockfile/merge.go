@@ -68,11 +68,11 @@ func (l *Lockfile) mergeRegistryHashes(other *Lockfile, opts MergeOptions) error
 	for url, newHash := range other.RegistryFileHashes {
 		existing, exists := l.RegistryFileHashes[url]
 		if !exists {
-			l.RegistryFileHashes[url] = newHash
+			l.RegistryFileHashes[url] = cloneStringPointer(newHash)
 			continue
 		}
 
-		if existing == newHash {
+		if registryHashEqual(existing, newHash) {
 			continue
 		}
 
@@ -81,9 +81,9 @@ func (l *Lockfile) mergeRegistryHashes(other *Lockfile, opts MergeOptions) error
 		case MergePreferExisting:
 			// Keep existing
 		case MergePreferNew:
-			l.RegistryFileHashes[url] = newHash
+			l.RegistryFileHashes[url] = cloneStringPointer(newHash)
 		case MergeErrorOnConflict:
-			return fmt.Errorf("hash conflict for %s: existing=%s, new=%s", url, existing, newHash)
+			return fmt.Errorf("hash conflict for %s: existing=%s, new=%s", url, registryHashString(existing), registryHashString(newHash))
 		}
 	}
 	return nil
@@ -144,23 +144,23 @@ func (l *Lockfile) mergeFacts(other *Lockfile, opts MergeOptions) {
 // Diff returns the differences between two lockfiles.
 func (l *Lockfile) Diff(other *Lockfile) *LockfileDiff {
 	diff := &LockfileDiff{
-		AddedHashes:   make(map[string]string),
-		RemovedHashes: make(map[string]string),
-		ChangedHashes: make(map[string][2]string),
+		AddedHashes:   make(map[string]*string),
+		RemovedHashes: make(map[string]*string),
+		ChangedHashes: make(map[string][2]*string),
 	}
 
 	// Compare registry hashes
 	for url, hash := range other.RegistryFileHashes {
 		existing, exists := l.RegistryFileHashes[url]
 		if !exists {
-			diff.AddedHashes[url] = hash
-		} else if existing != hash {
-			diff.ChangedHashes[url] = [2]string{existing, hash}
+			diff.AddedHashes[url] = cloneStringPointer(hash)
+		} else if !registryHashEqual(existing, hash) {
+			diff.ChangedHashes[url] = [2]*string{cloneStringPointer(existing), cloneStringPointer(hash)}
 		}
 	}
 	for url, hash := range l.RegistryFileHashes {
 		if _, exists := other.RegistryFileHashes[url]; !exists {
-			diff.RemovedHashes[url] = hash
+			diff.RemovedHashes[url] = cloneStringPointer(hash)
 		}
 	}
 
@@ -180,9 +180,9 @@ type LockfileDiff struct {
 	OldVersion     int
 	NewVersion     int
 
-	AddedHashes   map[string]string
-	RemovedHashes map[string]string
-	ChangedHashes map[string][2]string // [old, new]
+	AddedHashes   map[string]*string
+	RemovedHashes map[string]*string
+	ChangedHashes map[string][2]*string // [old, new]
 }
 
 // IsEmpty returns true if there are no differences.
@@ -219,6 +219,20 @@ func (d *LockfileDiff) Summary() string {
 func HashContent(content []byte) string {
 	hash := sha256.Sum256(content)
 	return hex.EncodeToString(hash[:])
+}
+
+func registryHashEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func registryHashString(hash *string) string {
+	if hash == nil {
+		return "<missing>"
+	}
+	return *hash
 }
 
 // VerifyHash checks if content matches the expected hash.

@@ -182,6 +182,22 @@ func (vc *vendorChain) BaseURL() string {
 	return vc.remote.BaseURL()
 }
 
+func (vc *vendorChain) registryFileHashesSnapshot() map[string]*string {
+	provider, ok := vc.remote.(registryFileTraceProvider)
+	if !ok {
+		return nil
+	}
+	return provider.registryFileHashesSnapshot()
+}
+
+func (vc *vendorChain) registryFileTrace() *registryFileTrace {
+	carrier, ok := vc.remote.(registryFileTraceCarrier)
+	if !ok {
+		return nil
+	}
+	return carrier.registryFileTrace()
+}
+
 // GetModuleFile tries the vendor directory first, then falls back to remote.
 func (vc *vendorChain) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
 	// Check if the module exists in the vendor directory

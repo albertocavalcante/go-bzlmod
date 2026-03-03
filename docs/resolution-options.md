@@ -57,6 +57,27 @@ vendor/
 
 Reference: [`types.go:499-507`](../types.go#L499-L507), [Bazel vendor docs](https://bazel.build/external/vendor)
 
+### WithRegistryTrace
+
+```go
+gobzlmod.WithRegistryTrace()
+```
+
+Enables Bazel-style registry tracing during resolution.
+
+When enabled:
+
+- `ResolutionList.RegistryFileHashes` includes canonical registry URLs for
+  `MODULE.bazel`, `source.json`, and `bazel_registry.json`.
+- Hash values are raw SHA-256 hex digests.
+- Nil values mean the URL was probed but not found, matching Bazel's
+  `registryFileHashes` semantics for fallback misses.
+- `ModuleToResolve.Source` is populated for registry-backed modules.
+- `ResolutionList.ToLockfile()` can be used to convert the traced result into a
+  lockfile-compatible snapshot.
+
+This is the recommended mode for metadata-only mirroring and lockfile generation.
+
 ## Dependency Options
 
 ### WithDevDeps

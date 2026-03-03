@@ -41,10 +41,24 @@ func newSelectionResolver(registry Registry, opts ResolutionOptions) *selectionR
 
 	// Registries in options takes precedence
 	if len(opts.Registries) > 0 {
-		reg = RegistryClient(opts.Registries...)
+		reg = registryWithAllOptionsAndTrace(
+			opts.HTTPClient,
+			opts.Cache,
+			opts.Timeout,
+			opts.Logger,
+			newRegistryTraceIfEnabled(opts.TraceRegistryFiles),
+			opts.Registries...,
+		)
 	} else if reg == nil {
 		// No registry provided and no Registries in options, use BCR default
-		reg = RegistryClient()
+		reg = registryWithAllOptionsAndTrace(
+			opts.HTTPClient,
+			opts.Cache,
+			opts.Timeout,
+			opts.Logger,
+			newRegistryTraceIfEnabled(opts.TraceRegistryFiles),
+			DefaultRegistries...,
+		)
 	}
 
 	return &selectionResolver{
@@ -366,6 +380,7 @@ func convertOverrides(overrides []Override) map[string]selection.Override {
 // buildResult converts selection.Result to selectionResult.
 func (r *selectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo) (*selectionResult, error) {
 	defaultRegistry := r.registry.BaseURL()
+	overridesByModule := overrideIndex(rootModule.Overrides)
 
 	// Build sets of root direct dependency types.
 	rootDevDeps := make(map[string]bool)
@@ -406,13 +421,7 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 			continue
 		}
 
-		registryURL := defaultRegistry
-		for _, override := range rootModule.Overrides {
-			if override.ModuleName == key.Name && override.Registry != "" {
-				registryURL = override.Registry
-				break
-			}
-		}
+		registryURL := registryURLForModule(defaultRegistry, key.Name, overridesByModule)
 
 		requiredBy := make([]string, 0)
 		// Find who requires this module
@@ -497,6 +506,10 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		}
 	}
 
+	if err := enrichResolutionList(ctx, r.registry, r.options, rootModule.Overrides, resolved); err != nil {
+		return nil, err
+	}
+
 	// Build unpruned list
 	unpruned := &ResolutionList{
 		Modules: make([]ModuleToResolve, 0, len(result.UnprunedGraph)),
@@ -514,6 +527,7 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		return cmp.Compare(a.Name, b.Name)
 	})
 	unpruned.Summary.TotalModules = len(unpruned.Modules)
+	unpruned.RegistryFileHashes = cloneRegistryFileHashes(resolved.RegistryFileHashes)
 
 	// Build BFS order
 	bfsOrder := make([]string, 0, len(result.BFSOrder))

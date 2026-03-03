@@ -138,6 +138,16 @@ type ResolutionList struct {
 	// For example, yanked version warnings when YankedVersionWarn is used.
 	Warnings []string `json:"warnings,omitempty"`
 
+	// RegistryFileHashes records Bazel-style registry file accesses made during
+	// resolution when TraceRegistryFiles is enabled.
+	//
+	// Keys are canonical registry URLs for MODULE.bazel and source.json files.
+	// Values are SHA-256 hex digests of the fetched content.
+	// A nil value means the file was probed but not found in that registry,
+	// which matches Bazel's "not found" lockfile semantics for higher-priority
+	// registries that missed before a lower-priority registry succeeded.
+	RegistryFileHashes map[string]*string `json:"registry_file_hashes,omitempty"`
+
 	// Graph is the dependency graph for advanced queries.
 	// Use this for bazel mod graph/explain equivalent functionality.
 	// Supports: Explain(), Path(), AllPaths(), ToJSON(), ToDOT(), ToText()
@@ -197,7 +207,7 @@ type ModuleToResolve struct {
 	BazelIncompatibilityReason string `json:"bazel_incompatibility_reason,omitempty"`
 
 	// Source contains information about how to fetch this module's source code.
-	// This is populated when GetModuleSource is called.
+	// It is populated when TraceRegistryFiles is enabled.
 	// It can describe archive, git_repository, or local_path sources.
 	Source *SourceInfo `json:"source,omitempty"`
 }
@@ -462,6 +472,12 @@ type ResolutionOptions struct {
 	// WarnDeprecated enables warnings when deprecated modules are used.
 	// Default is false.
 	WarnDeprecated bool
+
+	// TraceRegistryFiles enables Bazel-style registry tracing.
+	// When enabled, ResolutionList.RegistryFileHashes is populated with the
+	// MODULE.bazel and source.json files touched during resolution, and
+	// ModuleToResolve.Source is hydrated for registry-backed modules.
+	TraceRegistryFiles bool
 
 	// DirectDepsMode controls validation of direct dependency versions.
 	// When enabled, checks if declared versions match resolved versions.

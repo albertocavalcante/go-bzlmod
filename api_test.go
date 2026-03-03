@@ -2,6 +2,8 @@ package gobzlmod
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +16,12 @@ import (
 	"testing"
 	"time"
 )
+
+func testSHA256Hex(data string) *string {
+	sum := sha256.Sum256([]byte(data))
+	hash := hex.EncodeToString(sum[:])
+	return &hash
+}
 
 func TestResolveFromFile_Success(t *testing.T) {
 	// Create mock server
@@ -706,6 +714,230 @@ bazel_dep(name = "module_b", version = "1.0.0")`
 			if m.Registry != server2.URL {
 				t.Errorf("module_b should come from server2, got %s", m.Registry)
 			}
+		}
+	}
+}
+
+func TestResolve_RegistryTraceIncludesBazelStyleRegistryFiles(t *testing.T) {
+	moduleA := `module(name = "module_a", version = "1.0.0")
+bazel_dep(name = "module_b", version = "1.0.0")`
+	moduleB := `module(name = "module_b", version = "1.0.0")`
+	sourceA := `{"url":"https://example.com/module_a-1.0.0.tar.gz","integrity":"sha256-aaa"}`
+	sourceB := `{"url":"https://example.com/module_b-1.0.0.tar.gz","integrity":"sha256-bbb"}`
+
+	// Higher-priority registry does not contain either module.
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server1.Close()
+
+	// Lower-priority registry serves the selected modules and their source.json files.
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/module_a/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, moduleA)
+		case "/modules/module_b/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, moduleB)
+		case "/modules/module_a/1.0.0/source.json":
+			fmt.Fprint(w, sourceA)
+		case "/modules/module_b/1.0.0/source.json":
+			fmt.Fprint(w, sourceB)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server2.Close()
+
+	ctx := context.Background()
+	result, err := Resolve(
+		ctx,
+		ContentSource(`module(name = "root", version = "1.0.0")
+bazel_dep(name = "module_a", version = "1.0.0")`),
+		WithRegistries(server1.URL, server2.URL),
+		WithRegistryTrace(),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	moduleANode := result.Module("module_a")
+	if moduleANode == nil {
+		t.Fatal("expected module_a in resolution result")
+	}
+	if moduleANode.Source == nil || moduleANode.Source.URL != "https://example.com/module_a-1.0.0.tar.gz" {
+		t.Fatalf("module_a source = %+v, want archive source info", moduleANode.Source)
+	}
+
+	moduleBNode := result.Module("module_b")
+	if moduleBNode == nil {
+		t.Fatal("expected module_b in resolution result")
+	}
+	if moduleBNode.Source == nil || moduleBNode.Source.URL != "https://example.com/module_b-1.0.0.tar.gz" {
+		t.Fatalf("module_b source = %+v, want archive source info", moduleBNode.Source)
+	}
+
+	expected := map[string]*string{
+		server1.URL + "/bazel_registry.json":                 nil,
+		server2.URL + "/bazel_registry.json":                 nil,
+		server1.URL + "/modules/module_a/1.0.0/MODULE.bazel": nil,
+		server1.URL + "/modules/module_b/1.0.0/MODULE.bazel": nil,
+		server2.URL + "/modules/module_a/1.0.0/MODULE.bazel": testSHA256Hex(moduleA),
+		server2.URL + "/modules/module_b/1.0.0/MODULE.bazel": testSHA256Hex(moduleB),
+		server2.URL + "/modules/module_a/1.0.0/source.json":  testSHA256Hex(sourceA),
+		server2.URL + "/modules/module_b/1.0.0/source.json":  testSHA256Hex(sourceB),
+	}
+
+	if len(result.RegistryFileHashes) != len(expected) {
+		t.Fatalf("RegistryFileHashes has %d entries, want %d", len(result.RegistryFileHashes), len(expected))
+	}
+
+	for url, want := range expected {
+		got, ok := result.RegistryFileHashes[url]
+		if !ok {
+			t.Fatalf("RegistryFileHashes missing %s", url)
+		}
+		if want == nil {
+			if got != nil {
+				t.Fatalf("RegistryFileHashes[%s] = %q, want nil", url, *got)
+			}
+			continue
+		}
+		if got == nil || *got != *want {
+			if got == nil {
+				t.Fatalf("RegistryFileHashes[%s] = nil, want %q", url, *want)
+			}
+			t.Fatalf("RegistryFileHashes[%s] = %q, want %q", url, *got, *want)
+		}
+	}
+}
+
+func TestResolve_RegistryTrace_RegistryOverrideUsesOverrideRegistry(t *testing.T) {
+	moduleContent := `module(name = "override_dep", version = "1.0.0")`
+	sourceContent := `{"url":"https://example.com/override_dep-1.0.0.tar.gz","integrity":"sha256-ccc"}`
+
+	baseRegistry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer baseRegistry.Close()
+
+	overrideRegistry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/override_dep/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, moduleContent)
+		case "/modules/override_dep/1.0.0/source.json":
+			fmt.Fprint(w, sourceContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer overrideRegistry.Close()
+
+	result, err := Resolve(
+		context.Background(),
+		ContentSource(fmt.Sprintf(`module(name = "root", version = "1.0.0")
+bazel_dep(name = "override_dep", version = "1.0.0")
+single_version_override(
+	module_name = "override_dep",
+	version = "1.0.0",
+	registry = %q,
+)`, overrideRegistry.URL)),
+		WithRegistries(baseRegistry.URL),
+		WithRegistryTrace(),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	mod := result.Module("override_dep")
+	if mod == nil {
+		t.Fatal("expected override_dep in resolution result")
+	}
+	if mod.Registry != overrideRegistry.URL {
+		t.Fatalf("override_dep registry = %q, want %q", mod.Registry, overrideRegistry.URL)
+	}
+	if mod.Source == nil || mod.Source.URL != "https://example.com/override_dep-1.0.0.tar.gz" {
+		t.Fatalf("override_dep source = %+v, want override registry source", mod.Source)
+	}
+
+	expected := map[string]*string{
+		overrideRegistry.URL + "/bazel_registry.json":                     nil,
+		overrideRegistry.URL + "/modules/override_dep/1.0.0/MODULE.bazel": testSHA256Hex(moduleContent),
+		overrideRegistry.URL + "/modules/override_dep/1.0.0/source.json":  testSHA256Hex(sourceContent),
+	}
+
+	if len(result.RegistryFileHashes) != len(expected) {
+		t.Fatalf("RegistryFileHashes has %d entries, want %d", len(result.RegistryFileHashes), len(expected))
+	}
+	for url, want := range expected {
+		got, ok := result.RegistryFileHashes[url]
+		if !ok {
+			t.Fatalf("RegistryFileHashes missing %s", url)
+		}
+		if want == nil {
+			if got != nil {
+				t.Fatalf("RegistryFileHashes[%s] = %q, want nil", url, *got)
+			}
+			continue
+		}
+		if got == nil || *got != *want {
+			if got == nil {
+				t.Fatalf("RegistryFileHashes[%s] = nil, want %q", url, *want)
+			}
+			t.Fatalf("RegistryFileHashes[%s] = %q, want %q", url, *got, *want)
+		}
+	}
+}
+
+func TestResolve_RegistryTrace_CacheHitUsesConfiguredModuleBasePath(t *testing.T) {
+	moduleContent := `module(name = "cached_dep", version = "1.0.0")`
+	sourceContent := `{"url":"https://example.com/cached_dep-1.0.0.tar.gz","integrity":"sha256-ddd"}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bazel_registry.json":
+			fmt.Fprint(w, `{"module_base_path":"custom_modules"}`)
+		case "/custom_modules/cached_dep/1.0.0/source.json":
+			fmt.Fprint(w, sourceContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cache := newMockCache()
+	cache.store["cached_dep@1.0.0"] = []byte(moduleContent)
+
+	result, err := Resolve(
+		context.Background(),
+		ContentSource(`module(name = "root", version = "1.0.0")
+bazel_dep(name = "cached_dep", version = "1.0.0")`),
+		WithRegistries(server.URL),
+		WithCache(cache),
+		WithRegistryTrace(),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	expected := map[string]*string{
+		server.URL + "/bazel_registry.json":                          testSHA256Hex(`{"module_base_path":"custom_modules"}`),
+		server.URL + "/custom_modules/cached_dep/1.0.0/MODULE.bazel": testSHA256Hex(moduleContent),
+		server.URL + "/custom_modules/cached_dep/1.0.0/source.json":  testSHA256Hex(sourceContent),
+	}
+
+	if len(result.RegistryFileHashes) != len(expected) {
+		t.Fatalf("RegistryFileHashes has %d entries, want %d", len(result.RegistryFileHashes), len(expected))
+	}
+	for url, want := range expected {
+		got, ok := result.RegistryFileHashes[url]
+		if !ok {
+			t.Fatalf("RegistryFileHashes missing %s", url)
+		}
+		if got == nil || *got != *want {
+			if got == nil {
+				t.Fatalf("RegistryFileHashes[%s] = nil, want %q", url, *want)
+			}
+			t.Fatalf("RegistryFileHashes[%s] = %q, want %q", url, *got, *want)
 		}
 	}
 }

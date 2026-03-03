@@ -13,6 +13,10 @@
 //   - moduleExtensions: Cached results of module extension evaluations
 //   - facts: Additional facts about module extensions
 //
+// registryFileHashes values are raw SHA-256 hex digests. A null value means a
+// registry file URL was probed but not found, which Bazel uses to record
+// fallback misses in higher-priority registries.
+//
 // # Usage
 //
 // Read an existing lockfile:
@@ -30,6 +34,14 @@
 //	if err := lf.WriteFile("MODULE.bazel.lock"); err != nil {
 //	    log.Fatal(err)
 //	}
+//
+// Create a lockfile from an existing registry trace:
+//
+//	trace := map[string]*string{
+//	    "https://bcr.bazel.build/modules/rules_go/0.50.1/MODULE.bazel": &hash,
+//	    "https://bcr.bazel.build/modules/missing/1.0.0/MODULE.bazel":   nil,
+//	}
+//	lf := lockfile.FromRegistryFileHashes(trace)
 //
 // # Compatibility
 //

@@ -19,6 +19,7 @@ A Go library for Bazel module dependency resolution. Implements [Minimal Version
 - **Vendor Support** — Resolve from local vendor directories
 - **MODULE.tools** — Inject Bazel's implicit dependencies ([bazeltools/](bazeltools/))
 - **Nodep Edges** — Parse `repo_name = None` and handle nodep discovery semantics
+- **Registry Trace** — Record Bazel-style `registryFileHashes` and source metadata
 
 ## Installation
 
@@ -104,6 +105,41 @@ result, err := gobzlmod.Resolve(ctx, src,
 
 See [Resolution Options](docs/resolution-options.md) for all options.
 
+## Registry Trace And Lockfile Export
+
+Enable registry tracing when you need Bazel-style registry metadata for mirroring
+or lockfile generation:
+
+```go
+result, err := gobzlmod.Resolve(ctx, src,
+    gobzlmod.WithRegistryTrace(),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for url, hash := range result.RegistryFileHashes {
+    if hash == nil {
+        fmt.Printf("%s -> not found\n", url)
+        continue
+    }
+    fmt.Printf("%s -> %s\n", url, *hash)
+}
+
+lf := result.ToLockfile()
+if err := lf.WriteFile("MODULE.bazel.lock"); err != nil {
+    log.Fatal(err)
+}
+```
+
+When `WithRegistryTrace()` is enabled:
+
+- `ResolutionList.RegistryFileHashes` records canonical `MODULE.bazel`, `source.json`,
+  and `bazel_registry.json` URLs touched during resolution.
+- Nil values represent explicit "not found" probes, matching Bazel's lockfile
+  semantics for higher-priority registries that miss before fallback succeeds.
+- `ModuleToResolve.Source` is populated for registry-backed modules.
+
 ## Dependency Graph
 
 Query the resolved graph ([graph/query.go](graph/query.go)):
@@ -149,7 +185,7 @@ See [Graph API](docs/graph-api.md) for complete documentation.
 | [`ast`](ast/)               | MODULE.bazel AST parsing                  |
 | [`graph`](graph/)           | Dependency graph construction and queries |
 | [`label`](label/)           | Bazel label parsing (`@repo//pkg:target`) |
-| [`lockfile`](lockfile/)     | `MODULE.bazel.lock` parsing               |
+| [`lockfile`](lockfile/)     | `MODULE.bazel.lock` parsing and generation |
 | [`registry`](registry/)     | Registry client and types                 |
 | [`selection`](selection/)   | MVS algorithm implementation              |
 | [`bazeltools`](bazeltools/) | MODULE.tools implicit dependencies        |

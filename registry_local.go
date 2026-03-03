@@ -238,6 +238,10 @@ func isFileURL(url string) bool {
 // If timeout is positive, it overrides the client's timeout (for remote registries).
 // If logger is nil, logging is disabled.
 func createRegistryClientWithAllOptions(url string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) (Registry, error) {
+	return createRegistryClientWithAllOptionsAndTrace(url, client, cache, timeout, logger, nil)
+}
+
+func createRegistryClientWithAllOptionsAndTrace(url string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, trace *registryFileTrace) (Registry, error) {
 	if isFileURL(url) {
 		path, err := parseFileURL(url)
 		if err != nil {
@@ -255,5 +259,5 @@ func createRegistryClientWithAllOptions(url string, client *http.Client, cache M
 	}
 
 	// Remote registry
-	return newRegistryClientWithAllOptions(url, client, cache, timeout, logger), nil
+	return newRegistryClientWithAllOptionsAndTrace(url, client, cache, timeout, logger, trace), nil
 }

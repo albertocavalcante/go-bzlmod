@@ -18,6 +18,7 @@ type resolverConfig struct {
 	checkYanked            bool
 	allowYankedVersions    []string
 	warnDeprecated         bool
+	traceRegistryFiles     bool
 	directDepsMode         DirectDepsCheckMode
 	substituteYanked       bool
 	bazelCompatibilityMode BazelCompatibilityMode
@@ -89,6 +90,20 @@ func WithAllowedYankedVersions(versions ...string) Option {
 func WithDeprecatedWarnings(warn bool) Option {
 	return func(c *resolverConfig) error {
 		c.warnDeprecated = warn
+		return nil
+	}
+}
+
+// WithRegistryTrace enables Bazel-style registry tracing.
+//
+// When enabled, resolution records the canonical registry URLs for MODULE.bazel
+// and source.json files accessed during resolution, including nil entries for
+// known-missing higher-priority registry files. The resulting trace is exposed
+// on ResolutionList.RegistryFileHashes, and ModuleToResolve.Source is populated
+// for registry-backed modules.
+func WithRegistryTrace() Option {
+	return func(c *resolverConfig) error {
+		c.traceRegistryFiles = true
 		return nil
 	}
 }
@@ -274,6 +289,7 @@ func (c *resolverConfig) toResolutionOptions() ResolutionOptions {
 		CheckYanked:            c.checkYanked,
 		AllowYankedVersions:    c.allowYankedVersions,
 		WarnDeprecated:         c.warnDeprecated,
+		TraceRegistryFiles:     c.traceRegistryFiles,
 		DirectDepsMode:         c.directDepsMode,
 		SubstituteYanked:       c.substituteYanked,
 		BazelCompatibilityMode: c.bazelCompatibilityMode,

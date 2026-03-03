@@ -95,10 +95,12 @@ type registryClient struct {
 	metadataCache sync.Map    // map[string]*registry.Metadata keyed by module name
 	externalCache ModuleCache // optional external cache for persistence across resolutions
 	logger        *slog.Logger
+	trace         *registryFileTrace
 
 	// Mirror configuration (fetched lazily from bazel_registry.json)
 	mirrors        []string
 	moduleBasePath string
+	mirrorsMu      sync.RWMutex
 	mirrorsOnce    sync.Once
 	mirrorsErr     error
 }
@@ -114,6 +116,14 @@ func (r *registryClient) log() *slog.Logger {
 // BaseURL returns the base URL of the registry (e.g., "https://bcr.bazel.build").
 func (r *registryClient) BaseURL() string {
 	return r.baseURL
+}
+
+func (r *registryClient) registryFileHashesSnapshot() map[string]*string {
+	return r.trace.snapshot()
+}
+
+func (r *registryClient) registryFileTrace() *registryFileTrace {
+	return r.trace
 }
 
 // loadMirrors fetches and caches the bazel_registry.json configuration.
@@ -141,6 +151,9 @@ func (r *registryClient) loadMirrors(ctx context.Context) {
 		if resp.StatusCode != http.StatusOK {
 			// Not an error - registry config is optional
 			logger.Debug("registry config not available", "status", resp.StatusCode)
+			if resp.StatusCode == http.StatusNotFound {
+				r.trace.recordMissing(url)
+			}
 			return
 		}
 
@@ -156,22 +169,35 @@ func (r *registryClient) loadMirrors(ctx context.Context) {
 			return
 		}
 
-		r.mirrors = config.Mirrors
-		if config.ModuleBasePath != "" {
-			r.moduleBasePath = config.ModuleBasePath
-		} else {
-			r.moduleBasePath = "modules"
+		r.trace.record(url, data)
+
+		moduleBasePath := config.ModuleBasePath
+		if moduleBasePath == "" {
+			moduleBasePath = "modules"
 		}
 
-		logger.Debug("loaded registry config", "mirrors", len(r.mirrors), "module_base_path", r.moduleBasePath)
+		r.mirrorsMu.Lock()
+		r.mirrors = append([]string(nil), config.Mirrors...)
+		r.moduleBasePath = moduleBasePath
+		r.mirrorsMu.Unlock()
+
+		logger.Debug("loaded registry config", "mirrors", len(config.Mirrors), "module_base_path", moduleBasePath)
 	})
 }
 
 // getModuleBasePath returns the module base path (defaults to "modules").
 func (r *registryClient) getModuleBasePath(ctx context.Context) string {
 	r.loadMirrors(ctx)
-	if r.moduleBasePath != "" {
-		return r.moduleBasePath
+	return r.currentModuleBasePath()
+}
+
+func (r *registryClient) currentModuleBasePath() string {
+	r.mirrorsMu.RLock()
+	moduleBasePath := r.moduleBasePath
+	r.mirrorsMu.RUnlock()
+
+	if moduleBasePath != "" {
+		return moduleBasePath
 	}
 	return "modules"
 }
@@ -179,7 +205,9 @@ func (r *registryClient) getModuleBasePath(ctx context.Context) string {
 // getMirrors returns the list of mirror URLs.
 func (r *registryClient) getMirrors(ctx context.Context) []string {
 	r.loadMirrors(ctx)
-	return r.mirrors
+	r.mirrorsMu.RLock()
+	defer r.mirrorsMu.RUnlock()
+	return append([]string(nil), r.mirrors...)
 }
 
 // fetchWithMirrors tries to fetch a path from the primary registry and falls back to mirrors.
@@ -378,6 +406,10 @@ func registryWithOptions(httpClient *http.Client, cache ModuleCache, timeout tim
 // If timeout is positive, it overrides the httpClient's timeout.
 // If logger is nil, logging is disabled.
 func registryWithAllOptions(httpClient *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, urls ...string) Registry {
+	return registryWithAllOptionsAndTrace(httpClient, cache, timeout, logger, nil, urls...)
+}
+
+func registryWithAllOptionsAndTrace(httpClient *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, trace *registryFileTrace, urls ...string) Registry {
 	log := logger
 	if log == nil {
 		log = slog.New(discardHandler{})
@@ -385,27 +417,27 @@ func registryWithAllOptions(httpClient *http.Client, cache ModuleCache, timeout 
 
 	if len(urls) == 0 {
 		// Use BCR + GitHub mirror for resilience
-		chain, err := newRegistryChainWithAllOptions(DefaultRegistries, httpClient, cache, timeout, logger)
+		chain, err := newRegistryChainWithAllOptionsAndTrace(DefaultRegistries, httpClient, cache, timeout, logger, trace)
 		if err != nil {
 			// This should never happen with DefaultRegistries, but fall back to BCR only
 			log.Warn("failed to create default registry chain, falling back to BCR only", "error", err)
-			return newRegistryClientWithAllOptions(DefaultRegistry, httpClient, cache, timeout, logger)
+			return newRegistryClientWithAllOptionsAndTrace(DefaultRegistry, httpClient, cache, timeout, logger, trace)
 		}
 		return chain
 	}
 	if len(urls) == 1 {
-		reg, err := createRegistryClientWithAllOptions(urls[0], httpClient, cache, timeout, logger)
+		reg, err := createRegistryClientWithAllOptionsAndTrace(urls[0], httpClient, cache, timeout, logger, trace)
 		if err != nil {
 			// Fall back to treating it as a remote URL if parsing fails
-			return newRegistryClientWithAllOptions(urls[0], httpClient, cache, timeout, logger)
+			return newRegistryClientWithAllOptionsAndTrace(urls[0], httpClient, cache, timeout, logger, trace)
 		}
 		return reg
 	}
-	chain, err := newRegistryChainWithAllOptions(urls, httpClient, cache, timeout, logger)
+	chain, err := newRegistryChainWithAllOptionsAndTrace(urls, httpClient, cache, timeout, logger, trace)
 	if err != nil {
 		// Fall back to treating URLs as remote registries without chain validation
 		log.Warn("failed to create registry chain, using first URL only", "error", err, "urls", urls)
-		return newRegistryClientWithAllOptions(urls[0], httpClient, cache, timeout, logger)
+		return newRegistryClientWithAllOptionsAndTrace(urls[0], httpClient, cache, timeout, logger, trace)
 	}
 	return chain
 }
@@ -418,14 +450,22 @@ func newRegistryClient(baseURL string) *registryClient {
 // newRegistryClientWithTimeout creates a registryClient with a custom timeout.
 // If timeout is zero or negative, uses defaultRequestTimeout (15 seconds).
 func newRegistryClientWithTimeout(baseURL string, timeout time.Duration) *registryClient {
-	return newRegistryClientWithHTTPClient(baseURL, nil, timeout)
+	return newRegistryClientWithTimeoutAndTrace(baseURL, timeout, nil)
+}
+
+func newRegistryClientWithTimeoutAndTrace(baseURL string, timeout time.Duration, trace *registryFileTrace) *registryClient {
+	return newRegistryClientWithHTTPClientAndTrace(baseURL, nil, timeout, trace)
 }
 
 // newRegistryClientWithHTTPClient creates a registryClient with an optional custom HTTP client.
 // If client is nil, creates a default client with connection pooling.
 // If timeout is positive, it overrides the client's timeout.
 func newRegistryClientWithHTTPClient(baseURL string, client *http.Client, timeout time.Duration) *registryClient {
-	return newRegistryClientWithOptions(baseURL, client, nil, timeout)
+	return newRegistryClientWithHTTPClientAndTrace(baseURL, client, timeout, nil)
+}
+
+func newRegistryClientWithHTTPClientAndTrace(baseURL string, client *http.Client, timeout time.Duration, trace *registryFileTrace) *registryClient {
+	return newRegistryClientWithOptionsAndTrace(baseURL, client, nil, timeout, trace)
 }
 
 // newRegistryClientWithOptions creates a registryClient with all optional parameters.
@@ -433,7 +473,11 @@ func newRegistryClientWithHTTPClient(baseURL string, client *http.Client, timeou
 // If cache is nil, no external caching is used.
 // If timeout is positive, it overrides the client's timeout.
 func newRegistryClientWithOptions(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration) *registryClient {
-	return newRegistryClientWithAllOptions(baseURL, client, cache, timeout, nil)
+	return newRegistryClientWithOptionsAndTrace(baseURL, client, cache, timeout, nil)
+}
+
+func newRegistryClientWithOptionsAndTrace(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration, trace *registryFileTrace) *registryClient {
+	return newRegistryClientWithAllOptionsAndTrace(baseURL, client, cache, timeout, nil, trace)
 }
 
 // newRegistryClientWithAllOptions creates a registryClient with all optional parameters including logger.
@@ -442,6 +486,10 @@ func newRegistryClientWithOptions(baseURL string, client *http.Client, cache Mod
 // If timeout is positive, it overrides the client's timeout.
 // If logger is nil, logging is disabled.
 func newRegistryClientWithAllOptions(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) *registryClient {
+	return newRegistryClientWithAllOptionsAndTrace(baseURL, client, cache, timeout, logger, nil)
+}
+
+func newRegistryClientWithAllOptionsAndTrace(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, trace *registryFileTrace) *registryClient {
 	if client == nil {
 		// Create default pooled client that honors HTTP_PROXY/HTTPS_PROXY env vars
 		transport := &http.Transport{
@@ -476,6 +524,7 @@ func newRegistryClientWithAllOptions(baseURL string, client *http.Client, cache 
 		client:        client,
 		externalCache: cache,
 		logger:        logger,
+		trace:         traceOrNew(trace),
 	}
 }
 
@@ -495,7 +544,15 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 		return cached.(*ModuleInfo), nil
 	}
 
-	// 2. Check external cache if configured
+	// 2. Check external cache if configured.
+	basePath := r.currentModuleBasePath()
+	if r.trace != nil && r.trace.enabled {
+		// When trace output is enabled, resolve the configured module_base_path
+		// first so the recorded MODULE.bazel URL matches the registry config.
+		basePath = r.getModuleBasePath(ctx)
+	}
+	path := fmt.Sprintf("%s/%s/%s/MODULE.bazel", basePath, moduleName, version)
+	url := r.baseURL + "/" + path
 	if r.externalCache != nil {
 		if data, found, err := r.externalCache.Get(ctx, moduleName, version); err == nil && found {
 			// Parse and validate the cached content
@@ -504,6 +561,7 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 				logger.Debug("module cache hit (external)", "name", moduleName, "version", version)
 				// Store in in-memory cache for faster subsequent access
 				r.cache.Store(cacheKey, moduleInfo)
+				r.trace.record(url, data)
 				return moduleInfo, nil
 			}
 			logger.Debug("external cache contained invalid content", "name", moduleName, "version", version, "error", err)
@@ -513,11 +571,13 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 	}
 
 	// 3. Fetch from registry (with mirror fallback)
-	basePath := r.getModuleBasePath(ctx)
-	path := fmt.Sprintf("%s/%s/%s/MODULE.bazel", basePath, moduleName, version)
-
+	path = fmt.Sprintf("%s/%s/%s/MODULE.bazel", basePath, moduleName, version)
+	url = r.baseURL + "/" + path
 	data, err := r.fetchWithMirrors(ctx, path, moduleName, version)
 	if err != nil {
+		if isNotFound(err) {
+			r.trace.recordMissing(url)
+		}
 		return nil, err
 	}
 
@@ -536,6 +596,7 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 
 	// 5. Store in in-memory cache
 	r.cache.Store(cacheKey, moduleInfo)
+	r.trace.record(url, data)
 	return moduleInfo, nil
 }
 
@@ -555,9 +616,13 @@ func (r *registryClient) GetModuleSource(ctx context.Context, moduleName, versio
 	// Fetch from registry (with mirror fallback)
 	basePath := r.getModuleBasePath(ctx)
 	path := fmt.Sprintf("%s/%s/%s/source.json", basePath, moduleName, version)
+	url := r.baseURL + "/" + path
 
 	data, err := r.fetchWithMirrors(ctx, path, moduleName, version)
 	if err != nil {
+		if isNotFound(err) {
+			r.trace.recordMissing(url)
+		}
 		return nil, err
 	}
 
@@ -570,6 +635,7 @@ func (r *registryClient) GetModuleSource(ctx context.Context, moduleName, versio
 
 	// Store in in-memory cache
 	r.cache.Store(cacheKey, &source)
+	r.trace.record(url, data)
 	return &source, nil
 }
 
