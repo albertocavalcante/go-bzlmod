@@ -2,6 +2,12 @@
 // These are the implicit dependencies that Bazel adds to every resolution.
 package bazeltools
 
+import (
+	"strings"
+
+	"github.com/albertocavalcante/go-bzlmod/selection/version"
+)
+
 // ToolDep represents a dependency from Bazel's MODULE.tools file.
 type ToolDep struct {
 	Name    string
@@ -14,6 +20,23 @@ type VersionConfig struct {
 	BazelVersion string
 	// Deps are the dependencies declared in MODULE.tools.
 	Deps []ToolDep
+}
+
+var bazel901Deps = []ToolDep{
+	{"rules_license", "1.0.0"},
+	{"buildozer", "8.5.1"},
+	{"platforms", "1.0.0"},
+	{"zlib", "1.3.1.bcr.5"},
+	{"bazel_features", "1.42.1"},
+	{"protobuf", "33.4"},
+	{"rules_java", "9.0.3"},
+	{"rules_cc", "0.2.17"},
+	{"rules_python", "1.7.0"},
+	{"rules_shell", "0.6.1"},
+	{"apple_support", "1.24.2"},
+	{"rules_apple", "4.1.0"},
+	{"rules_swift", "3.1.2"},
+	{"abseil-cpp", "20250814.1"},
 }
 
 // bazelConfigs maps Bazel versions to their MODULE.tools dependencies.
@@ -113,6 +136,14 @@ var bazelConfigs = map[string]VersionConfig{
 			{"abseil-cpp", "20250814.1"},
 		},
 	},
+	"9.0.1": {
+		BazelVersion: "9.0.1",
+		Deps:         bazel901Deps,
+	},
+	"9.0.2": {
+		BazelVersion: "9.0.2",
+		Deps:         bazel901Deps,
+	},
 }
 
 // GetConfig returns the MODULE.tools configuration for a Bazel version.
@@ -193,46 +224,52 @@ func ClosestVersion(version string) string {
 		return version
 	}
 
-	// Try major.minor.0 pattern - find the first two dots
-	// For "7.0.1" -> "7.0.0", for "7.1.2" -> "7.1.0"
-	if len(version) >= versionMinLenMajorMinor {
-		firstDot := -1
-		secondDot := -1
-		for i, c := range version {
-			if c == '.' {
-				if firstDot == -1 {
-					firstDot = i
-				} else {
-					secondDot = i
-					break
-				}
-			}
-		}
-		if firstDot > 0 && secondDot > firstDot {
-			majorMinor := version[:secondDot] + ".0" // e.g., "7.0.1" -> "7.0.0"
-			if _, ok := bazelConfigs[majorMinor]; ok {
-				return majorMinor
-			}
+	if prefix, ok := releasePrefix(version, 2); ok {
+		if closest := highestSupportedAtOrBelow(version, prefix+"."); closest != "" {
+			return closest
 		}
 	}
 
-	// Try major.0.0 pattern
-	if len(version) >= 1 {
-		// Find first dot to get major version
-		firstDot := -1
-		for i, c := range version {
-			if c == '.' {
-				firstDot = i
-				break
-			}
-		}
-		if firstDot > 0 {
-			major := version[:firstDot] + ".0.0" // e.g., "7.x.x" -> "7.0.0"
-			if _, ok := bazelConfigs[major]; ok {
-				return major
-			}
+	// Fall back to the .0 patch line for a major version.
+	// For example, "9.1.0" prefers the highest known "9.0.x" snapshot.
+	if prefix, ok := releasePrefix(version, 1); ok {
+		if closest := highestSupportedAtOrBelow(version, prefix+".0."); closest != "" {
+			return closest
 		}
 	}
 
 	return ""
+}
+
+func releasePrefix(v string, segments int) (string, bool) {
+	if segments <= 0 {
+		return "", false
+	}
+
+	release := v
+	if idx := strings.IndexAny(release, "-+"); idx >= 0 {
+		release = release[:idx]
+	}
+
+	parts := strings.Split(release, ".")
+	if len(parts) < segments {
+		return "", false
+	}
+	return strings.Join(parts[:segments], "."), true
+}
+
+func highestSupportedAtOrBelow(requested, prefix string) string {
+	best := ""
+	for supported := range bazelConfigs {
+		if !strings.HasPrefix(supported, prefix) {
+			continue
+		}
+		if version.Compare(supported, requested) > 0 {
+			continue
+		}
+		if best == "" || version.Compare(supported, best) > 0 {
+			best = supported
+		}
+	}
+	return best
 }

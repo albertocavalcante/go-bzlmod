@@ -12,7 +12,7 @@ import (
 
 // TestGetConfig_ValidVersions ensures all documented versions return configs
 func TestGetConfig_ValidVersions(t *testing.T) {
-	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "9.0.0"}
+	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "9.0.0", "9.0.1", "9.0.2"}
 
 	for _, v := range knownVersions {
 		cfg := GetConfig(v)
@@ -82,7 +82,7 @@ func TestGetConfig_UnicodeVersion(t *testing.T) {
 
 // TestGetDeps_ValidVersions tests GetDeps for known versions
 func TestGetDeps_ValidVersions(t *testing.T) {
-	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "9.0.0"}
+	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "9.0.0", "9.0.1", "9.0.2"}
 
 	for _, v := range knownVersions {
 		deps := GetDeps(v)
@@ -138,6 +138,35 @@ func TestLookupDeps_UsesClosestVersionFallback(t *testing.T) {
 func TestLookupDeps_UnknownVersion(t *testing.T) {
 	if deps := LookupDeps("10.0.0-head"); deps != nil {
 		t.Fatalf("LookupDeps(\"10.0.0-head\") = %v, want nil", deps)
+	}
+}
+
+func TestGetDeps_Bazel901MatchesUpstream(t *testing.T) {
+	want := []ToolDep{
+		{"rules_license", "1.0.0"},
+		{"buildozer", "8.5.1"},
+		{"platforms", "1.0.0"},
+		{"zlib", "1.3.1.bcr.5"},
+		{"bazel_features", "1.42.1"},
+		{"protobuf", "33.4"},
+		{"rules_java", "9.0.3"},
+		{"rules_cc", "0.2.17"},
+		{"rules_python", "1.7.0"},
+		{"rules_shell", "0.6.1"},
+		{"apple_support", "1.24.2"},
+		{"rules_apple", "4.1.0"},
+		{"rules_swift", "3.1.2"},
+		{"abseil-cpp", "20250814.1"},
+	}
+
+	if got := GetDeps("9.0.1"); !slices.Equal(got, want) {
+		t.Fatalf("GetDeps(\"9.0.1\") = %v, want %v", got, want)
+	}
+}
+
+func TestGetDeps_Bazel902MatchesUpstream(t *testing.T) {
+	if got, want := GetDeps("9.0.2"), GetDeps("9.0.1"); !slices.Equal(got, want) {
+		t.Fatalf("GetDeps(\"9.0.2\") = %v, want %v", got, want)
 	}
 }
 
@@ -206,7 +235,7 @@ func TestSupportedVersions_ContainsKnownVersions(t *testing.T) {
 	}
 
 	// These versions must exist (based on the implementation)
-	required := []string{"7.0.0", "8.0.0"}
+	required := []string{"7.0.0", "8.0.0", "9.0.2"}
 	for _, r := range required {
 		if !versionSet[r] {
 			t.Errorf("SupportedVersions() should include %q", r)
@@ -238,7 +267,9 @@ func TestClosestVersion_PatchVersion(t *testing.T) {
 		{"7.1.99", "7.1.0"},
 		{"7.2.5", "7.2.0"},
 		{"8.0.1", "8.0.0"},
-		{"9.0.1", "9.0.0"},
+		{"9.0.1", "9.0.1"},
+		{"9.0.2", "9.0.2"},
+		{"9.0.3", "9.0.2"},
 	}
 
 	for _, tc := range testCases {
@@ -258,7 +289,8 @@ func TestClosestVersion_MajorFallback(t *testing.T) {
 		{"7.5.0", "7.0.0"},  // No 7.5.0, fallback to 7.0.0
 		{"7.99.0", "7.0.0"}, // No 7.99.0, fallback to 7.0.0
 		{"8.5.0", "8.0.0"},  // No 8.5.0, fallback to 8.0.0
-		{"9.99.0", "9.0.0"}, // No 9.99.0, fallback to 9.0.0
+		{"9.1.0", "9.0.2"},  // No 9.1.0, fallback to highest known 9.0.x
+		{"9.99.0", "9.0.2"}, // No 9.99.0, fallback to highest known 9.0.x
 	}
 
 	for _, tc := range testCases {
@@ -496,6 +528,8 @@ func TestClosestVersion_RealWorldVersions(t *testing.T) {
 		{"8.1.0", true}, // Should fallback to 8.0.0
 		{"9.0.0", true},
 		{"9.0.1", true},
+		{"9.0.2", true},
+		{"9.0.3", true}, // Should fallback to 9.0.2
 		{"6.6.0", true},
 		{"6.6.1", true},  // Should fallback to 6.6.0
 		{"6.7.0", false}, // 6.7.0 will never exist - 6.6.0 is final (Bazel 6 EOL)
