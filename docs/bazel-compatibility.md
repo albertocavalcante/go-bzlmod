@@ -78,6 +78,10 @@ provide custom `MODULE.tools` data for new Bazel releases, forks, or HEAD
 builds. The callback can either replace the built-in mapping entirely or fall
 back to `bazeltools.LookupDeps(version)` when no custom match applies.
 
+If you only need to patch the resolved list, `WithBazelToolsTransformer(...)`
+lets you add, replace, or remove individual tool dependencies while preserving
+the rest of the resolved `MODULE.tools` data.
+
 Reference: [Bazel MODULE.tools](https://github.com/bazelbuild/bazel/blob/master/MODULE.tools), [`bazeltools/`](../bazeltools/)
 
 ## Field Version Requirements

@@ -212,6 +212,36 @@ Returning `nil` means no implicit `MODULE.tools` dependencies for that version.
 Use `bazeltools.LookupDeps(version)` inside the callback when you want to extend
 rather than replace the built-in mapping.
 
+### WithBazelToolsTransformer
+
+```go
+gobzlmod.WithBazelToolsTransformer(func(version string, deps []bazeltools.ToolDep) []bazeltools.ToolDep)
+```
+
+Post-processes implicit `MODULE.tools` dependencies after lookup/default
+resolution.
+
+Use this when you want to:
+
+- keep the built-in list but change one dependency version
+- add one or more fork-specific implicit dependencies
+- remove a dependency while preserving the rest of the list
+
+```go
+gobzlmod.WithBazelToolsTransformer(func(version string, deps []bazeltools.ToolDep) []bazeltools.ToolDep {
+    deps = bazeltools.SetToolDep(deps, bazeltools.ToolDep{
+        Name:    "rules_python",
+        Version: "0.40.1-fork.1",
+    })
+    deps = bazeltools.RemoveToolDep(deps, "buildozer")
+    return deps
+})
+```
+
+The resolver passes a cloned slice, so the transformer may safely mutate or
+replace it. Returning `nil` means no implicit `MODULE.tools` dependencies for
+that version.
+
 ### WithBazelCompatibilityMode
 
 ```go

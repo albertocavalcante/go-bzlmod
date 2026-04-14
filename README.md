@@ -139,6 +139,27 @@ result, err := gobzlmod.Resolve(ctx, src,
 If you want to fully replace the built-in mapping for a known Bazel version,
 return your fork-specific dependencies directly and skip the fallback.
 
+If you only want to patch the built-in or lookup-provided list, use
+`WithBazelToolsTransformer(...)` instead:
+
+```go
+result, err := gobzlmod.Resolve(ctx, src,
+    gobzlmod.WithBazelVersion("8.0.0"),
+    gobzlmod.WithBazelToolsTransformer(func(version string, deps []bazeltools.ToolDep) []bazeltools.ToolDep {
+        deps = bazeltools.SetToolDep(deps, bazeltools.ToolDep{
+            Name:    "rules_python",
+            Version: "0.40.1-fork.1",
+        })
+        deps = bazeltools.SetToolDep(deps, bazeltools.ToolDep{
+            Name:    "corp_internal_rules",
+            Version: "1.2.3",
+        })
+        deps = bazeltools.RemoveToolDep(deps, "buildozer")
+        return deps
+    }),
+)
+```
+
 ## Registry Trace And Lockfile Export
 
 Enable registry tracing when you need Bazel-style registry metadata for mirroring

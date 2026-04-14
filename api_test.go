@@ -210,6 +210,117 @@ func TestResolveContent_CustomBazelToolsLookupOverridesBuiltins(t *testing.T) {
 	}
 }
 
+func TestResolve_BazelToolsTransformerCanPatchLookupDeps(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/base_one/1.1.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "base_one", version = "1.1.0")`)
+		case "/modules/extra_dep/3.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "extra_dep", version = "3.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Resolve(
+		context.Background(),
+		ContentSource(`module(name = "root", version = "1.0.0")`),
+		WithRegistries(server.URL),
+		WithBazelVersion("8.0.0-custom.1"),
+		WithBazelToolsLookup(func(version string) []bazeltools.ToolDep {
+			if version != "8.0.0-custom.1" {
+				t.Fatalf("lookup version = %q, want %q", version, "8.0.0-custom.1")
+			}
+			return []bazeltools.ToolDep{
+				{Name: "base_one", Version: "1.0.0"},
+				{Name: "remove_me", Version: "2.0.0"},
+			}
+		}),
+		WithBazelToolsTransformer(func(version string, deps []bazeltools.ToolDep) []bazeltools.ToolDep {
+			if version != "8.0.0-custom.1" {
+				t.Fatalf("transformer version = %q, want %q", version, "8.0.0-custom.1")
+			}
+			deps = bazeltools.SetToolDep(deps, bazeltools.ToolDep{Name: "base_one", Version: "1.1.0"})
+			deps = bazeltools.RemoveToolDep(deps, "remove_me")
+			deps = bazeltools.SetToolDep(deps, bazeltools.ToolDep{Name: "extra_dep", Version: "3.0.0"})
+			return deps
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if len(result.Modules) != 2 {
+		t.Fatalf("len(result.Modules) = %d, want 2", len(result.Modules))
+	}
+
+	got := []string{
+		result.Modules[0].Name + "@" + result.Modules[0].Version,
+		result.Modules[1].Name + "@" + result.Modules[1].Version,
+	}
+	want := []string{"base_one@1.1.0", "extra_dep@3.0.0"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("resolved modules = %v, want %v", got, want)
+	}
+}
+
+func TestResolve_BazelToolsTransformerNilRemovesAllImplicitDeps(t *testing.T) {
+	result, err := Resolve(
+		context.Background(),
+		ContentSource(`module(name = "root", version = "1.0.0")`),
+		WithBazelVersion("9.9.9-custom"),
+		WithBazelToolsLookup(func(version string) []bazeltools.ToolDep {
+			return []bazeltools.ToolDep{{Name: "should_not_be_used", Version: "1.0.0"}}
+		}),
+		WithBazelToolsTransformer(func(version string, deps []bazeltools.ToolDep) []bazeltools.ToolDep {
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if len(result.Modules) != 0 {
+		t.Fatalf("len(result.Modules) = %d, want 0", len(result.Modules))
+	}
+}
+
+func TestResolve_BazelToolsTransformerReceivesClone(t *testing.T) {
+	baseDeps := []bazeltools.ToolDep{{Name: "base_dep", Version: "1.0.0"}}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/base_dep/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "base_dep", version = "2.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	_, err := Resolve(
+		context.Background(),
+		ContentSource(`module(name = "root", version = "1.0.0")`),
+		WithRegistries(server.URL),
+		WithBazelVersion("8.0.0-custom.2"),
+		WithBazelToolsLookup(func(version string) []bazeltools.ToolDep {
+			return baseDeps
+		}),
+		WithBazelToolsTransformer(func(version string, deps []bazeltools.ToolDep) []bazeltools.ToolDep {
+			deps[0].Version = "2.0.0"
+			return deps
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if baseDeps[0].Version != "1.0.0" {
+		t.Fatalf("lookup deps were mutated: %v", baseDeps)
+	}
+}
+
 func TestResolveFromFile_FileNotFound(t *testing.T) {
 	nonexistentFile := "/path/that/does/not/exist/MODULE.bazel"
 

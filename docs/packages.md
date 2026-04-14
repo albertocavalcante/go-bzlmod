@@ -155,6 +155,9 @@ deps := bazeltools.LookupDeps("7.0.1") // falls back to 7.0.0 built-in data
 for _, dep := range deps {
     fmt.Printf("%s@%s\n", dep.Name, dep.Version)
 }
+
+deps = bazeltools.SetToolDep(deps, bazeltools.ToolDep{Name: "rules_python", Version: "0.40.1-fork.1"})
+deps = bazeltools.RemoveToolDep(deps, "buildozer")
 ```
 
 Reference: [`bazeltools/`](../bazeltools/), [Bazel MODULE.tools](https://github.com/bazelbuild/bazel/blob/master/MODULE.tools)

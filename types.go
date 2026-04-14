@@ -515,6 +515,14 @@ type ResolutionOptions struct {
 	// fall back to bazeltools.LookupDeps(version) from inside the callback.
 	BazelToolsLookup BazelToolsLookup
 
+	// BazelToolsTransformer post-processes the implicit MODULE.tools dependencies
+	// for a Bazel version after BazelToolsLookup is applied.
+	//
+	// The resolver passes a cloned slice, so the transformer can safely mutate
+	// or replace it without affecting lookup-owned state. Returning nil means
+	// "no implicit MODULE.tools dependencies" for that version.
+	BazelToolsTransformer BazelToolsTransformer
+
 	// Registries is an ordered list of registry URLs to search for modules.
 	// When multiple registries are specified, modules are looked up in order.
 	// The first registry where a module is found is used for ALL versions of that module.
@@ -621,6 +629,12 @@ type ResolutionOptions struct {
 // The lookup receives the raw Bazel version string provided by the caller. Returning
 // nil means "no implicit MODULE.tools dependencies" for that version.
 type BazelToolsLookup func(version string) []bazeltools.ToolDep
+
+// BazelToolsTransformer modifies the implicit MODULE.tools dependencies for a Bazel version.
+//
+// The transformer receives the raw Bazel version string plus a cloned dependency slice.
+// Returning nil means "no implicit MODULE.tools dependencies" for that version.
+type BazelToolsTransformer func(version string, deps []bazeltools.ToolDep) []bazeltools.ToolDep
 
 // ModuleCache provides external caching for MODULE.bazel file contents.
 //

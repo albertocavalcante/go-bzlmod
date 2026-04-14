@@ -141,6 +141,42 @@ func TestLookupDeps_UnknownVersion(t *testing.T) {
 	}
 }
 
+func TestSetToolDep_ReplacesInPlaceOrAppends(t *testing.T) {
+	deps := []ToolDep{
+		{Name: "rules_cc", Version: "0.0.9"},
+		{Name: "platforms", Version: "0.0.10"},
+	}
+
+	deps = SetToolDep(deps, ToolDep{Name: "rules_cc", Version: "0.1.0"})
+	deps = SetToolDep(deps, ToolDep{Name: "extra", Version: "1.0.0"})
+
+	want := []ToolDep{
+		{Name: "rules_cc", Version: "0.1.0"},
+		{Name: "platforms", Version: "0.0.10"},
+		{Name: "extra", Version: "1.0.0"},
+	}
+	if !slices.Equal(deps, want) {
+		t.Fatalf("SetToolDep result = %v, want %v", deps, want)
+	}
+}
+
+func TestRemoveToolDep_PreservesOrder(t *testing.T) {
+	deps := []ToolDep{
+		{Name: "first", Version: "1.0.0"},
+		{Name: "remove", Version: "2.0.0"},
+		{Name: "last", Version: "3.0.0"},
+	}
+
+	got := RemoveToolDep(deps, "remove")
+	want := []ToolDep{
+		{Name: "first", Version: "1.0.0"},
+		{Name: "last", Version: "3.0.0"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("RemoveToolDep result = %v, want %v", got, want)
+	}
+}
+
 // TestSupportedVersions_NotEmpty ensures we have supported versions
 func TestSupportedVersions_NotEmpty(t *testing.T) {
 	versions := SupportedVersions()

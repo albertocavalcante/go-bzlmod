@@ -272,7 +272,12 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 	// Inject Bazel's MODULE.tools dependencies if a Bazel version is specified
 	if r.options.BazelVersion != "" {
 		logger.Debug("injecting MODULE.tools dependencies", "bazelVersion", r.options.BazelVersion)
-		injectBazelToolsDeps(rootModule, r.options.BazelVersion, r.options.BazelToolsLookup)
+		injectBazelToolsDeps(
+			rootModule,
+			r.options.BazelVersion,
+			r.options.BazelToolsLookup,
+			r.options.BazelToolsTransformer,
+		)
 	}
 
 	// Initialize graph build context with all state needed for traversal
@@ -1096,12 +1101,20 @@ func removeDependency(depGraph map[string]map[string]*depRequest, moduleName, mo
 
 // injectBazelToolsDeps adds Bazel's MODULE.tools dependencies to the root module.
 // This ensures resolution matches Bazel's behavior for a given version.
-func injectBazelToolsDeps(rootModule *ModuleInfo, bazelVersion string, lookup BazelToolsLookup) {
+func injectBazelToolsDeps(
+	rootModule *ModuleInfo,
+	bazelVersion string,
+	lookup BazelToolsLookup,
+	transformer BazelToolsTransformer,
+) {
 	if lookup == nil {
 		lookup = bazeltools.LookupDeps
 	}
 
 	deps := lookup(bazelVersion)
+	if transformer != nil {
+		deps = transformer(bazelVersion, slices.Clone(deps))
+	}
 	if deps == nil {
 		return
 	}

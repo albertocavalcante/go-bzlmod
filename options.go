@@ -24,6 +24,7 @@ type resolverConfig struct {
 	bazelCompatibilityMode BazelCompatibilityMode
 	bazelVersion           string
 	bazelToolsLookup       BazelToolsLookup
+	bazelToolsTransformer  BazelToolsTransformer
 	registries             []string
 	vendorDir              string
 	lockfileMode           LockfileMode
@@ -154,6 +155,20 @@ func WithBazelVersion(version string) Option {
 func WithBazelToolsLookup(lookup BazelToolsLookup) Option {
 	return func(c *resolverConfig) error {
 		c.bazelToolsLookup = lookup
+		return nil
+	}
+}
+
+// WithBazelToolsTransformer post-processes implicit MODULE.tools dependencies
+// after lookup/default resolution.
+//
+// This is useful when callers want to enrich or override the built-in data for
+// a Bazel version without replacing the entire lookup source. The transformer
+// receives a cloned slice and may safely mutate or replace it. Returning nil
+// means "no implicit MODULE.tools dependencies" for that version.
+func WithBazelToolsTransformer(transformer BazelToolsTransformer) Option {
+	return func(c *resolverConfig) error {
+		c.bazelToolsTransformer = transformer
 		return nil
 	}
 }
@@ -310,6 +325,7 @@ func (c *resolverConfig) toResolutionOptions() ResolutionOptions {
 		BazelCompatibilityMode: c.bazelCompatibilityMode,
 		BazelVersion:           c.bazelVersion,
 		BazelToolsLookup:       c.bazelToolsLookup,
+		BazelToolsTransformer:  c.bazelToolsTransformer,
 		Registries:             c.registries,
 		VendorDir:              c.vendorDir,
 		LockfileMode:           c.lockfileMode,

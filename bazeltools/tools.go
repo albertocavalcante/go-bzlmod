@@ -147,6 +147,29 @@ func LookupDeps(version string) []ToolDep {
 	return GetDeps(closestVersion)
 }
 
+// SetToolDep replaces a dependency with the same name while preserving its
+// position, or appends the dependency if the name is not present.
+func SetToolDep(deps []ToolDep, dep ToolDep) []ToolDep {
+	for i := range deps {
+		if deps[i].Name == dep.Name {
+			deps[i] = dep
+			return deps
+		}
+	}
+	return append(deps, dep)
+}
+
+// RemoveToolDep removes the dependency with the given name while preserving the
+// relative order of the remaining dependencies.
+func RemoveToolDep(deps []ToolDep, name string) []ToolDep {
+	for i := range deps {
+		if deps[i].Name == name {
+			return append(deps[:i], deps[i+1:]...)
+		}
+	}
+	return deps
+}
+
 // SupportedVersions returns all supported Bazel versions.
 func SupportedVersions() []string {
 	versions := make([]string, 0, len(bazelConfigs))
