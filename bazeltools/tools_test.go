@@ -123,6 +123,24 @@ func TestGetDeps_EmptyString(t *testing.T) {
 	}
 }
 
+func TestLookupDeps_UsesClosestVersionFallback(t *testing.T) {
+	deps := LookupDeps("7.0.9")
+	if deps == nil {
+		t.Fatal("LookupDeps(\"7.0.9\") returned nil, expected fallback deps")
+	}
+
+	exact := GetDeps("7.0.0")
+	if !slices.Equal(deps, exact) {
+		t.Fatalf("LookupDeps(\"7.0.9\") = %v, want %v", deps, exact)
+	}
+}
+
+func TestLookupDeps_UnknownVersion(t *testing.T) {
+	if deps := LookupDeps("10.0.0-head"); deps != nil {
+		t.Fatalf("LookupDeps(\"10.0.0-head\") = %v, want nil", deps)
+	}
+}
+
 // TestSupportedVersions_NotEmpty ensures we have supported versions
 func TestSupportedVersions_NotEmpty(t *testing.T) {
 	versions := SupportedVersions()

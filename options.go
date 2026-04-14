@@ -23,6 +23,7 @@ type resolverConfig struct {
 	substituteYanked       bool
 	bazelCompatibilityMode BazelCompatibilityMode
 	bazelVersion           string
+	bazelToolsLookup       BazelToolsLookup
 	registries             []string
 	vendorDir              string
 	lockfileMode           LockfileMode
@@ -139,6 +140,20 @@ func WithBazelCompatibilityMode(mode BazelCompatibilityMode) Option {
 func WithBazelVersion(version string) Option {
 	return func(c *resolverConfig) error {
 		c.bazelVersion = version
+		return nil
+	}
+}
+
+// WithBazelToolsLookup sets a custom MODULE.tools lookup for Bazel version emulation.
+//
+// The supplied lookup replaces the built-in mapping when resolving implicit
+// MODULE.tools dependencies. This allows callers to inject support for new
+// Bazel releases, custom forks, or HEAD builds without waiting for a library
+// update. To extend the built-in data instead of replacing it, call
+// bazeltools.LookupDeps(version) from inside the callback as a fallback.
+func WithBazelToolsLookup(lookup BazelToolsLookup) Option {
+	return func(c *resolverConfig) error {
+		c.bazelToolsLookup = lookup
 		return nil
 	}
 }
@@ -294,6 +309,7 @@ func (c *resolverConfig) toResolutionOptions() ResolutionOptions {
 		SubstituteYanked:       c.substituteYanked,
 		BazelCompatibilityMode: c.bazelCompatibilityMode,
 		BazelVersion:           c.bazelVersion,
+		BazelToolsLookup:       c.bazelToolsLookup,
 		Registries:             c.registries,
 		VendorDir:              c.vendorDir,
 		LockfileMode:           c.lockfileMode,

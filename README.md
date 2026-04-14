@@ -105,6 +105,40 @@ result, err := gobzlmod.Resolve(ctx, src,
 
 See [Resolution Options](docs/resolution-options.md) for all options.
 
+## Custom MODULE.tools Data
+
+By default, `WithBazelVersion(...)` uses the built-in `bazeltools` mapping for
+implicit `MODULE.tools` dependencies. If you need to support a newer Bazel
+release, a fork, or a moving HEAD build before this library is updated, provide
+your own lookup:
+
+```go
+import (
+    "strings"
+
+    "github.com/albertocavalcante/go-bzlmod"
+    "github.com/albertocavalcante/go-bzlmod/bazeltools"
+)
+
+result, err := gobzlmod.Resolve(ctx, src,
+    gobzlmod.WithBazelVersion("10.1.0-head.20260414"),
+    gobzlmod.WithBazelToolsLookup(func(version string) []bazeltools.ToolDep {
+        if strings.HasPrefix(version, "10.1.0-head.") {
+            return []bazeltools.ToolDep{
+                {Name: "rules_cc", Version: "0.1.1"},
+                {Name: "platforms", Version: "0.0.11"},
+            }
+        }
+
+        // Fall back to the built-in table for normal releases.
+        return bazeltools.LookupDeps(version)
+    }),
+)
+```
+
+If you want to fully replace the built-in mapping for a known Bazel version,
+return your fork-specific dependencies directly and skip the fallback.
+
 ## Registry Trace And Lockfile Export
 
 Enable registry tracing when you need Bazel-style registry metadata for mirroring

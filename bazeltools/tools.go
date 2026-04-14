@@ -134,6 +134,19 @@ func GetDeps(version string) []ToolDep {
 	return nil
 }
 
+// LookupDeps returns the MODULE.tools dependencies for a Bazel version using the
+// same closest-version fallback logic used by the resolver.
+//
+// For example, "7.0.1" resolves to the "7.0.0" data when that is the closest
+// built-in match. Returns nil if no built-in configuration matches.
+func LookupDeps(version string) []ToolDep {
+	closestVersion := ClosestVersion(version)
+	if closestVersion == "" {
+		return nil
+	}
+	return GetDeps(closestVersion)
+}
+
 // SupportedVersions returns all supported Bazel versions.
 func SupportedVersions() []string {
 	versions := make([]string, 0, len(bazelConfigs))

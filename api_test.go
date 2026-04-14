@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/albertocavalcante/go-bzlmod/bazeltools"
 )
 
 func testSHA256Hex(data string) *string {
@@ -121,6 +123,90 @@ func TestResolveFromFile_Success(t *testing.T) {
 				t.Errorf("Summary.TotalModules = %d, want %d", list.Summary.TotalModules, len(list.Modules))
 			}
 		})
+	}
+}
+
+func TestResolve_CustomBazelToolsLookupSupportsUnknownVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/custom_tools_dep/1.2.3/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "custom_tools_dep", version = "1.2.3")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Resolve(
+		context.Background(),
+		ContentSource(`module(name = "root", version = "1.0.0")`),
+		WithRegistries(server.URL),
+		WithBazelVersion("10.1.0-head.20260414"),
+		WithBazelToolsLookup(func(version string) []bazeltools.ToolDep {
+			if version != "10.1.0-head.20260414" {
+				t.Fatalf("lookup version = %q, want %q", version, "10.1.0-head.20260414")
+			}
+			return []bazeltools.ToolDep{{Name: "custom_tools_dep", Version: "1.2.3"}}
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if len(result.Modules) != 1 {
+		t.Fatalf("len(result.Modules) = %d, want 1", len(result.Modules))
+	}
+
+	got := result.Modules[0]
+	if got.Name != "custom_tools_dep" || got.Version != "1.2.3" {
+		t.Fatalf("resolved module = %s@%s, want custom_tools_dep@1.2.3", got.Name, got.Version)
+	}
+}
+
+func TestResolveContent_CustomBazelToolsLookupOverridesBuiltins(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+
+		switch r.URL.Path {
+		case "/modules/fork_only_dep/0.1.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "fork_only_dep", version = "0.1.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	result, err := ResolveContent(context.Background(), `module(name = "root", version = "1.0.0")`, ResolutionOptions{
+		Registries:   []string{server.URL},
+		BazelVersion: "7.0.0",
+		BazelToolsLookup: func(version string) []bazeltools.ToolDep {
+			if version != "7.0.0" {
+				t.Fatalf("lookup version = %q, want %q", version, "7.0.0")
+			}
+			return []bazeltools.ToolDep{{Name: "fork_only_dep", Version: "0.1.0"}}
+		},
+	})
+	if err != nil {
+		t.Fatalf("ResolveContent() error = %v", err)
+	}
+
+	if len(result.Modules) != 1 {
+		t.Fatalf("len(result.Modules) = %d, want 1", len(result.Modules))
+	}
+
+	got := result.Modules[0]
+	if got.Name != "fork_only_dep" || got.Version != "0.1.0" {
+		t.Fatalf("resolved module = %s@%s, want fork_only_dep@0.1.0", got.Name, got.Version)
+	}
+
+	if !slices.Contains(requests, "/modules/fork_only_dep/0.1.0/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, want fork_only_dep fetch", requests)
+	}
+	for _, request := range requests {
+		if strings.Contains(request, "/modules/rules_") || strings.Contains(request, "/modules/platforms/") {
+			t.Fatalf("registry requests = %v, unexpected built-in MODULE.tools fetch", requests)
+		}
 	}
 }
 

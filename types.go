@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/albertocavalcante/go-bzlmod/bazeltools"
 	"github.com/albertocavalcante/go-bzlmod/graph"
 )
 
@@ -503,6 +504,17 @@ type ResolutionOptions struct {
 	// Default is empty (no MODULE.tools deps included).
 	BazelVersion string
 
+	// BazelToolsLookup resolves the MODULE.tools dependencies for a Bazel version.
+	// When nil, the built-in bazeltools package data is used.
+	//
+	// This allows callers to support Bazel versions newer than the library knows
+	// about, custom Bazel forks, or HEAD/prerelease builds without modifying this
+	// library. The function receives the raw BazelVersion string.
+	//
+	// Callers that want to extend, rather than replace, the built-in data can
+	// fall back to bazeltools.LookupDeps(version) from inside the callback.
+	BazelToolsLookup BazelToolsLookup
+
 	// Registries is an ordered list of registry URLs to search for modules.
 	// When multiple registries are specified, modules are looked up in order.
 	// The first registry where a module is found is used for ALL versions of that module.
@@ -603,6 +615,12 @@ type ResolutionOptions struct {
 	// If nil, logging is disabled. Uses log/slog for backend flexibility.
 	Logger *slog.Logger
 }
+
+// BazelToolsLookup resolves Bazel's implicit MODULE.tools dependencies for a Bazel version.
+//
+// The lookup receives the raw Bazel version string provided by the caller. Returning
+// nil means "no implicit MODULE.tools dependencies" for that version.
+type BazelToolsLookup func(version string) []bazeltools.ToolDep
 
 // ModuleCache provides external caching for MODULE.bazel file contents.
 //

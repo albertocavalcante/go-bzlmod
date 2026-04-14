@@ -151,7 +151,7 @@ MODULE.tools implicit dependency data by Bazel version.
 ```go
 import "github.com/albertocavalcante/go-bzlmod/bazeltools"
 
-deps := bazeltools.GetDeps("7.0.0")
+deps := bazeltools.LookupDeps("7.0.1") // falls back to 7.0.0 built-in data
 for _, dep := range deps {
     fmt.Printf("%s@%s\n", dep.Name, dep.Version)
 }

@@ -182,6 +182,36 @@ gobzlmod.WithBazelVersion("7.0.0")
 
 Reference: [`types.go:478-482`](../types.go#L478-L482), [bazeltools/](../bazeltools/)
 
+### WithBazelToolsLookup
+
+```go
+gobzlmod.WithBazelToolsLookup(func(version string) []bazeltools.ToolDep)
+```
+
+Overrides how implicit `MODULE.tools` dependencies are resolved for
+`WithBazelVersion`.
+
+Use this when:
+
+- you need a Bazel release newer than the built-in table
+- you are testing prerelease or HEAD builds
+- you use a custom Bazel fork with different `MODULE.tools` contents
+
+```go
+gobzlmod.WithBazelToolsLookup(func(version string) []bazeltools.ToolDep {
+    if version == "7.0.0-custom.1" {
+        return []bazeltools.ToolDep{
+            {Name: "fork_only_dep", Version: "0.1.0"},
+        }
+    }
+    return bazeltools.LookupDeps(version)
+})
+```
+
+Returning `nil` means no implicit `MODULE.tools` dependencies for that version.
+Use `bazeltools.LookupDeps(version)` inside the callback when you want to extend
+rather than replace the built-in mapping.
+
 ### WithBazelCompatibilityMode
 
 ```go

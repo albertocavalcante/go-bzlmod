@@ -73,6 +73,11 @@ result, _ := gobzlmod.Resolve(ctx, src,
 
 The injected dependencies vary by Bazel version. See [`bazeltools/tools.go`](../bazeltools/tools.go) for the full list per version.
 
+If the built-in table is not enough, `WithBazelToolsLookup(...)` lets callers
+provide custom `MODULE.tools` data for new Bazel releases, forks, or HEAD
+builds. The callback can either replace the built-in mapping entirely or fall
+back to `bazeltools.LookupDeps(version)` when no custom match applies.
+
 Reference: [Bazel MODULE.tools](https://github.com/bazelbuild/bazel/blob/master/MODULE.tools), [`bazeltools/`](../bazeltools/)
 
 ## Field Version Requirements
