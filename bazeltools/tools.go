@@ -194,7 +194,6 @@ var bazel842Deps = []ToolDep{
 	{"rules_cc", "0.1.1"},
 	{"rules_python", "0.40.0"},
 	{"rules_shell", "0.2.0"},
-	{"apple_support", "1.23.1"},
 }
 
 var bazel900Deps = []ToolDep{

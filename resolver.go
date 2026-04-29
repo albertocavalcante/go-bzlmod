@@ -46,7 +46,17 @@ const (
 	// circular dependency chains. Set to 1000 to accommodate very deep but valid
 	// dependency graphs while protecting against pathological cases.
 	maxDependencyDepth = 1000
+
+	builtinBazelToolsModule          = "bazel_tools"
+	builtinLocalConfigPlatformModule = "local_config_platform"
 )
+
+func includeVisibleLocalConfigPlatform(bazelVersion string) bool {
+	if bazelVersion == "" {
+		return false
+	}
+	return version.Compare(bazelVersion, "9.0.0") < 0
+}
 
 // dependencyResolver resolves Bazel module dependencies using Minimal Version Selection (MVS).
 //
@@ -116,6 +126,10 @@ type graphBuildContext struct {
 	// explicitRootProdDepNames tracks production dependencies explicitly declared
 	// in the root MODULE.bazel (before MODULE.tools injection).
 	explicitRootProdDepNames map[string]bool
+
+	// builtinRootDeps are Bazel built-in MODULE.tools deps that participate in
+	// selection as implicit root dependencies, but are hidden from default output.
+	builtinRootDeps []Dependency
 
 	// mu protects concurrent writes to depGraph, moduleDeps, moduleInfoCache, and unfulfilledNodepEdgeModuleNames
 	mu sync.Mutex
@@ -269,11 +283,12 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		}
 	}
 
-	// Inject Bazel's MODULE.tools dependencies if a Bazel version is specified
+	// Bazel built-in MODULE.tools deps participate in selection as implicit root
+	// dependencies, but are hidden from default mod graph output.
+	var builtinRootDeps []Dependency
 	if r.options.BazelVersion != "" {
-		logger.Debug("injecting MODULE.tools dependencies", "bazelVersion", r.options.BazelVersion)
-		injectBazelToolsDeps(
-			rootModule,
+		logger.Debug("loading MODULE.tools dependencies", "bazelVersion", r.options.BazelVersion)
+		builtinRootDeps = bazelToolsRootDeps(
 			r.options.BazelVersion,
 			r.options.BazelToolsLookup,
 			r.options.BazelToolsTransformer,
@@ -291,6 +306,7 @@ func (r *dependencyResolver) ResolveDependencies(ctx context.Context, rootModule
 		unfulfilledNodepEdgeModuleNames: make(map[string]bool),
 		prevRoundModuleNames:            map[string]bool{rootModule.Name: true},
 		explicitRootProdDepNames:        explicitRootProdDepNames,
+		builtinRootDeps:                 builtinRootDeps,
 	}
 
 	// Multi-round discovery loop for handling nodep edges.
@@ -489,8 +505,13 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 		isRootModule := len(path) == 1 && path[0] == "<root>"
 
 		// Capture this module's dependencies for graph building (O(n) - just collect names)
+		depsForSelection := module.Dependencies
+		if isRootModule && len(bc.builtinRootDeps) > 0 {
+			depsForSelection = append(slices.Clone(module.Dependencies), bc.builtinRootDeps...)
+		}
+
 		var deps []string
-		for _, dep := range module.Dependencies {
+		for _, dep := range depsForSelection {
 			// Match Bazel: non-root modules always ignore dev dependencies.
 			if dep.DevDependency && (!isRootModule || !r.options.IncludeDevDeps) {
 				continue
@@ -499,12 +520,15 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 		}
 		if len(deps) > 0 && module.Name != "" {
 			depsKey := module.Name + "@" + module.Version
+			if !isRootModule && len(path) > 0 {
+				depsKey = path[len(path)-1]
+			}
 			bc.mu.Lock()
 			bc.moduleDeps[depsKey] = deps
 			bc.mu.Unlock()
 		}
 
-		for _, dep := range module.Dependencies {
+		for _, dep := range depsForSelection {
 			// Match Bazel: non-root modules always ignore dev dependencies.
 			if dep.DevDependency && (!isRootModule || !r.options.IncludeDevDeps) {
 				continue
@@ -533,8 +557,13 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 				bc.depGraph[dep.Name] = make(map[string]*depRequest)
 			}
 
+			requiredBy := path[len(path)-1]
+			if isRootModule && dep.IsNodepDep {
+				requiredBy = "<root builtin>"
+			}
+
 			if existing, exists := bc.depGraph[dep.Name][effectiveVersion]; exists {
-				existing.RequiredBy = append(existing.RequiredBy, path[len(path)-1])
+				existing.RequiredBy = append(existing.RequiredBy, requiredBy)
 				if !dep.DevDependency {
 					existing.DevDependency = false
 				}
@@ -542,7 +571,7 @@ func (r *dependencyResolver) buildDependencyGraph(ctx context.Context, module *M
 				bc.depGraph[dep.Name][effectiveVersion] = &depRequest{
 					Version:       effectiveVersion,
 					DevDependency: dep.DevDependency,
-					RequiredBy:    []string{path[len(path)-1]},
+					RequiredBy:    []string{requiredBy},
 				}
 			}
 			bc.mu.Unlock()
@@ -858,7 +887,7 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 	defaultRegistry := r.registry.BaseURL()
 	overridesByModule := overrideIndex(rootModule.Overrides)
 
-	// Build a set of selected module names for filtering dependencies
+	// Build a set of selected module names for graph traversal.
 	selectedNames := make(map[string]bool, len(selectedVersions))
 	for name := range selectedVersions {
 		selectedNames[name] = true
@@ -872,6 +901,22 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		}
 		rootDeps = append(rootDeps, dep.Name)
 	}
+	builtinRootDeps := make([]string, 0)
+	var builtinToolDeps []Dependency
+	if r.options.IncludeBuiltinModules && r.options.BazelVersion != "" {
+		builtinToolDeps = bazelToolsRootDeps(
+			r.options.BazelVersion,
+			r.options.BazelToolsLookup,
+			r.options.BazelToolsTransformer,
+		)
+		for _, dep := range builtinToolDeps {
+			builtinRootDeps = append(builtinRootDeps, dep.Name)
+		}
+		builtinRootDeps = append([]string{builtinBazelToolsModule}, builtinRootDeps...)
+		if includeVisibleLocalConfigPlatform(r.options.BazelVersion) {
+			builtinRootDeps = append([]string{builtinLocalConfigPlatformModule}, builtinRootDeps...)
+		}
+	}
 
 	// Resolve moduleDeps (keyed by name@version) to a name-only map using selected versions.
 	// This ensures each module's dependencies reflect the version MVS actually selected.
@@ -882,11 +927,37 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 			resolvedModuleDeps[name] = deps
 		}
 	}
+	if r.options.IncludeBuiltinModules && r.options.BazelVersion != "" {
+		selectedNames[builtinBazelToolsModule] = true
 
-	// Calculate depth for each module using BFS
-	moduleDepths := calculateModuleDepths(rootDeps, resolvedModuleDeps, selectedNames)
+		builtinDeps := make([]string, 0, len(builtinToolDeps)+1)
+		if includeVisibleLocalConfigPlatform(r.options.BazelVersion) {
+			selectedNames[builtinLocalConfigPlatformModule] = true
+			builtinDeps = append(builtinDeps, builtinLocalConfigPlatformModule)
+			resolvedModuleDeps[builtinLocalConfigPlatformModule] = nil
+		}
+		for _, dep := range builtinToolDeps {
+			builtinDeps = append(builtinDeps, dep.Name)
+		}
+		resolvedModuleDeps[builtinBazelToolsModule] = builtinDeps
+	}
+
+	// Bazel hides built-in-only modules from the default output graph. When
+	// include_builtin is requested, built-ins become part of the visible root frontier.
+	visibleFrontier := slices.Clone(rootDeps)
+	if r.options.IncludeBuiltinModules {
+		visibleFrontier = append(visibleFrontier, builtinRootDeps...)
+	}
+	visibleNames := calculateReachableModules(visibleFrontier, resolvedModuleDeps, selectedNames)
+
+	// Calculate depth for visible modules using BFS from explicit root deps.
+	moduleDepths := calculateModuleDepths(visibleFrontier, resolvedModuleDeps, visibleNames)
 
 	for moduleName, req := range selectedVersions {
+		if !visibleNames[moduleName] {
+			continue
+		}
+
 		registryURL := registryURLForModule(defaultRegistry, moduleName, overridesByModule)
 
 		// For multi-registry chains, get the actual registry that provided this module
@@ -900,7 +971,7 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 		var deps []string
 		if rawDeps, ok := resolvedModuleDeps[moduleName]; ok {
 			for _, dep := range rawDeps {
-				if selectedNames[dep] {
+				if visibleNames[dep] {
 					deps = append(deps, dep)
 				}
 			}
@@ -915,6 +986,25 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 			Dependencies:  deps,
 			RequiredBy:    req.RequiredBy,
 		})
+	}
+	if r.options.IncludeBuiltinModules && r.options.BazelVersion != "" {
+		if visibleNames[builtinBazelToolsModule] {
+			list.Modules = append(list.Modules, ModuleToResolve{
+				Name:         builtinBazelToolsModule,
+				Version:      "",
+				Depth:        moduleDepths[builtinBazelToolsModule],
+				Dependencies: slices.Clone(resolvedModuleDeps[builtinBazelToolsModule]),
+				RequiredBy:   []string{"<root builtin>"},
+			})
+		}
+		if includeVisibleLocalConfigPlatform(r.options.BazelVersion) && visibleNames[builtinLocalConfigPlatformModule] {
+			list.Modules = append(list.Modules, ModuleToResolve{
+				Name:       builtinLocalConfigPlatformModule,
+				Version:    "",
+				Depth:      moduleDepths[builtinLocalConfigPlatformModule],
+				RequiredBy: []string{"<root builtin>"},
+			})
+		}
 	}
 
 	slices.SortFunc(list.Modules, func(a, b ModuleToResolve) int {
@@ -1031,14 +1121,14 @@ func (r *dependencyResolver) buildResolutionList(ctx context.Context, selectedVe
 	}
 
 	// Build dependency graph - O(n) where n = number of modules
-	list.Graph = buildGraph(rootModule, list.Modules)
+	list.Graph = buildGraph(rootModule, list.Modules, visibleFrontier)
 
 	return list, nil
 }
 
 // buildGraph constructs a graph.Graph from resolution results.
 // This is O(n) where n is the number of modules.
-func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve) *graph.Graph {
+func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve, rootVisibleDeps []string) *graph.Graph {
 	// Create module index for O(1) version lookup
 	moduleVersions := make(map[string]string, len(modules))
 	for _, m := range modules {
@@ -1046,10 +1136,10 @@ func buildGraph(rootModule *ModuleInfo, modules []ModuleToResolve) *graph.Graph 
 	}
 
 	// Build root dependencies (filtered to selected modules)
-	var rootDeps []graph.ModuleKey
-	for _, dep := range rootModule.Dependencies {
-		if ver, ok := moduleVersions[dep.Name]; ok {
-			rootDeps = append(rootDeps, graph.ModuleKey{Name: dep.Name, Version: ver})
+	rootDeps := make([]graph.ModuleKey, 0, len(rootVisibleDeps))
+	for _, depName := range rootVisibleDeps {
+		if ver, ok := moduleVersions[depName]; ok {
+			rootDeps = append(rootDeps, graph.ModuleKey{Name: depName, Version: ver})
 		}
 	}
 
@@ -1099,14 +1189,14 @@ func removeDependency(depGraph map[string]map[string]*depRequest, moduleName, mo
 	}
 }
 
-// injectBazelToolsDeps adds Bazel's MODULE.tools dependencies to the root module.
-// This ensures resolution matches Bazel's behavior for a given version.
-func injectBazelToolsDeps(
-	rootModule *ModuleInfo,
+// bazelToolsRootDeps returns Bazel's built-in MODULE.tools dependencies as
+// implicit root deps. They participate in selection but are hidden from the
+// default visible graph.
+func bazelToolsRootDeps(
 	bazelVersion string,
 	lookup BazelToolsLookup,
 	transformer BazelToolsTransformer,
-) {
+) []Dependency {
 	if lookup == nil {
 		lookup = bazeltools.LookupDeps
 	}
@@ -1116,24 +1206,20 @@ func injectBazelToolsDeps(
 		deps = transformer(bazelVersion, slices.Clone(deps))
 	}
 	if deps == nil {
-		return
+		return nil
 	}
 
-	// Create a map of existing dependencies for deduplication
-	existingDeps := make(map[string]bool)
-	for _, dep := range rootModule.Dependencies {
-		existingDeps[dep.Name] = true
-	}
-
-	// Add MODULE.tools deps that aren't already declared
+	rootDeps := make([]Dependency, 0, len(deps))
 	for _, toolDep := range deps {
-		if !existingDeps[toolDep.Name] {
-			rootModule.Dependencies = append(rootModule.Dependencies, Dependency{
-				Name:    toolDep.Name,
-				Version: toolDep.Version,
-			})
-		}
+		rootDeps = append(rootDeps, Dependency{
+			Name:    toolDep.Name,
+			Version: toolDep.Version,
+			// Mark builtin deps so discovery can keep their provenance distinct
+			// from explicit root deps in RequiredBy.
+			IsNodepDep: true,
+		})
 	}
+	return rootDeps
 }
 
 // substituteYankedVersionsInGraph iterates through the dependency graph and replaces
@@ -1282,4 +1368,32 @@ func calculateModuleDepths(rootDeps []string, moduleDeps map[string][]string, se
 		}
 	}
 	return depths
+}
+
+// calculateReachableModules returns the selected modules reachable from the
+// explicit root dependency frontier. Built-in-only modules are excluded.
+func calculateReachableModules(rootDeps []string, moduleDeps map[string][]string, selected map[string]bool) map[string]bool {
+	reachable := make(map[string]bool)
+	queue := make([]string, 0, len(rootDeps))
+
+	for _, dep := range rootDeps {
+		if selected[dep] && !reachable[dep] {
+			reachable[dep] = true
+			queue = append(queue, dep)
+		}
+	}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		for _, depName := range moduleDeps[current] {
+			if selected[depName] && !reachable[depName] {
+				reachable[depName] = true
+				queue = append(queue, depName)
+			}
+		}
+	}
+
+	return reachable
 }

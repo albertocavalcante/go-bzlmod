@@ -7,12 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/albertocavalcante/go-bzlmod/bazeltools"
+	"github.com/albertocavalcante/go-bzlmod/graph"
 	"github.com/albertocavalcante/go-bzlmod/registry"
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
@@ -100,6 +103,238 @@ func Test_newDependencyResolver(t *testing.T) {
 				t.Errorf("options.IncludeDevDeps = %v, want %v", resolver.options.IncludeDevDeps, tt.includeDevDeps)
 			}
 		})
+	}
+}
+
+func TestBazelToolsRootDeps_ReturnsImplicitBuiltinDeps(t *testing.T) {
+	deps := bazelToolsRootDeps(
+		"8.2.1",
+		func(version string) []bazeltools.ToolDep {
+			if version != "8.2.1" {
+				t.Fatalf("lookup version = %q, want 8.2.1", version)
+			}
+			return []bazeltools.ToolDep{
+				{Name: "rules_java", Version: "8.11.0"},
+				{Name: "buildozer", Version: "7.1.2"},
+			}
+		},
+		nil,
+	)
+
+	want := []Dependency{
+		{Name: "rules_java", Version: "8.11.0", IsNodepDep: true},
+		{Name: "buildozer", Version: "7.1.2", IsNodepDep: true},
+	}
+	if !reflect.DeepEqual(deps, want) {
+		t.Fatalf("bazelToolsRootDeps() = %+v, want %+v", deps, want)
+	}
+}
+
+func TestResolveDependencies_HidesBuiltinOnlyModulesByDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/buildozer/7.1.2/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "buildozer", version = "7.1.2")`)
+		case "/modules/rules_java/8.11.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "8.11.0")`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	rootModule := &ModuleInfo{Name: "root"}
+	resolver := newDependencyResolverWithOptions(newRegistryClient(server.URL), ResolutionOptions{
+		BazelVersion: "8.2.1",
+		BazelToolsLookup: func(version string) []bazeltools.ToolDep {
+			return []bazeltools.ToolDep{
+				{Name: "rules_java", Version: "8.11.0"},
+				{Name: "buildozer", Version: "7.1.2"},
+			}
+		},
+	})
+
+	list, err := resolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	if len(list.Modules) != 0 {
+		t.Fatalf("visible modules = %+v, want no visible modules for builtin-only root", list.Modules)
+	}
+
+	if got := list.Graph.Stats().DirectDependencies; got != 0 {
+		t.Fatalf("graph direct dependencies = %d, want 0", got)
+	}
+}
+
+func TestResolveDependencies_BuiltinDepsUpgradeExplicitRootDepsWithoutBecomingVisible(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/buildozer/7.1.2/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "buildozer", version = "7.1.2")`)
+		case "/modules/rules_java/5.5.1/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "5.5.1")`)
+		case "/modules/rules_java/8.11.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "8.11.0")`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	rootModule := &ModuleInfo{
+		Name: "root",
+		Dependencies: []Dependency{
+			{Name: "rules_java", Version: "5.5.1"},
+		},
+	}
+	resolver := newDependencyResolverWithOptions(newRegistryClient(server.URL), ResolutionOptions{
+		BazelVersion: "8.2.1",
+		BazelToolsLookup: func(version string) []bazeltools.ToolDep {
+			return []bazeltools.ToolDep{
+				{Name: "rules_java", Version: "8.11.0"},
+				{Name: "buildozer", Version: "7.1.2"},
+			}
+		},
+	})
+
+	list, err := resolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	if len(list.Modules) != 1 {
+		t.Fatalf("visible modules len = %d, want 1", len(list.Modules))
+	}
+	if got := list.Modules[0]; got.Name != "rules_java" || got.Version != "8.11.0" {
+		t.Fatalf("visible module = %+v, want rules_java@8.11.0", got)
+	}
+
+	for _, m := range list.Modules {
+		if m.Name == "buildozer" {
+			t.Fatalf("buildozer should be hidden from default result: %+v", list.Modules)
+		}
+	}
+
+	rootKey := graph.ModuleKey{Name: "root", Version: ""}
+	rootNode, ok := list.Graph.Modules[rootKey]
+	if !ok {
+		t.Fatalf("root graph node missing")
+	}
+	if len(rootNode.Dependencies) != 1 || rootNode.Dependencies[0].Name != "rules_java" || rootNode.Dependencies[0].Version != "8.11.0" {
+		t.Fatalf("root graph dependencies = %+v, want only rules_java@8.11.0", rootNode.Dependencies)
+	}
+}
+
+func TestResolveDependencies_IncludeBuiltinModulesOnlyChangesVisibility(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/buildozer/7.1.2/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "buildozer", version = "7.1.2")`)
+		case "/modules/rules_java/5.5.1/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "5.5.1")`)
+		case "/modules/rules_java/8.11.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "8.11.0")`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	rootModule := &ModuleInfo{
+		Name: "root",
+		Dependencies: []Dependency{
+			{Name: "rules_java", Version: "5.5.1"},
+		},
+	}
+	lookup := func(version string) []bazeltools.ToolDep {
+		return []bazeltools.ToolDep{
+			{Name: "rules_java", Version: "8.11.0"},
+			{Name: "buildozer", Version: "7.1.2"},
+		}
+	}
+
+	defaultResolver := newDependencyResolverWithOptions(newRegistryClient(server.URL), ResolutionOptions{
+		BazelVersion:     "8.2.1",
+		BazelToolsLookup: lookup,
+	})
+	withBuiltinsResolver := newDependencyResolverWithOptions(newRegistryClient(server.URL), ResolutionOptions{
+		BazelVersion:          "8.2.1",
+		BazelToolsLookup:      lookup,
+		IncludeBuiltinModules: true,
+	})
+
+	defaultList, err := defaultResolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("default ResolveDependencies() error = %v", err)
+	}
+	withBuiltinsList, err := withBuiltinsResolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("include builtins ResolveDependencies() error = %v", err)
+	}
+
+	if len(defaultList.Modules) != 1 || defaultList.Modules[0].Name != "rules_java" || defaultList.Modules[0].Version != "8.11.0" {
+		t.Fatalf("default visible modules = %+v, want only rules_java@8.11.0", defaultList.Modules)
+	}
+	if len(withBuiltinsList.Modules) != 4 {
+		t.Fatalf("include builtins visible modules len = %d, want 4", len(withBuiltinsList.Modules))
+	}
+
+	gotVisible := make([]string, 0, len(withBuiltinsList.Modules))
+	for _, module := range withBuiltinsList.Modules {
+		gotVisible = append(gotVisible, module.Name+"@"+module.Version)
+	}
+	slices.Sort(gotVisible)
+	wantVisible := []string{"bazel_tools@", "buildozer@7.1.2", "local_config_platform@", "rules_java@8.11.0"}
+	if !slices.Equal(gotVisible, wantVisible) {
+		t.Fatalf("include builtins visible modules = %v, want %v", gotVisible, wantVisible)
+	}
+}
+
+func TestResolveDependencies_IncludeBuiltinModules_HidesLocalConfigPlatformFromBazel9(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/rules_java/9.0.3/MODULE.bazel":
+			fmt.Fprintln(w, `module(name = "rules_java", version = "9.0.3")`)
+		case "/modules/buildozer/8.5.1/MODULE.bazel":
+			fmt.Fprintln(w, `module(name = "buildozer", version = "8.5.1")`)
+		case "/modules/apple_support/1.24.2/MODULE.bazel":
+			fmt.Fprintln(w, `module(name = "apple_support", version = "1.24.2")`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	rootModule := &ModuleInfo{Name: "root"}
+	lookup := func(version string) []bazeltools.ToolDep {
+		return []bazeltools.ToolDep{
+			{Name: "buildozer", Version: "8.5.1"},
+			{Name: "rules_java", Version: "9.0.3"},
+			{Name: "apple_support", Version: "1.24.2"},
+		}
+	}
+
+	resolver := newDependencyResolverWithOptions(newRegistryClient(server.URL), ResolutionOptions{
+		BazelVersion:          "9.0.0",
+		BazelToolsLookup:      lookup,
+		IncludeBuiltinModules: true,
+	})
+
+	list, err := resolver.ResolveDependencies(context.Background(), rootModule)
+	if err != nil {
+		t.Fatalf("ResolveDependencies() error = %v", err)
+	}
+
+	gotVisible := make([]string, 0, len(list.Modules))
+	for _, module := range list.Modules {
+		gotVisible = append(gotVisible, module.Name+"@"+module.Version)
+	}
+	slices.Sort(gotVisible)
+	wantVisible := []string{"apple_support@1.24.2", "bazel_tools@", "buildozer@8.5.1", "rules_java@9.0.3"}
+	if !slices.Equal(gotVisible, wantVisible) {
+		t.Fatalf("include builtins visible modules = %v, want %v", gotVisible, wantVisible)
 	}
 }
 
@@ -369,6 +604,10 @@ func TestBuildResolutionList(t *testing.T) {
 	rootModule := &ModuleInfo{
 		Name:    "test_project",
 		Version: "1.0.0",
+		Dependencies: []Dependency{
+			{Name: "module_a", Version: "1.0.0"},
+			{Name: "custom_module", Version: "1.5.0"},
+		},
 		Overrides: []Override{
 			{
 				Type:       "single_version",
@@ -396,7 +635,9 @@ func TestBuildResolutionList(t *testing.T) {
 		},
 	}
 
-	moduleDeps := make(map[string][]string)         // Empty for this test
+	moduleDeps := map[string][]string{
+		"module_a@1.0.0": []string{"module_b"},
+	}
 	moduleInfoCache := make(map[string]*ModuleInfo) // Empty for this test
 	list, err := resolver.buildResolutionList(context.Background(), selectedVersions, moduleDeps, moduleInfoCache, rootModule)
 	if err != nil {

@@ -11,6 +11,7 @@ git clone https://github.com/your-username/go-bzlmod.git
 cd go-bzlmod
 go mod download
 go test ./...
+cd e2e && go test ./...
 ```
 
 ## Testing
@@ -26,8 +27,9 @@ go test -coverprofile=coverage.out ./...
 **E2E tests:**
 
 ```bash
-go test ./e2e -v
-go test ./e2e -run="TestDiagnostic" -v
+cd e2e && go test ./... -v
+cd e2e && go test ./... -run="TestDiagnostic" -v
+cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 GO_BZLMOD_E2E_RELEASE_MATRIX_REFRESH=1 go test ./... -run TestE2E_BazelReleaseMatrix_ToolSelectionParity
 ```
 
 Aim for >90% test coverage.
@@ -68,6 +70,7 @@ Create an issue first for significant changes. Write tests. Update documentation
 
 ```
 Tests pass: go test ./...
+E2E tests pass: cd e2e && go test ./...
 Linting passes: golangci-lint run
 Documentation updated (if applicable)
 Commits signed off: git commit -s

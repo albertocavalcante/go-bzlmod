@@ -504,6 +504,13 @@ type ResolutionOptions struct {
 	// Default is empty (no MODULE.tools deps included).
 	BazelVersion string
 
+	// IncludeBuiltinModules exposes Bazel built-in MODULE.tools dependencies in the
+	// visible resolution result and graph. When false, built-ins still participate
+	// in selection but remain hidden by default, matching `bazel mod graph`.
+	//
+	// This mirrors Bazel's --include_builtin flag for graph visibility.
+	IncludeBuiltinModules bool
+
 	// BazelToolsLookup resolves the MODULE.tools dependencies for a Bazel version.
 	// When nil, the built-in bazeltools package data is used.
 	//

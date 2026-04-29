@@ -1,0 +1,3 @@
+module(name = "release_matrix_conflict_fixture")
+
+bazel_dep(name = "rules_java", version = "5.5.1")

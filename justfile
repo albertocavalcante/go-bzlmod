@@ -15,6 +15,14 @@ build:
 test:
     go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go test
 
+# Run end-to-end tests from the independent e2e module
+test-e2e:
+    cd e2e && go test ./...
+
+# Run end-to-end tests with verbose output
+test-e2e-v:
+    cd e2e && go test ./... -v
+
 # Run tests with verbose output
 test-v:
     go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go test -v
@@ -49,6 +57,7 @@ lint-all: lint staticcheck
 # Tidy all go.mod files
 tidy:
     go mod tidy
+    cd e2e && go mod tidy
     go mod tidy -modfile=tools.go.mod
     cd tools/lint && go mod tidy
 
@@ -102,6 +111,9 @@ vendor-version:
 
 # Run all checks (CI)
 ci: build test lint-all vet fmt-check
+
+# Run unit checks plus e2e module
+ci-e2e: ci test-e2e
 
 # Development workflow: format, lint, test
 dev: fmt lint test

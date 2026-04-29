@@ -26,16 +26,21 @@ type BazelModGraph = graph.BazelModGraph
 
 // resolveDependencies uses our library API to resolve dependencies
 func resolveDependencies(content, registry string, includeDevDeps bool) (*ResolutionList, error) {
-	return resolveDependenciesWithBazelVersion(content, registry, includeDevDeps, "7.0.0")
+	return resolveDependenciesWithBazelVersionAndBuiltins(content, registry, includeDevDeps, "7.0.0", false)
 }
 
 // resolveDependenciesWithBazelVersion resolves with a specific Bazel version for MODULE.tools compat
 func resolveDependenciesWithBazelVersion(content, registry string, includeDevDeps bool, bazelVersion string) (*ResolutionList, error) {
+	return resolveDependenciesWithBazelVersionAndBuiltins(content, registry, includeDevDeps, bazelVersion, false)
+}
+
+func resolveDependenciesWithBazelVersionAndBuiltins(content, registry string, includeDevDeps bool, bazelVersion string, includeBuiltinModules bool) (*ResolutionList, error) {
 	opts := gobzlmod.ResolutionOptions{
-		Registries:       []string{registry},
-		IncludeDevDeps:   includeDevDeps,
-		SubstituteYanked: true,
-		BazelVersion:     bazelVersion,
+		Registries:             []string{registry},
+		IncludeDevDeps:         includeDevDeps,
+		SubstituteYanked:       true,
+		BazelVersion:           bazelVersion,
+		IncludeBuiltinModules:  includeBuiltinModules,
 	}
 	ctx := context.Background()
 	resolutionList, err := gobzlmod.ResolveContent(ctx, content, opts)

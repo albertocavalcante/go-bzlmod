@@ -281,9 +281,16 @@ Reference: [Selection.java](https://github.com/bazelbuild/bazel/blob/master/src/
 
 ```bash
 go test ./...              # Unit tests
-go test ./e2e -v           # E2E tests against real Bazel
+cd e2e && go test ./... -v # E2E tests against real Bazel
 go test -cover ./...       # With coverage
 go test -race ./...        # Race detection
+```
+
+Release-matrix Bazel parity checks are opt-in:
+
+```bash
+cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 GO_BZLMOD_E2E_RELEASE_MATRIX_REFRESH=1 go test ./... -run TestE2E_BazelReleaseMatrix_ToolSelectionParity
+cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 GO_BZLMOD_E2E_RELEASE_MATRIX_LIVE=1 go test ./... -run TestE2E_BazelReleaseMatrix_ToolSelectionParity
 ```
 
 ## Contributing

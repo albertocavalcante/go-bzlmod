@@ -23,6 +23,7 @@ type resolverConfig struct {
 	substituteYanked       bool
 	bazelCompatibilityMode BazelCompatibilityMode
 	bazelVersion           string
+	includeBuiltinModules  bool
 	bazelToolsLookup       BazelToolsLookup
 	bazelToolsTransformer  BazelToolsTransformer
 	registries             []string
@@ -141,6 +142,15 @@ func WithBazelCompatibilityMode(mode BazelCompatibilityMode) Option {
 func WithBazelVersion(version string) Option {
 	return func(c *resolverConfig) error {
 		c.bazelVersion = version
+		return nil
+	}
+}
+
+// WithIncludeBuiltinModules exposes Bazel built-in MODULE.tools deps in the
+// visible resolution result and graph, mirroring `bazel mod graph --include_builtin`.
+func WithIncludeBuiltinModules(include bool) Option {
+	return func(c *resolverConfig) error {
+		c.includeBuiltinModules = include
 		return nil
 	}
 }
@@ -324,6 +334,7 @@ func (c *resolverConfig) toResolutionOptions() ResolutionOptions {
 		SubstituteYanked:       c.substituteYanked,
 		BazelCompatibilityMode: c.bazelCompatibilityMode,
 		BazelVersion:           c.bazelVersion,
+		IncludeBuiltinModules:  c.includeBuiltinModules,
 		BazelToolsLookup:       c.bazelToolsLookup,
 		BazelToolsTransformer:  c.bazelToolsTransformer,
 		Registries:             c.registries,

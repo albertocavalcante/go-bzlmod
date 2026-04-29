@@ -86,7 +86,10 @@ go test ./...
 go test -race ./...
 
 # E2E tests
-go test ./e2e -v
+cd e2e && go test ./... -v
+
+# Release-matrix Bazel parity refresh
+cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 GO_BZLMOD_E2E_RELEASE_MATRIX_REFRESH=1 go test ./... -run TestE2E_BazelReleaseMatrix_ToolSelectionParity
 ```
 
 Aim for >90% test coverage on core logic.

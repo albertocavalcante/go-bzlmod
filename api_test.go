@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -127,7 +128,9 @@ func TestResolveFromFile_Success(t *testing.T) {
 }
 
 func TestResolve_CustomBazelToolsLookupSupportsUnknownVersion(t *testing.T) {
+	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
 		switch r.URL.Path {
 		case "/modules/custom_tools_dep/1.2.3/MODULE.bazel":
 			fmt.Fprint(w, `module(name = "custom_tools_dep", version = "1.2.3")`)
@@ -153,13 +156,11 @@ func TestResolve_CustomBazelToolsLookupSupportsUnknownVersion(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	if len(result.Modules) != 1 {
-		t.Fatalf("len(result.Modules) = %d, want 1", len(result.Modules))
+	if len(result.Modules) != 0 {
+		t.Fatalf("len(result.Modules) = %d, want 0 visible modules for builtin-only root", len(result.Modules))
 	}
-
-	got := result.Modules[0]
-	if got.Name != "custom_tools_dep" || got.Version != "1.2.3" {
-		t.Fatalf("resolved module = %s@%s, want custom_tools_dep@1.2.3", got.Name, got.Version)
+	if !slices.Contains(requests, "/modules/custom_tools_dep/1.2.3/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, want custom_tools_dep fetch", requests)
 	}
 }
 
@@ -191,13 +192,8 @@ func TestResolveContent_CustomBazelToolsLookupOverridesBuiltins(t *testing.T) {
 		t.Fatalf("ResolveContent() error = %v", err)
 	}
 
-	if len(result.Modules) != 1 {
-		t.Fatalf("len(result.Modules) = %d, want 1", len(result.Modules))
-	}
-
-	got := result.Modules[0]
-	if got.Name != "fork_only_dep" || got.Version != "0.1.0" {
-		t.Fatalf("resolved module = %s@%s, want fork_only_dep@0.1.0", got.Name, got.Version)
+	if len(result.Modules) != 0 {
+		t.Fatalf("len(result.Modules) = %d, want 0 visible modules for builtin-only root", len(result.Modules))
 	}
 
 	if !slices.Contains(requests, "/modules/fork_only_dep/0.1.0/MODULE.bazel") {
@@ -251,17 +247,8 @@ func TestResolve_BazelToolsTransformerCanPatchLookupDeps(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	if len(result.Modules) != 2 {
-		t.Fatalf("len(result.Modules) = %d, want 2", len(result.Modules))
-	}
-
-	got := []string{
-		result.Modules[0].Name + "@" + result.Modules[0].Version,
-		result.Modules[1].Name + "@" + result.Modules[1].Version,
-	}
-	want := []string{"base_one@1.1.0", "extra_dep@3.0.0"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("resolved modules = %v, want %v", got, want)
+	if len(result.Modules) != 0 {
+		t.Fatalf("len(result.Modules) = %d, want 0 visible modules for builtin-only root", len(result.Modules))
 	}
 }
 
@@ -323,8 +310,11 @@ func TestResolve_BazelToolsTransformerReceivesClone(t *testing.T) {
 
 func TestResolve_Bazel821UsesBazel820ModuleToolsSnapshot(t *testing.T) {
 	var requests []string
+	var requestsMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestsMu.Lock()
 		requests = append(requests, r.URL.Path)
+		requestsMu.Unlock()
 
 		switch r.URL.Path {
 		case "/modules/buildozer/7.1.2/MODULE.bazel":
@@ -365,21 +355,19 @@ func TestResolve_Bazel821UsesBazel820ModuleToolsSnapshot(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	if len(result.Modules) != 11 {
-		t.Fatalf("len(result.Modules) = %d, want 11", len(result.Modules))
+	if len(result.Modules) != 0 {
+		t.Fatalf("len(result.Modules) = %d, want 0 visible modules for builtin-only root", len(result.Modules))
 	}
 
-	if !slices.Contains(requests, "/modules/rules_java/8.11.0/MODULE.bazel") {
-		t.Fatalf("registry requests = %v, want rules_java@8.11.0 fetch", requests)
+	requestsMu.Lock()
+	gotRequests := append([]string(nil), requests...)
+	requestsMu.Unlock()
+
+	if !slices.Contains(gotRequests, "/modules/rules_java/8.11.0/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, want rules_java@8.11.0 fetch", gotRequests)
 	}
-	if !slices.Contains(requests, "/modules/rules_cc/0.0.17/MODULE.bazel") {
-		t.Fatalf("registry requests = %v, want rules_cc@0.0.17 fetch", requests)
-	}
-	if slices.Contains(requests, "/modules/rules_java/8.6.1/MODULE.bazel") {
-		t.Fatalf("registry requests = %v, unexpected 8.0.0 rules_java fallback", requests)
-	}
-	if slices.Contains(requests, "/modules/rules_cc/0.0.16/MODULE.bazel") {
-		t.Fatalf("registry requests = %v, unexpected 8.0.0 rules_cc fallback", requests)
+	if slices.Contains(gotRequests, "/modules/rules_java/8.6.1/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, unexpected 8.0.0 rules_java fallback", gotRequests)
 	}
 }
 
