@@ -321,6 +321,68 @@ func TestResolve_BazelToolsTransformerReceivesClone(t *testing.T) {
 	}
 }
 
+func TestResolve_Bazel821UsesBazel820ModuleToolsSnapshot(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+
+		switch r.URL.Path {
+		case "/modules/buildozer/7.1.2/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "buildozer", version = "7.1.2")`)
+		case "/modules/platforms/0.0.10/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "platforms", version = "0.0.10")`)
+		case "/modules/zlib/1.3.1.bcr.3/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "zlib", version = "1.3.1.bcr.3")`)
+		case "/modules/rules_proto/7.0.2/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_proto", version = "7.0.2")`)
+		case "/modules/bazel_features/1.21.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "bazel_features", version = "1.21.0")`)
+		case "/modules/protobuf/29.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "protobuf", version = "29.0")`)
+		case "/modules/rules_java/8.11.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "8.11.0")`)
+		case "/modules/rules_cc/0.0.17/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_cc", version = "0.0.17")`)
+		case "/modules/rules_python/0.40.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_python", version = "0.40.0")`)
+		case "/modules/rules_shell/0.2.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_shell", version = "0.2.0")`)
+		case "/modules/rules_license/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_license", version = "1.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Resolve(
+		context.Background(),
+		ContentSource(`module(name = "root", version = "1.0.0")`),
+		WithRegistries(server.URL),
+		WithBazelVersion("8.2.1"),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if len(result.Modules) != 11 {
+		t.Fatalf("len(result.Modules) = %d, want 11", len(result.Modules))
+	}
+
+	if !slices.Contains(requests, "/modules/rules_java/8.11.0/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, want rules_java@8.11.0 fetch", requests)
+	}
+	if !slices.Contains(requests, "/modules/rules_cc/0.0.17/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, want rules_cc@0.0.17 fetch", requests)
+	}
+	if slices.Contains(requests, "/modules/rules_java/8.6.1/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, unexpected 8.0.0 rules_java fallback", requests)
+	}
+	if slices.Contains(requests, "/modules/rules_cc/0.0.16/MODULE.bazel") {
+		t.Fatalf("registry requests = %v, unexpected 8.0.0 rules_cc fallback", requests)
+	}
+}
+
 func TestResolveFromFile_FileNotFound(t *testing.T) {
 	nonexistentFile := "/path/that/does/not/exist/MODULE.bazel"
 

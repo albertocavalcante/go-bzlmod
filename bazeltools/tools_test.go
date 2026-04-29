@@ -12,7 +12,7 @@ import (
 
 // TestGetConfig_ValidVersions ensures all documented versions return configs
 func TestGetConfig_ValidVersions(t *testing.T) {
-	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "9.0.0", "9.0.1", "9.0.2"}
+	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "8.2.0", "9.0.0", "9.0.1", "9.0.2"}
 
 	for _, v := range knownVersions {
 		cfg := GetConfig(v)
@@ -82,7 +82,7 @@ func TestGetConfig_UnicodeVersion(t *testing.T) {
 
 // TestGetDeps_ValidVersions tests GetDeps for known versions
 func TestGetDeps_ValidVersions(t *testing.T) {
-	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "9.0.0", "9.0.1", "9.0.2"}
+	knownVersions := []string{"6.6.0", "7.0.0", "7.1.0", "7.2.0", "8.0.0", "8.2.0", "9.0.0", "9.0.1", "9.0.2"}
 
 	for _, v := range knownVersions {
 		deps := GetDeps(v)
@@ -170,6 +170,55 @@ func TestGetDeps_Bazel902MatchesUpstream(t *testing.T) {
 	}
 }
 
+func TestGetDeps_Bazel820MatchesUpstream(t *testing.T) {
+	want := []ToolDep{
+		{"rules_license", "1.0.0"},
+		{"buildozer", "7.1.2"},
+		{"platforms", "0.0.10"},
+		{"zlib", "1.3.1.bcr.3"},
+		{"rules_proto", "7.0.2"},
+		{"bazel_features", "1.21.0"},
+		{"protobuf", "29.0"},
+		{"rules_java", "8.11.0"},
+		{"rules_cc", "0.0.17"},
+		{"rules_python", "0.40.0"},
+		{"rules_shell", "0.2.0"},
+	}
+
+	if got := GetDeps("8.2.0"); !slices.Equal(got, want) {
+		t.Fatalf("GetDeps(\"8.2.0\") = %v, want %v", got, want)
+	}
+}
+
+func TestGetDeps_Bazel910MatchesUpstream(t *testing.T) {
+	want := []ToolDep{
+		{"rules_license", "1.0.0"},
+		{"buildozer", "8.5.1"},
+		{"platforms", "1.0.0"},
+		{"zlib", "1.3.1.bcr.5"},
+		{"bazel_features", "1.42.1"},
+		{"protobuf", "33.4"},
+		{"rules_java", "9.1.0"},
+		{"rules_cc", "0.2.17"},
+		{"rules_python", "1.7.0"},
+		{"rules_shell", "0.6.1"},
+		{"apple_support", "1.24.2"},
+		{"rules_apple", "4.1.0"},
+		{"rules_swift", "3.1.2"},
+		{"abseil-cpp", "20250814.1"},
+	}
+
+	if got := GetDeps("9.1.0"); !slices.Equal(got, want) {
+		t.Fatalf("GetDeps(\"9.1.0\") = %v, want %v", got, want)
+	}
+}
+
+func TestLookupDeps_Bazel821UsesExactReleaseSnapshot(t *testing.T) {
+	if got, want := LookupDeps("8.2.1"), GetDeps("8.2.1"); !slices.Equal(got, want) {
+		t.Fatalf("LookupDeps(\"8.2.1\") = %v, want %v", got, want)
+	}
+}
+
 func TestSetToolDep_ReplacesInPlaceOrAppends(t *testing.T) {
 	deps := []ToolDep{
 		{Name: "rules_cc", Version: "0.0.9"},
@@ -226,20 +275,56 @@ func TestSupportedVersions_AllHaveConfigs(t *testing.T) {
 	}
 }
 
+func TestSupportedVersions_MatchesConfigMapSize(t *testing.T) {
+	if got, want := len(SupportedVersions()), len(bazelConfigs); got != want {
+		t.Fatalf("len(SupportedVersions()) = %d, want %d", got, want)
+	}
+}
+
 // TestSupportedVersions_ContainsKnownVersions verifies known versions are included
 func TestSupportedVersions_ContainsKnownVersions(t *testing.T) {
-	versions := SupportedVersions()
-	versionSet := make(map[string]bool)
-	for _, v := range versions {
-		versionSet[v] = true
+	want := []string{
+		"6.6.0",
+		"7.0.0",
+		"7.0.1",
+		"7.1.0",
+		"7.1.1",
+		"7.1.2",
+		"7.2.0",
+		"7.2.1",
+		"7.3.0",
+		"7.3.1",
+		"7.3.2",
+		"7.4.0",
+		"7.4.1",
+		"7.5.0",
+		"7.6.0",
+		"7.6.1",
+		"7.6.2",
+		"7.7.0",
+		"7.7.1",
+		"8.0.0",
+		"8.0.1",
+		"8.1.0",
+		"8.1.1",
+		"8.2.0",
+		"8.2.1",
+		"8.3.0",
+		"8.3.1",
+		"8.4.0",
+		"8.4.1",
+		"8.4.2",
+		"8.5.0",
+		"8.5.1",
+		"8.6.0",
+		"9.0.0",
+		"9.0.1",
+		"9.0.2",
+		"9.1.0",
 	}
 
-	// These versions must exist (based on the implementation)
-	required := []string{"7.0.0", "8.0.0", "9.0.2"}
-	for _, r := range required {
-		if !versionSet[r] {
-			t.Errorf("SupportedVersions() should include %q", r)
-		}
+	if got := SupportedVersions(); !slices.Equal(got, want) {
+		t.Fatalf("SupportedVersions() = %v, want %v", got, want)
 	}
 }
 
@@ -261,12 +346,12 @@ func TestClosestVersion_PatchVersion(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"7.0.1", "7.0.0"},
-		{"7.0.99", "7.0.0"},
-		{"7.1.1", "7.1.0"},
-		{"7.1.99", "7.1.0"},
-		{"7.2.5", "7.2.0"},
-		{"8.0.1", "8.0.0"},
+		{"7.0.1", "7.0.1"},
+		{"7.0.99", "7.0.1"},
+		{"7.1.1", "7.1.1"},
+		{"7.1.99", "7.1.2"},
+		{"7.2.5", "7.2.1"},
+		{"8.0.1", "8.0.1"},
 		{"9.0.1", "9.0.1"},
 		{"9.0.2", "9.0.2"},
 		{"9.0.3", "9.0.2"},
@@ -286,11 +371,11 @@ func TestClosestVersion_MajorFallback(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"7.5.0", "7.0.0"},  // No 7.5.0, fallback to 7.0.0
-		{"7.99.0", "7.0.0"}, // No 7.99.0, fallback to 7.0.0
-		{"8.5.0", "8.0.0"},  // No 8.5.0, fallback to 8.0.0
-		{"9.1.0", "9.0.2"},  // No 9.1.0, fallback to highest known 9.0.x
-		{"9.99.0", "9.0.2"}, // No 9.99.0, fallback to highest known 9.0.x
+		{"7.8.0", "7.7.1"},  // No 7.8.0, fallback to highest known 7.x release
+		{"7.99.0", "7.7.1"}, // No 7.99.0, fallback to highest known 7.x release
+		{"8.7.0", "8.6.0"},  // No 8.7.0 stable release yet
+		{"9.2.0", "9.1.0"},  // No 9.2.0, fallback to highest known 9.x release
+		{"9.99.0", "9.1.0"}, // No 9.99.0, fallback to highest known 9.x release
 	}
 
 	for _, tc := range testCases {
