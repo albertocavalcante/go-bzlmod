@@ -178,6 +178,11 @@ type ModuleToResolve struct {
 	// These are the resolved dependency names, not versions.
 	Dependencies []string `json:"dependencies,omitempty"`
 
+	// DependencyKeys lists the modules this one depends on as fully qualified
+	// module keys ("name@version"). This disambiguates visible duplicate module
+	// names when IncludeUnusedModules is enabled.
+	DependencyKeys []string `json:"dependency_keys,omitempty"`
+
 	// RequiredBy lists the modules that depend on this one.
 	RequiredBy []string `json:"required_by"`
 
@@ -206,6 +211,10 @@ type ModuleToResolve struct {
 
 	// BazelIncompatibilityReason explains why the module is incompatible.
 	BazelIncompatibilityReason string `json:"bazel_incompatibility_reason,omitempty"`
+
+	// Unused indicates the module is visible only because IncludeUnusedModules
+	// was enabled for this resolution.
+	Unused bool `json:"unused,omitempty"`
 
 	// Source contains information about how to fetch this module's source code.
 	// It is populated when TraceRegistryFiles is enabled.
@@ -510,6 +519,12 @@ type ResolutionOptions struct {
 	//
 	// This mirrors Bazel's --include_builtin flag for graph visibility.
 	IncludeBuiltinModules bool
+
+	// IncludeUnusedModules exposes modules from the unpruned post-selection
+	// graph, including versions made unused by MVS or override rules.
+	//
+	// This mirrors Bazel's --include_unused flag for graph visibility.
+	IncludeUnusedModules bool
 
 	// BazelToolsLookup resolves the MODULE.tools dependencies for a Bazel version.
 	// When nil, the built-in bazeltools package data is used.

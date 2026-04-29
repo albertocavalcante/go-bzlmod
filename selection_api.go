@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/albertocavalcante/go-bzlmod/graph"
 	"github.com/albertocavalcante/go-bzlmod/selection"
 )
 
@@ -165,6 +166,30 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 	}
 
 	rootDeps := buildDepSpecs(rootModule.Dependencies, true)
+	if r.options.BazelVersion != "" {
+		builtinToolSpecs := buildDepSpecs(
+			bazelToolsRootDeps(
+				r.options.BazelVersion,
+				r.options.BazelToolsLookup,
+				r.options.BazelToolsTransformer,
+			),
+			true,
+		)
+		builtinDeps := make([]selection.DepSpec, 0, len(builtinToolSpecs)+1)
+		if includeVisibleLocalConfigPlatform(r.options.BazelVersion) {
+			localConfigKey := selection.ModuleKey{Name: builtinLocalConfigPlatformModule, Version: ""}
+			modules[localConfigKey] = &selection.Module{Key: localConfigKey}
+			builtinDeps = append(builtinDeps, selection.DepSpec{Name: builtinLocalConfigPlatformModule})
+		}
+		builtinDeps = append(builtinDeps, builtinToolSpecs...)
+
+		bazelToolsKey := selection.ModuleKey{Name: builtinBazelToolsModule, Version: ""}
+		modules[bazelToolsKey] = &selection.Module{
+			Key:  bazelToolsKey,
+			Deps: builtinDeps,
+		}
+		rootDeps = append(rootDeps, selection.DepSpec{Name: builtinBazelToolsModule})
+	}
 
 	rootNodepDeps := buildDepSpecs(rootModule.NodepDependencies, true)
 	modules[rootKey] = &selection.Module{
@@ -204,6 +229,27 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 			mu.Unlock()
 
 			key := dep.ToModuleKey()
+
+			if predefinedModule, ok := modules[key]; ok {
+				mu.Lock()
+				if !visited[key] {
+					visited[key] = true
+					for _, d := range predefinedModule.Deps {
+						dk := d.ToModuleKey()
+						if !visited[dk] {
+							queue = append(queue, d)
+						}
+					}
+					for _, d := range predefinedModule.NodepDeps {
+						dk := d.ToModuleKey()
+						if !visited[dk] {
+							queue = append(queue, d)
+						}
+					}
+				}
+				mu.Unlock()
+				continue
+			}
 
 			// Check if this should skip registry fetch (git/local/archive override)
 			if override, ok := overrideIndex[dep.Name]; ok {
@@ -393,11 +439,16 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		}
 	}
 
-	// Compute reachability from root's production and dev dependency fronts.
-	// A module is dev-only iff reachable from dev deps and not reachable from prod deps.
-	var prodStarts, devStarts []selection.ModuleKey
+	sourceGraph := result.ResolvedGraph
+	if r.options.IncludeUnusedModules {
+		sourceGraph = result.UnprunedGraph
+	}
+
+	// Compute reachability from root's production, dev, and builtin fronts.
+	// A module is dev-only iff reachable from dev deps and not from prod deps.
+	var prodStarts, devStarts, builtinStarts []selection.ModuleKey
 	rootKey := selection.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}
-	if rootNode, ok := result.ResolvedGraph[rootKey]; ok {
+	if rootNode, ok := sourceGraph[rootKey]; ok {
 		for _, dep := range rootNode.Deps {
 			depKey := dep.ToModuleKey()
 			if rootProdDeps[dep.Name] {
@@ -406,28 +457,86 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 			if rootDevDeps[dep.Name] && !rootProdDeps[dep.Name] {
 				devStarts = append(devStarts, depKey)
 			}
+			if dep.Name == builtinBazelToolsModule {
+				builtinStarts = append(builtinStarts, depKey)
+			}
 		}
 	}
-	prodReachable := computeReachableKeys(result.ResolvedGraph, prodStarts)
-	devReachable := computeReachableKeys(result.ResolvedGraph, devStarts)
-
-	resolved := &ResolutionList{
-		Modules: make([]ModuleToResolve, 0, len(result.ResolvedGraph)),
+	prodReachable := computeReachableKeys(sourceGraph, prodStarts)
+	devReachable := computeReachableKeys(sourceGraph, devStarts)
+	builtinReachable := computeReachableKeys(sourceGraph, builtinStarts)
+	usedKeys := make(map[selection.ModuleKey]bool, len(result.ResolvedGraph))
+	for key := range result.ResolvedGraph {
+		usedKeys[key] = true
+	}
+	allVisible := make(map[selection.ModuleKey]bool, len(sourceGraph))
+	if r.options.IncludeUnusedModules {
+		for key := range sourceGraph {
+			if key != rootKey {
+				allVisible[key] = true
+			}
+		}
 	}
 
-	for key, module := range result.ResolvedGraph {
+	resolved := &ResolutionList{
+		Modules: make([]ModuleToResolve, 0, len(sourceGraph)),
+	}
+
+	for key, module := range sourceGraph {
 		// Skip root module
 		if key.Name == rootModule.Name && key.Version == rootModule.Version {
 			continue
 		}
+		isVisible := allVisible[key]
+		if !r.options.IncludeUnusedModules {
+			isVisible = prodReachable[key] || devReachable[key] || builtinReachable[key]
+		}
+		if !isVisible {
+			continue
+		}
+		if !r.options.IncludeBuiltinModules && builtinReachable[key] && !prodReachable[key] && !devReachable[key] {
+			continue
+		}
 
 		registryURL := registryURLForModule(defaultRegistry, key.Name, overridesByModule)
+		if key.Name == builtinBazelToolsModule || key.Name == builtinLocalConfigPlatformModule {
+			registryURL = ""
+		}
 
 		requiredBy := make([]string, 0)
+		dependencies := make([]string, 0, len(module.Deps))
+		dependencyKeys := make([]string, 0, len(module.Deps))
+
+		for _, dep := range module.Deps {
+			depKey := dep.ToModuleKey()
+			depVisible := allVisible[depKey]
+			if !r.options.IncludeUnusedModules {
+				depVisible = prodReachable[depKey] || devReachable[depKey] || builtinReachable[depKey]
+			}
+			if !depVisible {
+				continue
+			}
+			if !r.options.IncludeBuiltinModules && builtinReachable[depKey] && !prodReachable[depKey] && !devReachable[depKey] {
+				continue
+			}
+			dependencies = append(dependencies, dep.Name)
+			dependencyKeys = append(dependencyKeys, depKey.String())
+		}
+
 		// Find who requires this module
-		for depKey, depModule := range result.ResolvedGraph {
+		for depKey, depModule := range sourceGraph {
+			if depKey == rootKey {
+				// The root module should not show up in RequiredBy.
+				continue
+			}
 			for _, dep := range depModule.Deps {
 				if dep.Name == key.Name && dep.Version == key.Version {
+					if !prodReachable[depKey] && !devReachable[depKey] && !builtinReachable[depKey] {
+						continue
+					}
+					if !r.options.IncludeBuiltinModules && builtinReachable[depKey] && !prodReachable[depKey] && !devReachable[depKey] {
+						continue
+					}
 					requiredBy = append(requiredBy, depKey.String())
 				}
 			}
@@ -435,13 +544,17 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 
 		// Dev-only means reachable from root dev deps and not from root production deps.
 		isDevDep := devReachable[key] && !prodReachable[key]
+		unused := !usedKeys[key]
 
 		resolved.Modules = append(resolved.Modules, ModuleToResolve{
-			Name:          key.Name,
-			Version:       key.Version,
-			Registry:      registryURL,
-			DevDependency: isDevDep,
-			RequiredBy:    requiredBy,
+			Name:           key.Name,
+			Version:        key.Version,
+			Registry:       registryURL,
+			DevDependency:  isDevDep,
+			Dependencies:   dependencies,
+			DependencyKeys: dependencyKeys,
+			RequiredBy:     requiredBy,
+			Unused:         unused,
 		})
 
 		// Check compat level for debugging
@@ -449,8 +562,18 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 	}
 
 	slices.SortFunc(resolved.Modules, func(a, b ModuleToResolve) int {
-		return cmp.Compare(a.Name, b.Name)
+		if c := cmp.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Version, b.Version)
 	})
+
+	resolved.Graph = buildSelectionGraph(rootModule, sourceGraph, prodStarts, devStarts, builtinStarts, r.options.IncludeUnusedModules, r.options.IncludeBuiltinModules)
+	moduleDepths := calculateModuleDepthsSelection(resolved.Graph)
+	for i := range resolved.Modules {
+		key := graph.ModuleKey{Name: resolved.Modules[i].Name, Version: resolved.Modules[i].Version}
+		resolved.Modules[i].Depth = moduleDepths[key]
+	}
 
 	// Check yanked/deprecated versions if enabled
 	if r.options.CheckYanked || r.options.WarnDeprecated {
@@ -574,4 +697,114 @@ func computeReachableKeys(
 		}
 	}
 	return reachable
+}
+
+func buildSelectionGraph(
+	rootModule *ModuleInfo,
+	sourceGraph map[selection.ModuleKey]*selection.Module,
+	prodStarts, devStarts, builtinStarts []selection.ModuleKey,
+	includeUnused bool,
+	includeBuiltins bool,
+) *graph.Graph {
+	rootKey := graph.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}
+	prodReachable := computeReachableKeys(sourceGraph, prodStarts)
+	devReachable := computeReachableKeys(sourceGraph, devStarts)
+	builtinReachable := computeReachableKeys(sourceGraph, builtinStarts)
+	visible := make(map[selection.ModuleKey]bool, len(sourceGraph))
+	if includeUnused {
+		for key := range sourceGraph {
+			if key == (selection.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}) {
+				continue
+			}
+			if !includeBuiltins && builtinReachable[key] && !prodReachable[key] && !devReachable[key] {
+				continue
+			}
+			visible[key] = true
+		}
+	} else {
+		mapsCopyInto(visible, prodReachable)
+		mapsCopyInto(visible, devReachable)
+		mapsCopyInto(visible, builtinReachable)
+	}
+
+	rootDeps := make([]graph.ModuleKey, 0, len(prodStarts)+len(devStarts)+len(builtinStarts))
+	rootSeen := make(map[graph.ModuleKey]bool)
+	appendRootDep := func(key selection.ModuleKey) {
+		gk := graph.ModuleKey{Name: key.Name, Version: key.Version}
+		if !rootSeen[gk] {
+			rootSeen[gk] = true
+			rootDeps = append(rootDeps, gk)
+		}
+	}
+	for _, key := range prodStarts {
+		appendRootDep(key)
+	}
+	for _, key := range devStarts {
+		appendRootDep(key)
+	}
+	if includeBuiltins {
+		for _, key := range builtinStarts {
+			appendRootDep(key)
+		}
+	}
+
+	modules := []graph.SimpleModule{{
+		Name:         rootModule.Name,
+		Version:      rootModule.Version,
+		Dependencies: rootDeps,
+	}}
+	for key, module := range sourceGraph {
+		if key == (selection.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}) {
+			continue
+		}
+		if !visible[key] {
+			continue
+		}
+		deps := make([]graph.ModuleKey, 0, len(module.Deps))
+		for _, dep := range module.Deps {
+			depKey := dep.ToModuleKey()
+			if !visible[depKey] {
+				continue
+			}
+			deps = append(deps, graph.ModuleKey{Name: depKey.Name, Version: depKey.Version})
+		}
+		modules = append(modules, graph.SimpleModule{
+			Name:          key.Name,
+			Version:       key.Version,
+			Dependencies:  deps,
+			DevDependency: false,
+		})
+	}
+	return graph.Build(rootKey, modules)
+}
+
+func calculateModuleDepthsSelection(g *graph.Graph) map[graph.ModuleKey]int {
+	depths := make(map[graph.ModuleKey]int, len(g.Modules))
+	if g == nil {
+		return depths
+	}
+	queue := []graph.ModuleKey{g.Root}
+	depths[g.Root] = 0
+	for len(queue) > 0 {
+		key := queue[0]
+		queue = queue[1:]
+		node := g.Get(key)
+		if node == nil {
+			continue
+		}
+		for _, dep := range node.Dependencies {
+			if _, seen := depths[dep]; seen {
+				continue
+			}
+			depths[dep] = depths[key] + 1
+			queue = append(queue, dep)
+		}
+	}
+	return depths
+}
+
+func mapsCopyInto(dst, src map[selection.ModuleKey]bool) {
+	for key := range src {
+		dst[key] = true
+	}
 }

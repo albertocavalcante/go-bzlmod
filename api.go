@@ -140,6 +140,14 @@ func resolveInternal(ctx context.Context, moduleContent string, opts ResolutionO
 	}
 
 	reg := registryFromOptions(opts)
+	if opts.IncludeUnusedModules {
+		resolver := newSelectionResolver(reg, opts)
+		result, err := resolver.Resolve(ctx, moduleInfo)
+		if err != nil {
+			return nil, err
+		}
+		return result.Resolved, nil
+	}
 	resolver := newDependencyResolverWithOptions(reg, opts)
 	return resolver.ResolveDependencies(ctx, moduleInfo)
 }
@@ -156,6 +164,14 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 	}
 
 	reg := registryFromOptions(opts)
+	if opts.IncludeUnusedModules {
+		resolver := newSelectionResolver(reg, opts)
+		result, err := resolver.Resolve(ctx, moduleInfo)
+		if err != nil {
+			return nil, err
+		}
+		return result.Resolved, nil
+	}
 	resolver := newDependencyResolverWithOptions(reg, opts)
 	if err := hydrateLocalPathOverrides(resolver, moduleInfo, moduleFilePath); err != nil {
 		return nil, err
@@ -250,6 +266,15 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 	}
 
 	// Resolve dependencies (treats moduleInfo as root)
+	if opts.IncludeUnusedModules {
+		resolver := newSelectionResolver(reg, opts)
+		result, err := resolver.Resolve(ctx, moduleInfo)
+		if err != nil {
+			return nil, fmt.Errorf("resolve dependencies for %s@%s: %w", name, version, err)
+		}
+		return result.Resolved, nil
+	}
+
 	resolver := newDependencyResolverWithOptions(reg, opts)
 	result, err := resolver.ResolveDependencies(ctx, moduleInfo)
 	if err != nil {

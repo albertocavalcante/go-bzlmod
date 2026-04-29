@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/albertocavalcante/go-bzlmod/bazeltools"
+	"github.com/albertocavalcante/go-bzlmod/graph"
 )
 
 func testSHA256Hex(data string) *string {
@@ -368,6 +369,168 @@ func TestResolve_Bazel821UsesBazel820ModuleToolsSnapshot(t *testing.T) {
 	}
 	if slices.Contains(gotRequests, "/modules/rules_java/8.6.1/MODULE.bazel") {
 		t.Fatalf("registry requests = %v, unexpected 8.0.0 rules_java fallback", gotRequests)
+	}
+}
+
+func TestResolve_IncludeUnusedModulesShowsPrunedVersions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/left/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "left", version = "1.0.0")
+bazel_dep(name = "shared", version = "1.0.0")`)
+		case "/modules/right/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "right", version = "1.0.0")
+bazel_dep(name = "shared", version = "2.0.0")`)
+		case "/modules/shared/1.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "shared", version = "1.0.0")`)
+		case "/modules/shared/2.0.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "shared", version = "2.0.0")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	moduleContent := `module(name = "root", version = "1.0.0")
+bazel_dep(name = "left", version = "1.0.0")
+bazel_dep(name = "right", version = "1.0.0")`
+
+	defaultResult, err := Resolve(
+		context.Background(),
+		ContentSource(moduleContent),
+		WithRegistries(server.URL),
+	)
+	if err != nil {
+		t.Fatalf("default Resolve() error = %v", err)
+	}
+
+	withUnusedResult, err := Resolve(
+		context.Background(),
+		ContentSource(moduleContent),
+		WithRegistries(server.URL),
+		WithIncludeUnusedModules(true),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() with include_unused error = %v", err)
+	}
+
+	if len(defaultResult.Modules) != 3 {
+		t.Fatalf("default module count = %d, want 3", len(defaultResult.Modules))
+	}
+
+	gotDefault := make([]string, 0, len(defaultResult.Modules))
+	for _, module := range defaultResult.Modules {
+		gotDefault = append(gotDefault, module.Key())
+	}
+	slices.Sort(gotDefault)
+	wantDefault := []string{"left@1.0.0", "right@1.0.0", "shared@2.0.0"}
+	if !slices.Equal(gotDefault, wantDefault) {
+		t.Fatalf("default modules = %v, want %v", gotDefault, wantDefault)
+	}
+
+	gotUnused := make([]string, 0, len(withUnusedResult.Modules))
+	for _, module := range withUnusedResult.Modules {
+		gotUnused = append(gotUnused, module.Key())
+	}
+	slices.Sort(gotUnused)
+	wantUnused := []string{"left@1.0.0", "right@1.0.0", "shared@1.0.0", "shared@2.0.0"}
+	if !slices.Equal(gotUnused, wantUnused) {
+		t.Fatalf("include_unused modules = %v, want %v", gotUnused, wantUnused)
+	}
+
+	sharedUnused := map[string]ModuleToResolve{}
+	for _, module := range withUnusedResult.Modules {
+		if module.Name == "shared" {
+			sharedUnused[module.Version] = module
+		}
+	}
+	if !sharedUnused["1.0.0"].Unused {
+		t.Fatalf("shared@1.0.0 should be marked unused")
+	}
+	if sharedUnused["2.0.0"].Unused {
+		t.Fatalf("shared@2.0.0 should be marked used")
+	}
+
+	left := withUnusedResult.Graph.Get(graph.ModuleKey{Name: "left", Version: "1.0.0"})
+	right := withUnusedResult.Graph.Get(graph.ModuleKey{Name: "right", Version: "1.0.0"})
+	if left == nil || right == nil {
+		t.Fatalf("expected left and right nodes in graph")
+	}
+	if len(left.Dependencies) != 1 || left.Dependencies[0].String() != "shared@2.0.0" {
+		t.Fatalf("left deps = %v, want [shared@2.0.0]", left.Dependencies)
+	}
+	if len(right.Dependencies) != 1 || right.Dependencies[0].String() != "shared@2.0.0" {
+		t.Fatalf("right deps = %v, want [shared@2.0.0]", right.Dependencies)
+	}
+}
+
+func TestResolve_IncludeUnusedModulesStillHonorsBuiltinVisibility(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules/rules_java/5.5.1/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "5.5.1")`)
+		case "/modules/rules_java/8.11.0/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "rules_java", version = "8.11.0")`)
+		case "/modules/buildozer/7.1.2/MODULE.bazel":
+			fmt.Fprint(w, `module(name = "buildozer", version = "7.1.2")`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	moduleContent := `module(name = "root", version = "1.0.0")
+bazel_dep(name = "rules_java", version = "5.5.1")`
+
+	lookup := func(version string) []bazeltools.ToolDep {
+		return []bazeltools.ToolDep{
+			{Name: "rules_java", Version: "8.11.0"},
+			{Name: "buildozer", Version: "7.1.2"},
+		}
+	}
+
+	defaultResult, err := Resolve(
+		context.Background(),
+		ContentSource(moduleContent),
+		WithRegistries(server.URL),
+		WithBazelVersion("8.2.1"),
+		WithBazelToolsLookup(lookup),
+		WithIncludeUnusedModules(true),
+	)
+	if err != nil {
+		t.Fatalf("default Resolve() error = %v", err)
+	}
+
+	withBuiltinsResult, err := Resolve(
+		context.Background(),
+		ContentSource(moduleContent),
+		WithRegistries(server.URL),
+		WithBazelVersion("8.2.1"),
+		WithBazelToolsLookup(lookup),
+		WithIncludeUnusedModules(true),
+		WithIncludeBuiltinModules(true),
+	)
+	if err != nil {
+		t.Fatalf("Resolve() with include_builtin/include_unused error = %v", err)
+	}
+
+	gotDefault := make([]string, 0, len(defaultResult.Modules))
+	for _, module := range defaultResult.Modules {
+		gotDefault = append(gotDefault, module.Key())
+	}
+	slices.Sort(gotDefault)
+	if !slices.Equal(gotDefault, []string{"rules_java@5.5.1", "rules_java@8.11.0"}) {
+		t.Fatalf("default include_unused modules = %v, want both rules_java versions", gotDefault)
+	}
+
+	gotBuiltins := make([]string, 0, len(withBuiltinsResult.Modules))
+	for _, module := range withBuiltinsResult.Modules {
+		gotBuiltins = append(gotBuiltins, module.Key())
+	}
+	slices.Sort(gotBuiltins)
+	wantBuiltins := []string{"bazel_tools@", "buildozer@7.1.2", "local_config_platform@", "rules_java@5.5.1", "rules_java@8.11.0"}
+	if !slices.Equal(gotBuiltins, wantBuiltins) {
+		t.Fatalf("include_builtin/include_unused modules = %v, want %v", gotBuiltins, wantBuiltins)
 	}
 }
 

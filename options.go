@@ -24,6 +24,7 @@ type resolverConfig struct {
 	bazelCompatibilityMode BazelCompatibilityMode
 	bazelVersion           string
 	includeBuiltinModules  bool
+	includeUnusedModules   bool
 	bazelToolsLookup       BazelToolsLookup
 	bazelToolsTransformer  BazelToolsTransformer
 	registries             []string
@@ -151,6 +152,15 @@ func WithBazelVersion(version string) Option {
 func WithIncludeBuiltinModules(include bool) Option {
 	return func(c *resolverConfig) error {
 		c.includeBuiltinModules = include
+		return nil
+	}
+}
+
+// WithIncludeUnusedModules exposes modules from the unpruned post-selection
+// graph, mirroring `bazel mod graph --include_unused`.
+func WithIncludeUnusedModules(include bool) Option {
+	return func(c *resolverConfig) error {
+		c.includeUnusedModules = include
 		return nil
 	}
 }
@@ -335,6 +345,7 @@ func (c *resolverConfig) toResolutionOptions() ResolutionOptions {
 		BazelCompatibilityMode: c.bazelCompatibilityMode,
 		BazelVersion:           c.bazelVersion,
 		IncludeBuiltinModules:  c.includeBuiltinModules,
+		IncludeUnusedModules:   c.includeUnusedModules,
 		BazelToolsLookup:       c.bazelToolsLookup,
 		BazelToolsTransformer:  c.bazelToolsTransformer,
 		Registries:             c.registries,
