@@ -1,0 +1,2522 @@
+{
+  "key": "\u003croot\u003e",
+  "name": "release_matrix_conflict_fixture",
+  "dependencies": [
+    {
+      "key": "rules_java@5.5.1",
+      "dependencies": [
+        {
+          "key": "bazel_skylib@1.2.0",
+          "dependencies": [
+            {
+              "key": "platforms@0.0.4",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            }
+          ]
+        },
+        {
+          "key": "bazel_skylib@1.7.1",
+          "dependencies": [
+            {
+              "key": "platforms@0.0.4",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_license@1.0.0",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_license@0.0.7"
+            }
+          ]
+        },
+        {
+          "key": "platforms@0.0.4"
+        },
+        {
+          "key": "platforms@0.0.10",
+          "dependencies": [
+            {
+              "key": "rules_license@0.0.7",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_license@1.0.0",
+              "unexpanded": true
+            }
+          ]
+        },
+        {
+          "key": "rules_cc@0.0.2",
+          "dependencies": [
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.4",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.0.3",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "rules_cc@0.0.17",
+          "dependencies": [
+            {
+              "key": "bazel_features@1.21.0",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "protobuf@27.0",
+              "unexpanded": true
+            },
+            {
+              "key": "protobuf@29.0",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_features@1.19.0",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.6.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "rules_proto@4.0.0",
+          "dependencies": [
+            {
+              "key": "bazel_skylib@1.0.3",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_cc@0.0.17",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_cc@0.0.1",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.0.3",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "rules_proto@7.0.2",
+          "dependencies": [
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "protobuf@29.0",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_cc@0.0.15",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_cc@0.0.17",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_license@0.0.7",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_license@1.0.0",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.3.0",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "protobuf@27.1",
+              "dependencies": [
+                {
+                  "key": "abseil-cpp@20230802.0.bcr.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "abseil-cpp@20240116.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.4.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "jsoncpp@1.9.5",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.9",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_java@5.3.5",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_java@8.11.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_jvm_external@5.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_jvm_external@6.3",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_pkg@0.7.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_pkg@1.0.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@4.0.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.10.2",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.40.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "zlib@1.2.11",
+                  "unexpanded": true
+                },
+                {
+                  "key": "zlib@1.3.1.bcr.3",
+                  "unexpanded": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "rules_java@8.11.0",
+      "dependencies": [
+        {
+          "key": "bazel_skylib@1.7.1",
+          "unexpanded": true
+        },
+        {
+          "key": "platforms@0.0.4",
+          "unexpanded": true
+        },
+        {
+          "key": "platforms@0.0.10",
+          "unexpanded": true
+        },
+        {
+          "key": "rules_cc@0.0.17",
+          "unexpanded": true
+        },
+        {
+          "key": "abseil-cpp@20230802.1",
+          "dependencies": [
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_cc@0.0.17",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.4.1",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "googletest@1.14.0",
+              "dependencies": [
+                {
+                  "key": "abseil-cpp@20240116.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                },
+                {
+                  "key": "abseil-cpp@20230125.1",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.4.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.6",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.6",
+                      "dependencies": [
+                        {
+                          "key": "platforms@0.0.6",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "googletest@1.14.0.bcr.1",
+              "dependencies": [
+                {
+                  "key": "abseil-cpp@20230125.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "abseil-cpp@20240116.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                },
+                {
+                  "key": "re2@2023-09-01",
+                  "dependencies": [
+                    {
+                      "key": "abseil-cpp@20240116.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.8",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_python@0.40.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "abseil-cpp@20230802.0",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.4.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "googletest@1.14.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.7",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.8",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.17",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "google_benchmark@1.8.2",
+                          "dependencies": [
+                            {
+                              "key": "bazel_skylib@1.4.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "bazel_skylib@1.7.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "platforms@0.0.6",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "platforms@0.0.10",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.6",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.17",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "libpfm@4.11.0",
+                              "dependencies": [
+                                {
+                                  "key": "platforms@0.0.6",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "platforms@0.0.10",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_foreign_cc@0.9.0",
+                                  "unexpanded": true
+                                }
+                              ]
+                            },
+                            {
+                              "key": "rules_foreign_cc@0.9.0",
+                              "dependencies": [
+                                {
+                                  "key": "bazel_skylib@1.7.1",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "platforms@0.0.4",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "platforms@0.0.10",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "bazel_skylib@1.1.1",
+                                  "dependencies": [
+                                    {
+                                      "key": "platforms@0.0.4",
+                                      "unexpanded": true
+                                    },
+                                    {
+                                      "key": "platforms@0.0.10",
+                                      "unexpanded": true
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "key": "pybind11_bazel@2.11.1",
+                      "dependencies": [
+                        {
+                          "key": "platforms@0.0.7",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.8",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.17",
+                          "unexpanded": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "rules_python@0.25.0",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.3.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.4",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "protobuf@21.7",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "protobuf@29.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_proto@5.3.0-21.7",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_proto@7.0.2",
+                          "unexpanded": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "platforms@0.0.7",
+              "dependencies": [
+                {
+                  "key": "rules_license@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@1.0.0",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "rules_cc@0.0.8",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.6"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "abseil-cpp@20240116.1",
+          "dependencies": [
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "googletest@1.14.0.bcr.1",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.5.0",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "platforms@0.0.8",
+              "dependencies": [
+                {
+                  "key": "rules_license@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@1.0.0",
+                  "unexpanded": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "bazel_features@1.11.0",
+          "dependencies": [
+            {
+              "key": "bazel_skylib@1.6.1",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            }
+          ]
+        },
+        {
+          "key": "bazel_features@1.21.0",
+          "dependencies": [
+            {
+              "key": "bazel_skylib@1.6.1",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            }
+          ]
+        },
+        {
+          "key": "bazel_skylib@1.6.1",
+          "dependencies": [
+            {
+              "key": "platforms@0.0.4",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            }
+          ]
+        },
+        {
+          "key": "protobuf@27.0",
+          "dependencies": [
+            {
+              "key": "abseil-cpp@20240116.1",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.4.1",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.8",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_cc@0.0.17",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_proto@4.0.0",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_proto@7.0.2",
+              "unexpanded": true
+            },
+            {
+              "key": "abseil-cpp@20230802.0.bcr.1",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.4.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "googletest@1.14.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "googletest@1.14.0.bcr.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "jsoncpp@1.9.5"
+            },
+            {
+              "key": "rules_cc@0.0.9",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "rules_java@5.3.5",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.2.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.2",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@4.0.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@7.0.2",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "rules_jvm_external@5.1",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.4.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "stardoc@0.5.3",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.2.1",
+                      "dependencies": [
+                        {
+                          "key": "platforms@0.0.4",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "rules_java@4.0.0",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.0.3",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key": "stardoc@0.7.1",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.6.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_jvm_external@6.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@0.0.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@1.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_java@7.6.1",
+                      "dependencies": [
+                        {
+                          "key": "bazel_features@1.11.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_features@1.21.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.6.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.4",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.2",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.17",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_license@0.0.3",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_license@1.0.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_proto@4.0.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_proto@7.0.2",
+                          "unexpanded": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "rules_jvm_external@6.1",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.4.2",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.8",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_android@0.1.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_kotlin@1.9.6",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_java@7.3.2",
+                          "dependencies": [
+                            {
+                              "key": "bazel_skylib@1.2.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "bazel_skylib@1.7.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "platforms@0.0.4",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "platforms@0.0.10",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.2",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.17",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_license@0.0.3",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_license@1.0.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_proto@4.0.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_proto@7.0.2",
+                              "unexpanded": true
+                            }
+                          ]
+                        },
+                        {
+                          "key": "rules_kotlin@1.9.0",
+                          "dependencies": [
+                            {
+                              "key": "bazel_skylib@1.4.2",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "bazel_skylib@1.7.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "platforms@0.0.6",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "platforms@0.0.10",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.8",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.17",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_jvm_external@6.3",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_pkg@0.7.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_pkg@1.0.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_proto@5.3.0-21.7",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_proto@7.0.2",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_python@0.23.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_python@0.40.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "stardoc@0.5.6",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_java@6.4.0",
+                              "dependencies": [
+                                {
+                                  "key": "bazel_skylib@1.2.0",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "bazel_skylib@1.7.1",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "platforms@0.0.4",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "platforms@0.0.10",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_cc@0.0.2",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_cc@0.0.17",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_license@0.0.3",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_license@1.0.0",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_proto@4.0.0",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_proto@7.0.2",
+                                  "unexpanded": true
+                                }
+                              ]
+                            },
+                            {
+                              "key": "rules_jvm_external@5.3",
+                              "dependencies": [
+                                {
+                                  "key": "bazel_skylib@1.4.1",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "bazel_skylib@1.7.1",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "stardoc@0.5.3",
+                                  "unexpanded": true
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "key": "stardoc@0.5.6",
+                          "dependencies": [
+                            {
+                              "key": "bazel_skylib@1.2.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "bazel_skylib@1.7.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_license@0.0.3",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_license@1.0.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_java@6.0.0",
+                              "dependencies": [
+                                {
+                                  "key": "bazel_skylib@1.2.0",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "bazel_skylib@1.7.1",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "platforms@0.0.4",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "platforms@0.0.10",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_cc@0.0.2",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_cc@0.0.17",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_proto@4.0.0",
+                                  "unexpanded": true
+                                },
+                                {
+                                  "key": "rules_proto@7.0.2",
+                                  "unexpanded": true
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "rules_jvm_external@6.3",
+              "dependencies": [
+                {
+                  "key": "bazel_features@1.21.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_kotlin@1.9.6",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@1.0.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_features@1.15.0",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.6.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    }
+                  ]
+                },
+                {
+                  "key": "rules_android@0.1.1"
+                },
+                {
+                  "key": "rules_java@7.10.0",
+                  "dependencies": [
+                    {
+                      "key": "bazel_features@1.11.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_features@1.21.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.6.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.4",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.2",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@0.0.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@1.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@4.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@7.0.2",
+                      "unexpanded": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "rules_pkg@0.7.0",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.0.3",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@0.0.3",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@1.0.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.40.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.4.0"
+                }
+              ]
+            },
+            {
+              "key": "rules_pkg@1.0.1",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@1.0.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.40.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.4.2",
+                  "dependencies": [
+                    {
+                      "key": "platforms@0.0.4",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    }
+                  ]
+                },
+                {
+                  "key": "rules_python@0.31.0",
+                  "dependencies": [
+                    {
+                      "key": "bazel_features@1.1.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_features@1.21.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.3.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.4",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "protobuf@21.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "protobuf@29.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@5.3.0-21.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@7.0.2",
+                      "unexpanded": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "rules_python@0.10.2"
+            },
+            {
+              "key": "rules_python@0.40.0",
+              "dependencies": [
+                {
+                  "key": "bazel_features@1.21.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "protobuf@29.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@7.0.2",
+                  "unexpanded": true
+                },
+                {
+                  "key": "stardoc@0.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_features@1.9.1",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.5.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    }
+                  ]
+                },
+                {
+                  "key": "protobuf@29.0-rc2",
+                  "dependencies": [
+                    {
+                      "key": "abseil-cpp@20230802.0.bcr.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "abseil-cpp@20240116.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_features@1.17.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_features@1.21.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "jsoncpp@1.9.5",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.8",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_fuzzing@0.5.2",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_java@7.12.2",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_jvm_external@6.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_kotlin@1.9.6",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@1.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_pkg@1.0.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_python@0.28.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_shell@0.2.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "zlib@1.3.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "zlib@1.3.1.bcr.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.13",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "protobuf@29.0",
+                          "unexpanded": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key": "rules_cc@0.0.14",
+                  "dependencies": [
+                    {
+                      "key": "bazel_features@1.19.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_features@1.21.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "zlib@1.2.11"
+            },
+            {
+              "key": "zlib@1.3.1.bcr.3",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "protobuf@29.0",
+          "dependencies": [
+            {
+              "key": "abseil-cpp@20230802.0.bcr.1",
+              "unexpanded": true
+            },
+            {
+              "key": "abseil-cpp@20240116.1",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_features@1.21.0",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "jsoncpp@1.9.5",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.8",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_cc@0.0.17",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_jvm_external@6.3",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_license@1.0.0",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_pkg@1.0.1",
+              "unexpanded": true
+            },
+            {
+              "key": "rules_python@0.40.0",
+              "unexpanded": true
+            },
+            {
+              "key": "zlib@1.3.1.bcr.3",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_features@1.17.0",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.6.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "bazel_skylib@1.7.0",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@1.0.0",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "rules_cc@0.0.16",
+              "dependencies": [
+                {
+                  "key": "bazel_features@1.19.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_features@1.21.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "protobuf@27.0",
+                  "unexpanded": true
+                }
+              ]
+            },
+            {
+              "key": "rules_fuzzing@0.5.2",
+              "dependencies": [
+                {
+                  "key": "abseil-cpp@20240116.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.5.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.28.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.40.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_java@6.5.2",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.2.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.4",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.2",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@0.0.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@1.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@4.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@7.0.2",
+                      "unexpanded": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "rules_java@7.12.2",
+              "dependencies": [
+                {
+                  "key": "abseil-cpp@20230802.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "abseil-cpp@20240116.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_features@1.11.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_features@1.21.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.6.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@0.0.3",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_license@1.0.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@7.0.2",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.10",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "stardoc@0.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "stardoc@0.7.0",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.6.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_java@7.6.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_jvm_external@6.3",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_license@0.0.7",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_license@1.0.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_jvm_external@5.2",
+                          "dependencies": [
+                            {
+                              "key": "bazel_skylib@1.4.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "bazel_skylib@1.7.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "stardoc@0.5.3",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "stardoc@0.7.1",
+                              "unexpanded": true
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key": "rules_proto@6.0.2",
+                  "dependencies": [
+                    {
+                      "key": "bazel_features@1.21.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.3.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@0.0.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@1.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_features@1.4.1",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.5.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "rules_kotlin@1.9.6",
+              "dependencies": [
+                {
+                  "key": "bazel_skylib@1.6.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.6",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@7.0.2",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_python@0.40.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_java@7.2.0",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.2.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.4",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.2",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@0.0.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_license@1.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@4.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@7.0.2",
+                      "unexpanded": true
+                    }
+                  ]
+                },
+                {
+                  "key": "rules_proto@5.3.0-21.7",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.3.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "protobuf@21.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    }
+                  ]
+                },
+                {
+                  "key": "rules_python@0.23.1",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.3.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.4",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "platforms@0.0.10",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "protobuf@21.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@5.3.0-21.7",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@7.0.2",
+                      "unexpanded": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "rules_python@0.28.0",
+              "dependencies": [
+                {
+                  "key": "bazel_features@1.21.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.3.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.4",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@5.3.0-21.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_proto@7.0.2",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_features@1.1.1"
+                },
+                {
+                  "key": "protobuf@21.7",
+                  "dependencies": [
+                    {
+                      "key": "abseil-cpp@20240116.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.0.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "googletest@1.14.0.bcr.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_cc@0.0.17",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_java@4.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_jvm_external@6.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_pkg@0.7.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_pkg@1.0.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@4.0.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_proto@7.0.2",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_python@0.10.2",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "rules_python@0.40.0",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "zlib@1.2.11",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "zlib@1.3.1.bcr.3",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "abseil-cpp@20211102.0",
+                      "dependencies": [
+                        {
+                          "key": "platforms@0.0.4",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.17",
+                          "unexpanded": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "googletest@1.11.0",
+                      "dependencies": [
+                        {
+                          "key": "abseil-cpp@20240116.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.4",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_cc@0.0.17",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "abseil-cpp@20210324.2",
+                          "dependencies": [
+                            {
+                              "key": "rules_cc@0.0.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.17",
+                              "unexpanded": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "key": "rules_jvm_external@4.4.2",
+                      "dependencies": [
+                        {
+                          "key": "bazel_skylib@1.2.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "stardoc@0.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "stardoc@0.5.1",
+                          "dependencies": [
+                            {
+                              "key": "bazel_skylib@1.0.3",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "bazel_skylib@1.7.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_java@4.0.0",
+                              "unexpanded": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "key": "upb@0.0.0-20220923-a547704",
+                      "dependencies": [
+                        {
+                          "key": "abseil-cpp@20211102.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "abseil-cpp@20240116.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.0.3",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "bazel_skylib@1.7.1",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.10",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_proto@4.0.0",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "rules_proto@7.0.2",
+                          "unexpanded": true
+                        },
+                        {
+                          "key": "platforms@0.0.5"
+                        },
+                        {
+                          "key": "protobuf@3.19.0",
+                          "dependencies": [
+                            {
+                              "key": "bazel_skylib@1.0.3",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "bazel_skylib@1.7.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.1",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_cc@0.0.17",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_java@4.0.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_proto@4.0.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_proto@7.0.2",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_python@0.4.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "rules_python@0.40.0",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "zlib@1.2.11",
+                              "unexpanded": true
+                            },
+                            {
+                              "key": "zlib@1.3.1.bcr.3",
+                              "unexpanded": true
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "rules_shell@0.2.0",
+              "dependencies": [
+                {
+                  "key": "bazel_features@1.21.0",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.6.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_skylib@1.7.1",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "bazel_features@1.18.0",
+                  "dependencies": [
+                    {
+                      "key": "bazel_skylib@1.6.1",
+                      "unexpanded": true
+                    },
+                    {
+                      "key": "bazel_skylib@1.7.1",
+                      "unexpanded": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "zlib@1.3.1",
+              "dependencies": [
+                {
+                  "key": "platforms@0.0.7",
+                  "unexpanded": true
+                },
+                {
+                  "key": "platforms@0.0.10",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.8",
+                  "unexpanded": true
+                },
+                {
+                  "key": "rules_cc@0.0.17",
+                  "unexpanded": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "rules_cc@0.0.15",
+          "dependencies": [
+            {
+              "key": "bazel_features@1.19.0",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_features@1.21.0",
+              "unexpanded": true
+            },
+            {
+              "key": "bazel_skylib@1.7.1",
+              "unexpanded": true
+            },
+            {
+              "key": "platforms@0.0.10",
+              "unexpanded": true
+            },
+            {
+              "key": "protobuf@27.0",
+              "unexpanded": true
+            },
+            {
+              "key": "protobuf@29.0",
+              "unexpanded": true
+            }
+          ]
+        },
+        {
+          "key": "rules_license@0.0.3"
+        },
+        {
+          "key": "rules_license@1.0.0"
+        }
+      ]
+    }
+  ],
+  "root": true
+}
