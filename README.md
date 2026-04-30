@@ -16,9 +16,15 @@ dependencies through `MODULE.bazel` files. When you run `bazel build`, here's wh
 under the hood:
 
 **1. Discovery.** Bazel reads your root `MODULE.bazel`, fetches each `bazel_dep`'s
-`MODULE.bazel` from a registry (by default the [Bazel Central Registry](https://registry.bazel.build)),
-then recursively fetches their dependencies. This builds a raw dependency graph containing
-every version of every module that anyone in the transitive tree requested.
+`MODULE.bazel` from a registry, then recursively fetches their dependencies. This builds
+a raw dependency graph containing every version of every module that anyone in the
+transitive tree requested.
+
+By default Bazel uses the [Bazel Central Registry](https://registry.bazel.build) (BCR).
+You can specify additional or alternative registries with `--registry` flags — Bazel
+searches them in order and the first registry where a module is found becomes the source
+for **all versions** of that module (module stickiness). This matches
+[ModuleFileFunction.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileFunction.java).
 
 **2. Selection.** With the full graph in hand, Bazel applies
 [Minimal Version Selection](https://research.swtch.com/vgo-mvs) (MVS) — for each module,
@@ -50,7 +56,7 @@ in the Bazel Central Registry across Bazel versions 6.6.0 through 9.1.0.
 ## Features
 
 - **Bazel Selection Algorithm** — Full compatibility-level and override support ([resolver.go](resolver.go))
-- **Multi-Registry** — Chain registries with priority ordering ([registry.go](registry.go))
+- **Multi-Registry** — Chain registries with priority ordering and module stickiness ([registry_chain.go](registry_chain.go))
 - **Override Support** — `single_version_override`, `multiple_version_override`, `git_override`, `local_path_override`, `archive_override`
 - **Graph Queries** — Dependency paths, explanations, cycle detection ([graph/](graph/))
 - **Bazel Compatibility** — Validate `bazel_compatibility` constraints ([bazel_compat.go](bazel_compat.go))
@@ -126,10 +132,13 @@ result, err := gobzlmod.Resolve(ctx, src,
     // Include dev_dependency modules
     gobzlmod.WithDevDeps(),
 
-    // Use custom registries (first match wins)
+    // Use custom registries (mirrors Bazel's --registry flag)
+    // Searched in order; once a module is found in a registry,
+    // all versions of that module come from that registry.
     gobzlmod.WithRegistries(
-        "https://my-registry.example.com",
-        gobzlmod.DefaultRegistry,  // BCR fallback
+        "https://my-registry.example.com",  // Check first
+        "file:///local/mirror",             // Then local
+        gobzlmod.DefaultRegistry,           // BCR fallback
     ),
 
     // Set request timeout
@@ -300,6 +309,24 @@ The resolver implements Bazel's full selection algorithm including:
 Verified against 976 of 990 modules in the [Bazel Central Registry](https://github.com/bazelbuild/bazel-central-registry) via `file://` resolution (~11 seconds, zero failures).
 
 Reference: [Selection.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java), [Discovery.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java)
+
+### Multi-registry behavior
+
+This library mirrors Bazel's `--registry` flag semantics
+([ModuleFileFunction.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileFunction.java)):
+
+- Registries are searched **in order** (first match wins)
+- **Module stickiness** — once a module is found in a registry, all versions of that
+  module come from that registry
+- Supports `https://`, `http://`, and `file://` URL schemes
+- Each module name gets independent sticky-mapping (module A from Reg1, module B from Reg2)
+
+The library also provides **enhanced resilience** beyond Bazel's current behavior: if a
+cached registry returns a server error (HTTP 5xx, TLS failure, timeout), the library falls
+back to the next registry instead of failing immediately. This addresses known Bazel issues
+including [#26442](https://github.com/bazelbuild/bazel/issues/26442) (missing `source.json`
+not falling back) and [#28101](https://github.com/bazelbuild/bazel/issues/28101) (BCR TLS
+outage causing hard failures).
 
 ## Known Limitations
 
