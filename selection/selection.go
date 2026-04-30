@@ -587,24 +587,25 @@ func computeAllPossibleResolutions(
 ) map[depSpecKey][]resolutionResult {
 	result := make(map[depSpecKey][]resolutionResult)
 
-	// Collect all distinct DepSpecs with max_compatibility_level
+	// Collect all distinct DepSpecs with max_compatibility_level.
+	// When multiple modules declare the same dep with different max_compat values,
+	// keep the most permissive (highest) to maximize the strategy search space.
 	seen := make(map[depSpecKey]DepSpec)
+	collectDep := func(dep DepSpec) {
+		if dep.MaxCompatibilityLevel < 0 {
+			return
+		}
+		key := depSpecKey{Name: dep.Name, Version: dep.Version}
+		if existing, ok := seen[key]; !ok || dep.MaxCompatibilityLevel > existing.MaxCompatibilityLevel {
+			seen[key] = dep
+		}
+	}
 	for _, module := range graph.Modules {
 		for _, dep := range module.Deps {
-			if dep.MaxCompatibilityLevel >= 0 {
-				key := depSpecKey{Name: dep.Name, Version: dep.Version}
-				if _, ok := seen[key]; !ok {
-					seen[key] = dep
-				}
-			}
+			collectDep(dep)
 		}
 		for _, dep := range module.NodepDeps {
-			if dep.MaxCompatibilityLevel >= 0 {
-				key := depSpecKey{Name: dep.Name, Version: dep.Version}
-				if _, ok := seen[key]; !ok {
-					seen[key] = dep
-				}
-			}
+			collectDep(dep)
 		}
 	}
 
