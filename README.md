@@ -7,11 +7,11 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/albertocavalcante/go-bzlmod)](https://goreportcard.com/report/github.com/albertocavalcante/go-bzlmod)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-A Go library for Bazel module dependency resolution. Implements [Minimal Version Selection](https://research.swtch.com/vgo-mvs) (MVS), parses `MODULE.bazel` files, and provides dependency graph analysis.
+A Go library for Bazel module dependency resolution. Implements Bazel's [Selection algorithm](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java) with compatibility levels, multiple-version overrides, and graph pruning. Parses `MODULE.bazel` files and provides dependency graph analysis.
 
 ## Features
 
-- **MVS Resolution** — Pure MVS with concurrent fetching ([resolver.go](resolver.go))
+- **Bazel Selection Algorithm** — Full compatibility-level and override support ([resolver.go](resolver.go))
 - **Multi-Registry** — Chain registries with priority ordering ([registry.go](registry.go))
 - **Override Support** — `single_version_override`, `multiple_version_override`, `git_override`, `local_path_override`, `archive_override`
 - **Graph Queries** — Dependency paths, explanations, cycle detection ([graph/](graph/))
@@ -234,40 +234,64 @@ See [Graph API](docs/graph-api.md) for complete documentation.
 
 ## Packages
 
-| Package                     | Description                               |
-| --------------------------- | ----------------------------------------- |
-| [`gobzlmod`](.)             | Main API: `Resolve`, `Parse`, core types  |
-| [`ast`](ast/)               | MODULE.bazel AST parsing                  |
-| [`graph`](graph/)           | Dependency graph construction and queries |
-| [`label`](label/)           | Bazel label parsing (`@repo//pkg:target`) |
-| [`lockfile`](lockfile/)     | `MODULE.bazel.lock` parsing and generation |
-| [`registry`](registry/)     | Registry client and types                 |
-| [`selection`](selection/)   | MVS algorithm implementation              |
-| [`bazeltools`](bazeltools/) | MODULE.tools implicit dependencies        |
+| Package                     | Description                                     |
+| --------------------------- | ----------------------------------------------- |
+| [`gobzlmod`](.)             | Main API: `Resolve`, `Parse`, core types        |
+| [`ast`](ast/)               | MODULE.bazel AST parsing                        |
+| [`graph`](graph/)           | Dependency graph construction and queries       |
+| [`label`](label/)           | Bazel label parsing (`@repo//pkg:target`)       |
+| [`lockfile`](lockfile/)     | `MODULE.bazel.lock` parsing and generation      |
+| [`registry`](registry/)     | Registry client and types                       |
+| [`selection`](selection/)   | Bazel selection algorithm (MVS + compat levels) |
+| [`bazeltools`](bazeltools/) | MODULE.tools implicit dependencies              |
 
 See [Package Architecture](docs/packages.md) for details.
 
-## Algorithm Note
+## Bazel Parity
 
-This library implements pure MVS. Bazel's resolver includes additional heuristics that may produce different results:
+The resolver implements Bazel's full selection algorithm including:
 
-```
-Module: platforms
-go-bzlmod: 0.0.4  (declared version, pure MVS)
-Bazel:     0.0.7  (upgraded via compatibility mapping)
-```
+- Compatibility-level enforcement and `max_compatibility_level` constraints
+- `multiple_version_override` with strategy enumeration
+- Two-phase graph walking (nodep validation + pruning)
+- `dev_dependency` only honored on root module; transitive dev edges ignored
+- Non-registry overrides (`git_override`, `local_path_override`, `archive_override`) resolve as versionless modules
+- `bazel_dep(..., repo_name = None)` treated as nodep edge (selection only, no transitive deps)
+- Implicit `MODULE.tools` dependency injection per Bazel version
 
-Use this library for dependency analysis and tooling. For exact Bazel parity, use `bazel mod graph`.
+Verified against 976 of 990 modules in the [Bazel Central Registry](https://github.com/bazelbuild/bazel-central-registry) via `file://` resolution (~11 seconds, zero failures).
 
-## Bazel Parity Notes
+Reference: [Selection.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java), [Discovery.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Discovery.java)
 
-The resolver matches several Bazel-specific bzlmod semantics that are easy to miss:
+## Known Limitations
 
-- `dev_dependency` is only honored on the root module. Transitive `dev_dependency` edges are ignored.
-- Non-registry overrides (`git_override`, `local_path_override`, `archive_override`) resolve as versionless modules (`version = ""`).
-- `bazel_dep(..., repo_name = None)` is treated as a nodep edge: it participates in selection constraints but does not create a required dependency edge by itself.
+### Starlark expressions in MODULE.bazel
 
-Reference: [Selection.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java)
+The parser handles literal string values in `bazel_dep()` and override declarations.
+It does **not** evaluate Starlark expressions. Modules that compute versions dynamically
+will resolve with empty versions, causing resolution to fail.
+
+**Affected BCR modules** (3 of 990):
+
+| Module         | Expression                                          | Evaluates to     |
+| -------------- | --------------------------------------------------- | ---------------- |
+| `rules_kotlin` | `version = ".".join(proto_version.split(".")[-2:])` | `"33.4"`         |
+| `lanelet2`     | `version = BOOST_VERSION + ".bcr.2"`                | `"1.89.0.bcr.2"` |
+| `cel-cpp`      | `version = ANTLR4_VERSION`                          | `"4.13.2"`       |
+
+Bazel resolves these correctly because it evaluates Starlark. This library's parser
+treats MODULE.bazel as a structured format and extracts literal values only.
+
+### Workspace-relative local_path_override
+
+Modules that are sub-modules in a monorepo often declare `local_path_override`
+with relative paths pointing to sibling directories (e.g., `path = ".."`).
+These paths only exist within the module's git workspace. When resolving
+MODULE.bazel content in isolation (e.g., from a BCR clone or as a string),
+these overrides will fail because the referenced paths don't exist.
+
+This affects 11 of 990 BCR modules. The library handles `local_path_override`
+correctly when paths exist — the limitation is environmental, not algorithmic.
 
 ## Documentation
 
@@ -281,16 +305,28 @@ Reference: [Selection.java](https://github.com/bazelbuild/bazel/blob/master/src/
 
 ```bash
 go test ./...              # Unit tests
-cd e2e && go test ./... -v # E2E tests against real Bazel
 go test -cover ./...       # With coverage
 go test -race ./...        # Race detection
 ```
 
-Release-matrix Bazel parity checks are opt-in:
+### BCR corpus test
+
+Resolves the latest version of every module in a local [Bazel Central Registry](https://github.com/bazelbuild/bazel-central-registry) clone using `file://` registry (no network, no Bazel needed):
 
 ```bash
-cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 GO_BZLMOD_E2E_RELEASE_MATRIX_REFRESH=1 go test ./... -run TestE2E_BazelReleaseMatrix_ToolSelectionParity
-cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 GO_BZLMOD_E2E_RELEASE_MATRIX_LIVE=1 go test ./... -run TestE2E_BazelReleaseMatrix_ToolSelectionParity
+cd e2e
+GO_BZLMOD_E2E_BCR_CORPUS=1 \
+GO_BZLMOD_E2E_BCR_PATH=/path/to/bazel-central-registry \
+  go test -run TestE2E_BCRCorpus -v
+```
+
+### Release matrix parity
+
+Compares library output against golden files generated from real `bazel mod graph --output=json` across 37 Bazel versions (6.6.0 through 9.1.0):
+
+```bash
+cd e2e
+GO_BZLMOD_E2E_RELEASE_MATRIX=1 go test -run TestE2E_BazelReleaseMatrix -v
 ```
 
 ## Contributing
