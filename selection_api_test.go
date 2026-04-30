@@ -15,15 +15,9 @@ import (
 	"github.com/albertocavalcante/go-bzlmod/selection"
 )
 
-// resolveWithSelection is a test helper that mimics the old resolveWithSelection API.
-func resolveWithSelection(ctx context.Context, moduleContent string, opts ResolutionOptions) (*selectionResult, error) {
-	moduleInfo, err := ParseModuleContent(moduleContent)
-	if err != nil {
-		return nil, fmt.Errorf("parse module content: %w", err)
-	}
-	reg := registryFromOptions(opts)
-	resolver := newSelectionResolver(reg, opts)
-	return resolver.Resolve(ctx, moduleInfo)
+// resolveWithSelection is a test helper for direct resolver access.
+func resolveWithSelection(ctx context.Context, moduleContent string, opts ResolutionOptions) (*ResolutionList, error) {
+	return ResolveContent(ctx, moduleContent, opts)
 }
 
 func TestResolveWithSelection_Basic(t *testing.T) {
@@ -63,13 +57,13 @@ bazel_dep(name = "gazelle", version = "0.32.0")`
 	}
 
 	// Should have resolved modules
-	if result.Resolved == nil {
+	if result == nil {
 		t.Fatal("Resolved should not be nil")
 	}
 
 	// MVS should select highest version of rules_go (0.41.0 > 0.40.0)
 	foundRulesGo := false
-	for _, m := range result.Resolved.Modules {
+	for _, m := range result.Modules {
 		if m.Name == "rules_go" {
 			if m.Version != "0.41.0" {
 				t.Errorf("expected rules_go@0.41.0, got rules_go@%s", m.Version)
@@ -82,7 +76,7 @@ bazel_dep(name = "gazelle", version = "0.32.0")`
 	}
 
 	// MVS should select highest version of bazel_skylib (1.4.1 > 1.4.0)
-	for _, m := range result.Resolved.Modules {
+	for _, m := range result.Modules {
 		if m.Name == "bazel_skylib" {
 			if m.Version != "1.4.1" {
 				t.Errorf("expected bazel_skylib@1.4.1, got bazel_skylib@%s", m.Version)
@@ -90,10 +84,6 @@ bazel_dep(name = "gazelle", version = "0.32.0")`
 		}
 	}
 
-	// Should have BFS order
-	if len(result.BFSOrder) == 0 {
-		t.Error("BFSOrder should not be empty")
-	}
 }
 
 func TestResolveWithSelection_DevDeps(t *testing.T) {
@@ -123,7 +113,7 @@ bazel_dep(name = "rules_testing", version = "0.1.0", dev_dependency = True)`
 			t.Fatalf("error: %v", err)
 		}
 
-		for _, m := range result.Resolved.Modules {
+		for _, m := range result.Modules {
 			if m.Name == "rules_testing" {
 				t.Error("rules_testing should not be included without dev deps")
 			}
@@ -141,7 +131,7 @@ bazel_dep(name = "rules_testing", version = "0.1.0", dev_dependency = True)`
 		}
 
 		foundDevDep := false
-		for _, m := range result.Resolved.Modules {
+		for _, m := range result.Modules {
 			if m.Name == "rules_testing" {
 				foundDevDep = true
 			}
@@ -183,7 +173,7 @@ bazel_dep(name = "dev_tool", version = "1.0.0", dev_dependency = True)`
 	}
 
 	modules := map[string]ModuleToResolve{}
-	for _, m := range result.Resolved.Modules {
+	for _, m := range result.Modules {
 		modules[m.Name] = m
 	}
 
@@ -197,11 +187,11 @@ bazel_dep(name = "dev_tool", version = "1.0.0", dev_dependency = True)`
 		t.Fatalf("prod_lib should be DevDependency=false, got true")
 	}
 
-	if result.Resolved.Summary.DevModules != 2 {
-		t.Fatalf("Summary.DevModules = %d, want 2", result.Resolved.Summary.DevModules)
+	if result.Summary.DevModules != 2 {
+		t.Fatalf("Summary.DevModules = %d, want 2", result.Summary.DevModules)
 	}
-	if result.Resolved.Summary.ProductionModules != 1 {
-		t.Fatalf("Summary.ProductionModules = %d, want 1", result.Resolved.Summary.ProductionModules)
+	if result.Summary.ProductionModules != 1 {
+		t.Fatalf("Summary.ProductionModules = %d, want 1", result.Summary.ProductionModules)
 	}
 }
 
@@ -236,7 +226,7 @@ bazel_dep(name = "root_dev", version = "1.0.0", dev_dependency = True)`
 	}
 
 	modules := map[string]ModuleToResolve{}
-	for _, m := range result.Resolved.Modules {
+	for _, m := range result.Modules {
 		modules[m.Name] = m
 	}
 
@@ -278,7 +268,7 @@ bazel_dep(name = "nodep_target", version = "1.0.0", repo_name = None)`
 	}
 
 	modules := map[string]bool{}
-	for _, m := range result.Resolved.Modules {
+	for _, m := range result.Modules {
 		modules[m.Name] = true
 	}
 	if !modules["prod_parent"] {
@@ -319,7 +309,7 @@ single_version_override(module_name = "bazel_skylib", version = "1.5.0")`
 			t.Fatalf("error: %v", err)
 		}
 
-		for _, m := range result.Resolved.Modules {
+		for _, m := range result.Modules {
 			if m.Name == "bazel_skylib" {
 				if m.Version != "1.5.0" {
 					t.Errorf("expected bazel_skylib@1.5.0 (overridden), got @%s", m.Version)
@@ -365,7 +355,7 @@ multiple_version_override(module_name = "shared", versions = ["1.0.0", "2.0.0"])
 
 		hasSharedV1 := false
 		hasSharedV2 := false
-		for _, m := range result.Resolved.Modules {
+		for _, m := range result.Modules {
 			if m.Name == "shared" && m.Version == "1.0.0" {
 				hasSharedV1 = true
 			}
@@ -374,7 +364,7 @@ multiple_version_override(module_name = "shared", versions = ["1.0.0", "2.0.0"])
 			}
 		}
 		if !hasSharedV1 || !hasSharedV2 {
-			t.Fatalf("expected both shared@1.0.0 and shared@2.0.0, got modules: %+v", result.Resolved.Modules)
+			t.Fatalf("expected both shared@1.0.0 and shared@2.0.0, got modules: %+v", result.Modules)
 		}
 	})
 
@@ -393,7 +383,7 @@ git_override(module_name = "bazel_skylib", remote = "https://github.com/bazelbui
 		}
 
 		// Should resolve successfully even though we didn't mock bazel_skylib in registry
-		if result.Resolved == nil {
+		if result == nil {
 			t.Error("should resolve with git_override")
 		}
 	})
@@ -412,7 +402,7 @@ git_override(module_name = "local_mod", remote = "https://example.com/local_mod.
 			t.Fatalf("error: %v", err)
 		}
 
-		for _, m := range result.Resolved.Modules {
+		for _, m := range result.Modules {
 			if m.Name == "local_mod" {
 				if m.Version != "" {
 					t.Fatalf("local_mod version = %q, want empty version for non-registry override", m.Version)
@@ -461,7 +451,7 @@ local_path_override(module_name = "local_mod", path = %q)`, localPath)
 		}
 
 		modules := map[string]ModuleToResolve{}
-		for _, m := range result.Resolved.Modules {
+		for _, m := range result.Modules {
 			modules[m.Name] = m
 		}
 		localMod, ok := modules["local_mod"]
@@ -534,7 +524,7 @@ bazel_dep(name = "rules_go", version = "0.41.0")`
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if len(result.Resolved.Warnings) == 0 {
+		if len(result.Warnings) == 0 {
 			t.Error("expected warning for yanked version")
 		}
 	})
@@ -574,12 +564,12 @@ bazel_dep(name = "a", version = "2.0.0")`
 	}
 
 	// Resolved should have a@2.0.0 only
-	if result.Resolved.Summary.TotalModules != 1 {
-		t.Errorf("expected 1 resolved module, got %d", result.Resolved.Summary.TotalModules)
+	if result.Summary.TotalModules != 1 {
+		t.Errorf("expected 1 resolved module, got %d", result.Summary.TotalModules)
 	}
 
 	hasA := false
-	for _, m := range result.Resolved.Modules {
+	for _, m := range result.Modules {
 		if m.Name == "a" && m.Version == "2.0.0" {
 			hasA = true
 		}
@@ -594,7 +584,7 @@ bazel_dep(name = "a", version = "2.0.0")`
 
 func TestSelectionResolver_NilModule(t *testing.T) {
 	client := newRegistryClient("https://example.com")
-	resolver := newSelectionResolver(client, ResolutionOptions{})
+	resolver := &selectionResolver{registry: client, options: ResolutionOptions{}}
 
 	_, err := resolver.Resolve(context.Background(), nil)
 	if err == nil {
@@ -754,7 +744,7 @@ bazel_dep(name = "lib_j", version = "1.0.0")`
 			"deep_1": true, "deep_2": true, "deep_3": true,
 		}
 
-		for _, m := range result.Resolved.Modules {
+		for _, m := range result.Modules {
 			delete(expectedModules, m.Name)
 		}
 

@@ -276,24 +276,6 @@ func TestResolutionList_JSONSerialization(t *testing.T) {
 	}
 }
 
-func TestDepRequest_Creation(t *testing.T) {
-	req := &depRequest{
-		Version:       "1.0.0",
-		DevDependency: true,
-		RequiredBy:    []string{"module1", "module2"},
-	}
-
-	if req.Version != "1.0.0" {
-		t.Errorf("Version mismatch: got %s, want %s", req.Version, "1.0.0")
-	}
-	if !req.DevDependency {
-		t.Error("Expected DevDependency to be true")
-	}
-	if len(req.RequiredBy) != 2 {
-		t.Errorf("RequiredBy length mismatch: got %d, want %d", len(req.RequiredBy), 2)
-	}
-}
-
 // TestYankedVersionsError_SingleModule tests the error message format for a single yanked module.
 func TestYankedVersionsError_SingleModule(t *testing.T) {
 	err := &YankedVersionsError{

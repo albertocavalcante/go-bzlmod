@@ -701,63 +701,6 @@ func TestResolveFromContent_WithOverrides(t *testing.T) {
 	}
 }
 
-func TestResolveFromContent_WithOverrideModules(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/modules/dep/1.0.0/MODULE.bazel":
-			fmt.Fprint(w, `module(name = "dep", version = "1.0.0")`)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	content := `module(name = "test_project", version = "1.0.0")
-
-	bazel_dep(name = "local_mod", version = "1.0.0")
-
-	git_override(module_name = "local_mod")`
-
-	overrideModules := map[string]string{
-		"local_mod": `module(name = "local_mod", version = "1.0.0")
-		bazel_dep(name = "dep", version = "1.0.0")`,
-	}
-
-	// For override modules, we need to use the resolver directly
-	moduleInfo, err := ParseModuleContent(content)
-	if err != nil {
-		t.Fatalf("ParseModuleContent() error = %v", err)
-	}
-
-	reg := RegistryClient(server.URL)
-	resolver := newDependencyResolver(reg, false)
-	for moduleName, moduleContent := range overrideModules {
-		if err := resolver.AddOverrideModuleContent(moduleName, moduleContent); err != nil {
-			t.Fatalf("AddOverrideModuleContent() error = %v", err)
-		}
-	}
-
-	list, err := resolver.ResolveDependencies(context.Background(), moduleInfo)
-	if err != nil {
-		t.Fatalf("ResolveDependencies() error = %v", err)
-	}
-
-	if len(list.Modules) != 2 {
-		t.Errorf("Expected 2 modules, got %d", len(list.Modules))
-	}
-
-	versions := make(map[string]string)
-	for _, module := range list.Modules {
-		versions[module.Name] = module.Version
-	}
-
-	if versions["local_mod"] != "" {
-		t.Errorf("Expected local_mod version to be empty for non-registry override, got %s", versions["local_mod"])
-	}
-	if versions["dep"] != "1.0.0" {
-		t.Errorf("Expected dep version 1.0.0, got %s", versions["dep"])
-	}
-}
 
 func TestResolveFromContent_MVSSelection(t *testing.T) {
 	// Create mock server that simulates transitive dependencies with version conflicts

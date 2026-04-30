@@ -143,6 +143,9 @@ func overrideIndex(overrides []Override) map[string]Override {
 
 	index := make(map[string]Override, len(overrides))
 	for _, override := range overrides {
+		if override.ModuleName == "" {
+			continue
+		}
 		index[override.ModuleName] = override
 	}
 	return index

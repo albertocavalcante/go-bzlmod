@@ -23,61 +23,39 @@ const (
 )
 
 // selectionResolver resolves dependencies using Bazel's complete selection algorithm.
-// This provides full compatibility with Bazel's resolution including:
-//   - Compatibility level enforcement
-//   - Multiple version override support
-//   - Proper pruning of unreachable modules
-//
-// For simpler MVS-only resolution, use dependencyResolver instead.
+// This is the sole resolution engine used by all public API functions.
 type selectionResolver struct {
 	registry Registry
 	options  ResolutionOptions
 }
 
-// newSelectionResolver creates a resolver using Bazel's full selection algorithm.
-// The registry can be nil if opts.Registries is set, otherwise it's required.
-// When opts.Registries is set, it takes precedence over the registry parameter.
-func newSelectionResolver(registry Registry, opts ResolutionOptions) *selectionResolver {
-	reg := registry
-
-	// Registries in options takes precedence
-	if len(opts.Registries) > 0 {
-		reg = registryWithAllOptionsAndTrace(
-			opts.HTTPClient,
-			opts.Cache,
-			opts.Timeout,
-			opts.Logger,
-			newRegistryTraceIfEnabled(opts.TraceRegistryFiles),
-			opts.Registries...,
-		)
-	} else if reg == nil {
-		// No registry provided and no Registries in options, use BCR default
-		reg = registryWithAllOptionsAndTrace(
-			opts.HTTPClient,
-			opts.Cache,
-			opts.Timeout,
-			opts.Logger,
-			newRegistryTraceIfEnabled(opts.TraceRegistryFiles),
-			DefaultRegistries...,
-		)
+// buildRegistry constructs a Registry from ResolutionOptions.
+// Uses BCR as default when no registries are configured.
+func buildRegistry(opts ResolutionOptions) Registry {
+	urls := opts.Registries
+	if len(urls) == 0 {
+		urls = DefaultRegistries
 	}
-
-	return &selectionResolver{
-		registry: reg,
-		options:  opts,
-	}
+	return registryWithAllOptionsAndTrace(
+		opts.HTTPClient,
+		opts.Cache,
+		opts.Timeout,
+		opts.Logger,
+		newRegistryTraceIfEnabled(opts.TraceRegistryFiles),
+		urls...,
+	)
 }
 
 // Resolve performs dependency resolution using Bazel's selection algorithm.
 // It returns a ResolutionList with the resolved modules and optionally an
 // unpruned view for debugging.
-func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo) (*selectionResult, error) {
+func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo) (*ResolutionList, error) {
 	if rootModule == nil {
 		return nil, fmt.Errorf("root module is nil")
 	}
 
 	// Phase 1: Build the raw dependency graph by fetching all transitive deps
-	depGraph, err := r.buildDepGraph(ctx, rootModule)
+	depGraph, moduleInfoCache, err := r.buildDepGraph(ctx, rootModule)
 	if err != nil {
 		return nil, fmt.Errorf("build dependency graph: %w", err)
 	}
@@ -92,26 +70,16 @@ func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo)
 	}
 
 	// Phase 4: Convert result to ResolutionList
-	return r.buildResult(ctx, result, rootModule)
-}
-
-// selectionResult extends ResolutionList with additional debug information.
-type selectionResult struct {
-	// Resolved contains the final resolved modules (pruned).
-	Resolved *ResolutionList
-
-	// Unpruned contains all modules before pruning unreachable ones.
-	// Useful for debugging why certain modules were excluded.
-	Unpruned *ResolutionList
-
-	// BFSOrder is the breadth-first traversal order of resolved modules.
-	BFSOrder []string
+	return r.buildResult(ctx, result, rootModule, moduleInfoCache)
 }
 
 // buildDepGraph fetches all transitive dependencies and builds a selection.DepGraph.
-func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *ModuleInfo) (*selection.DepGraph, error) {
+// It also returns a moduleInfoCache mapping "name@version" to *ModuleInfo for modules
+// that declare bazel_compatibility constraints, enabling post-resolution compat checks.
+func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *ModuleInfo) (*selection.DepGraph, map[string]*ModuleInfo, error) {
 	modules := make(map[selection.ModuleKey]*selection.Module)
-	overrideIndex := indexOverrides(rootModule.Overrides)
+	moduleInfoCache := make(map[string]*ModuleInfo)
+	overrideMap := overrideIndex(rootModule.Overrides)
 
 	buildDepSpecs := func(deps []Dependency, isRoot bool) []selection.DepSpec {
 		specs := make([]selection.DepSpec, 0, len(deps))
@@ -122,7 +90,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 			}
 
 			depVersion := dep.Version
-			if override, ok := overrideIndex[dep.Name]; ok {
+			if override, ok := overrideMap[dep.Name]; ok {
 				switch override.Type {
 				case overrideTypeSingleVersion:
 					if override.Version != "" {
@@ -252,7 +220,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 			}
 
 			// Check if this should skip registry fetch (git/local/archive override)
-			if override, ok := overrideIndex[dep.Name]; ok {
+			if override, ok := overrideMap[dep.Name]; ok {
 				switch override.Type {
 				case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
 					// Match Bazel: non-registry overrides resolve to empty version.
@@ -263,7 +231,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 						if err != nil {
 							cancel()
 							wg.Wait()
-							return nil, fmt.Errorf("parse local_path override for %s: %w", dep.Name, err)
+							return nil, nil, fmt.Errorf("parse local_path override for %s: %w", dep.Name, err)
 						}
 						localDeps := buildDepSpecs(localModule.Dependencies, false)
 						localNodepDeps := buildDepSpecs(localModule.NodepDependencies, false)
@@ -333,7 +301,19 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 					return
 				}
 
-				moduleInfo, err := r.registry.GetModuleFile(ctx, k.Name, k.Version)
+				// Check if there's a registry override for this module.
+				registryToUse := r.registry
+				if override, ok := overrideMap[k.Name]; ok && override.Registry != "" {
+					registryToUse = registryWithAllOptionsAndTrace(
+						r.options.HTTPClient,
+						r.options.Cache,
+						r.options.Timeout,
+						r.options.Logger,
+						sharedRegistryFileTrace(r.registry),
+						override.Registry,
+					)
+				}
+				moduleInfo, err := registryToUse.GetModuleFile(ctx, k.Name, k.Version)
 				if err != nil {
 					if !isNotFound(err) {
 						select {
@@ -349,6 +329,10 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 				nodepDeps := buildDepSpecs(moduleInfo.NodepDependencies, false)
 
 				mu.Lock()
+				// Cache module info for post-resolution Bazel compatibility checking.
+				if len(moduleInfo.BazelCompatibility) > 0 {
+					moduleInfoCache[k.Name+"@"+k.Version] = moduleInfo
+				}
 				modules[k] = &selection.Module{
 					Key:         k,
 					Deps:        deps,
@@ -388,14 +372,42 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 	// Check for errors
 	select {
 	case err := <-errCh:
-		return nil, err
+		return nil, nil, err
 	default:
+	}
+
+	// Propagate context cancellation/timeout.
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Verify that direct root production dependencies were found.
+	// Missing direct deps should fail resolution (matching Bazel behavior).
+	for _, dep := range rootModule.Dependencies {
+		if dep.DevDependency && !r.options.IncludeDevDeps {
+			continue
+		}
+		// Non-registry overrides (git/local/archive) don't need registry lookup.
+		if override, ok := overrideMap[dep.Name]; ok {
+			switch override.Type {
+			case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
+				continue
+			}
+		}
+		depKey := selection.ModuleKey{Name: dep.Name, Version: dep.Version}
+		if override, ok := overrideMap[dep.Name]; ok && override.Type == overrideTypeSingleVersion && override.Version != "" {
+			depKey.Version = override.Version
+		}
+		if _, found := modules[depKey]; !found {
+			return nil, nil, fmt.Errorf("fetch %s@%s: registry returned status 404 for module %s@%s",
+				dep.Name, depKey.Version, dep.Name, depKey.Version)
+		}
 	}
 
 	return &selection.DepGraph{
 		Modules: modules,
 		RootKey: rootKey,
-	}, nil
+	}, moduleInfoCache, nil
 }
 
 // convertOverrides converts gobzlmod.Override to selection.Override.
@@ -424,7 +436,7 @@ func convertOverrides(overrides []Override) map[string]selection.Override {
 }
 
 // buildResult converts selection.Result to selectionResult.
-func (r *selectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo) (*selectionResult, error) {
+func (r *selectionResolver) buildResult(ctx context.Context, result *selection.Result, rootModule *ModuleInfo, moduleInfoCache map[string]*ModuleInfo) (*ResolutionList, error) {
 	defaultRegistry := r.registry.BaseURL()
 	overridesByModule := overrideIndex(rootModule.Overrides)
 
@@ -478,71 +490,75 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		}
 	}
 
+	// isVisible returns whether a module key should appear in the output.
+	isVisible := func(key selection.ModuleKey) bool {
+		if key == rootKey {
+			return false
+		}
+		if r.options.IncludeUnusedModules {
+			if !allVisible[key] {
+				return false
+			}
+		} else if !prodReachable[key] && !devReachable[key] && !builtinReachable[key] {
+			return false
+		}
+		if !r.options.IncludeBuiltinModules && builtinReachable[key] && !prodReachable[key] && !devReachable[key] {
+			return false
+		}
+		return true
+	}
+
+	// Pre-compute reverse-dependency index in O(n*d) for efficient requiredBy lookup.
+	reverseIndex := make(map[selection.ModuleKey][]selection.ModuleKey)
+	for depKey, depModule := range sourceGraph {
+		if depKey == rootKey {
+			continue
+		}
+		for _, dep := range depModule.Deps {
+			dk := dep.ToModuleKey()
+			reverseIndex[dk] = append(reverseIndex[dk], depKey)
+		}
+	}
+
 	resolved := &ResolutionList{
 		Modules: make([]ModuleToResolve, 0, len(sourceGraph)),
 	}
 
 	for key, module := range sourceGraph {
-		// Skip root module
-		if key.Name == rootModule.Name && key.Version == rootModule.Version {
-			continue
-		}
-		isVisible := allVisible[key]
-		if !r.options.IncludeUnusedModules {
-			isVisible = prodReachable[key] || devReachable[key] || builtinReachable[key]
-		}
-		if !isVisible {
-			continue
-		}
-		if !r.options.IncludeBuiltinModules && builtinReachable[key] && !prodReachable[key] && !devReachable[key] {
+		if !isVisible(key) {
 			continue
 		}
 
 		registryURL := registryURLForModule(defaultRegistry, key.Name, overridesByModule)
+		// For multi-registry chains, get the actual registry that provided this module.
+		if chain, ok := r.registry.(*registryChain); ok && registryURL == defaultRegistry {
+			if moduleRegistry := chain.GetRegistryForModule(key.Name); moduleRegistry != "" {
+				registryURL = moduleRegistry
+			}
+		}
 		if key.Name == builtinBazelToolsModule || key.Name == builtinLocalConfigPlatformModule {
 			registryURL = ""
 		}
 
-		requiredBy := make([]string, 0)
 		dependencies := make([]string, 0, len(module.Deps))
 		dependencyKeys := make([]string, 0, len(module.Deps))
-
 		for _, dep := range module.Deps {
 			depKey := dep.ToModuleKey()
-			depVisible := allVisible[depKey]
-			if !r.options.IncludeUnusedModules {
-				depVisible = prodReachable[depKey] || devReachable[depKey] || builtinReachable[depKey]
-			}
-			if !depVisible {
-				continue
-			}
-			if !r.options.IncludeBuiltinModules && builtinReachable[depKey] && !prodReachable[depKey] && !devReachable[depKey] {
+			if !isVisible(depKey) {
 				continue
 			}
 			dependencies = append(dependencies, dep.Name)
 			dependencyKeys = append(dependencyKeys, depKey.String())
 		}
 
-		// Find who requires this module
-		for depKey, depModule := range sourceGraph {
-			if depKey == rootKey {
-				// The root module should not show up in RequiredBy.
-				continue
-			}
-			for _, dep := range depModule.Deps {
-				if dep.Name == key.Name && dep.Version == key.Version {
-					if !prodReachable[depKey] && !devReachable[depKey] && !builtinReachable[depKey] {
-						continue
-					}
-					if !r.options.IncludeBuiltinModules && builtinReachable[depKey] && !prodReachable[depKey] && !devReachable[depKey] {
-						continue
-					}
-					requiredBy = append(requiredBy, depKey.String())
-				}
+		// Look up requiredBy from pre-computed reverse index.
+		requiredBy := make([]string, 0)
+		for _, reqKey := range reverseIndex[key] {
+			if isVisible(reqKey) {
+				requiredBy = append(requiredBy, reqKey.String())
 			}
 		}
 
-		// Dev-only means reachable from root dev deps and not from root production deps.
 		isDevDep := devReachable[key] && !prodReachable[key]
 		unused := !usedKeys[key]
 
@@ -556,9 +572,6 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 			RequiredBy:     requiredBy,
 			Unused:         unused,
 		})
-
-		// Check compat level for debugging
-		_ = module.CompatLevel
 	}
 
 	slices.SortFunc(resolved.Modules, func(a, b ModuleToResolve) int {
@@ -568,7 +581,7 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		return cmp.Compare(a.Version, b.Version)
 	})
 
-	resolved.Graph = buildSelectionGraph(rootModule, sourceGraph, prodStarts, devStarts, builtinStarts, r.options.IncludeUnusedModules, r.options.IncludeBuiltinModules)
+	resolved.Graph = buildSelectionGraph(rootModule, sourceGraph, prodStarts, devStarts, builtinStarts, prodReachable, devReachable, builtinReachable, r.options.IncludeUnusedModules, r.options.IncludeBuiltinModules)
 	moduleDepths := calculateModuleDepthsSelection(resolved.Graph)
 	for i := range resolved.Modules {
 		key := graph.ModuleKey{Name: resolved.Modules[i].Name, Version: resolved.Modules[i].Version}
@@ -580,92 +593,32 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		checkModuleMetadata(ctx, r.registry, r.options, resolved)
 	}
 
-	// Compute summary
-	resolved.Summary.TotalModules = len(resolved.Modules)
-	for _, m := range resolved.Modules {
-		if m.DevDependency {
-			resolved.Summary.DevModules++
-		} else {
-			resolved.Summary.ProductionModules++
-		}
-		if m.Yanked {
-			resolved.Summary.YankedModules++
-		}
-		if m.IsDeprecated {
-			resolved.Summary.DeprecatedModules++
-		}
+	// Check Bazel compatibility if enabled and a Bazel version is specified
+	if r.options.BazelCompatibilityMode != BazelCompatibilityOff && r.options.BazelVersion != "" {
+		checkModuleBazelCompatibility(resolved.Modules, moduleInfoCache, r.options.BazelVersion)
 	}
 
-	// Handle yanked version behavior
-	if resolved.Summary.YankedModules > 0 {
-		switch r.options.YankedBehavior {
-		case YankedVersionAllow:
-			// Yanked info is populated but no warnings or errors
-		case YankedVersionWarn:
-			for _, m := range resolved.Modules {
-				if m.Yanked {
-					resolved.Warnings = append(resolved.Warnings,
-						fmt.Sprintf("module %s@%s is yanked: %s", m.Name, m.Version, m.YankReason))
-				}
-			}
-		case YankedVersionError:
-			yankedModules := make([]ModuleToResolve, 0, resolved.Summary.YankedModules)
-			for _, m := range resolved.Modules {
-				if m.Yanked {
-					yankedModules = append(yankedModules, m)
-				}
-			}
-			return nil, &YankedVersionsError{Modules: yankedModules}
-		}
+	// Check field version compatibility if a Bazel version is specified
+	if r.options.BazelVersion != "" {
+		fieldWarnings := checkFieldCompatibility(rootModule, r.options.BazelVersion)
+		resolved.Summary.FieldWarnings = append(resolved.Summary.FieldWarnings, fieldWarnings...)
 	}
 
-	// Add deprecated module warnings if enabled
-	if r.options.WarnDeprecated && resolved.Summary.DeprecatedModules > 0 {
-		for _, m := range resolved.Modules {
-			if m.IsDeprecated {
-				resolved.Warnings = append(resolved.Warnings,
-					fmt.Sprintf("module %s is deprecated: %s", m.Name, m.DeprecationReason))
-			}
-		}
+	// Compute summary and apply configured behaviors.
+	computeSummary(resolved)
+	if err := applyYankedBehavior(resolved, r.options); err != nil {
+		return nil, err
+	}
+	applyDeprecatedWarnings(resolved, r.options)
+	if err := applyBazelCompatBehavior(resolved, r.options); err != nil {
+		return nil, err
 	}
 
 	if err := enrichResolutionList(ctx, r.registry, r.options, rootModule.Overrides, resolved); err != nil {
 		return nil, err
 	}
 
-	// Build unpruned list
-	unpruned := &ResolutionList{
-		Modules: make([]ModuleToResolve, 0, len(result.UnprunedGraph)),
-	}
-	for key := range result.UnprunedGraph {
-		if key.Name == rootModule.Name && key.Version == rootModule.Version {
-			continue
-		}
-		unpruned.Modules = append(unpruned.Modules, ModuleToResolve{
-			Name:    key.Name,
-			Version: key.Version,
-		})
-	}
-	slices.SortFunc(unpruned.Modules, func(a, b ModuleToResolve) int {
-		return cmp.Compare(a.Name, b.Name)
-	})
-	unpruned.Summary.TotalModules = len(unpruned.Modules)
-	unpruned.RegistryFileHashes = cloneRegistryFileHashes(resolved.RegistryFileHashes)
-
-	// Build BFS order
-	bfsOrder := make([]string, 0, len(result.BFSOrder))
-	for _, key := range result.BFSOrder {
-		if key.Name == rootModule.Name && key.Version == rootModule.Version {
-			continue
-		}
-		bfsOrder = append(bfsOrder, key.String())
-	}
-
-	return &selectionResult{
-		Resolved: resolved,
-		Unpruned: unpruned,
-		BFSOrder: bfsOrder,
-	}, nil
+	return resolved, nil
 }
 
 func computeReachableKeys(
@@ -703,13 +656,11 @@ func buildSelectionGraph(
 	rootModule *ModuleInfo,
 	sourceGraph map[selection.ModuleKey]*selection.Module,
 	prodStarts, devStarts, builtinStarts []selection.ModuleKey,
+	prodReachable, devReachable, builtinReachable map[selection.ModuleKey]bool,
 	includeUnused bool,
 	includeBuiltins bool,
 ) *graph.Graph {
 	rootKey := graph.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}
-	prodReachable := computeReachableKeys(sourceGraph, prodStarts)
-	devReachable := computeReachableKeys(sourceGraph, devStarts)
-	builtinReachable := computeReachableKeys(sourceGraph, builtinStarts)
 	visible := make(map[selection.ModuleKey]bool, len(sourceGraph))
 	if includeUnused {
 		for key := range sourceGraph {

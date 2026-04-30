@@ -795,48 +795,6 @@ func (e *DirectDepsMismatchError) Error() string {
 	return sb.String()
 }
 
-// depRequest tracks a version request during dependency graph construction.
-// Multiple modules may request the same dependency at different versions.
-type depRequest struct {
-	// Version is the requested version.
-	Version string
-
-	// DevDependency indicates if this request is for a dev dependency.
-	DevDependency bool
-
-	// RequiredBy lists the modules that made this request.
-	RequiredBy []string
-}
-
-// formatDepPath formats a dependency path for display.
-// Example: ["<root>", "A@1.0", "B@1.0"] -> "<root> -> A@1.0 -> B@1.0"
-func formatDepPath(path []string) string {
-	if len(path) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(path[0])
-	for i := 1; i < len(path); i++ {
-		b.WriteString(" -> ")
-		b.WriteString(path[i])
-	}
-	return b.String()
-}
-
-// MaxDepthExceededError is returned when dependency depth exceeds the maximum allowed.
-type MaxDepthExceededError struct {
-	// Depth is the depth at which the error occurred.
-	Depth int
-	// MaxDepth is the maximum allowed depth.
-	MaxDepth int
-	// Path is the dependency path that exceeded the depth.
-	Path []string
-}
-
-func (e *MaxDepthExceededError) Error() string {
-	return fmt.Sprintf("maximum dependency depth exceeded: depth %d > max %d (path: %s)",
-		e.Depth, e.MaxDepth, formatDepPath(e.Path))
-}
 
 // BazelIncompatibilityError is returned when resolution selects modules that are
 // incompatible with the specified Bazel version and BazelCompatibilityError mode is configured.

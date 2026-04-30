@@ -61,7 +61,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 )
@@ -104,20 +103,18 @@ func (RegistrySource) moduleSource() {}
 //	// From a registry module
 //	result, err := Resolve(ctx, RegistrySource{Name: "rules_go", Version: "0.50.0"})
 func Resolve(ctx context.Context, src ModuleSource, opts ...Option) (*ResolutionList, error) {
-	cfg, err := newResolverConfig(opts...)
+	o, err := applyOptions(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("invalid options: %w", err)
 	}
 
-	resOpts := cfg.toResolutionOptions()
-
 	switch s := src.(type) {
 	case ContentSource:
-		return resolveInternal(ctx, string(s), resOpts)
+		return resolveInternal(ctx, string(s), o)
 	case FileSource:
-		return ResolveFile(ctx, string(s), resOpts)
+		return ResolveFile(ctx, string(s), o)
 	case RegistrySource:
-		return resolveModuleInternal(ctx, s.Name, s.Version, resOpts)
+		return resolveModuleInternal(ctx, s.Name, s.Version, o)
 	default:
 		return nil, fmt.Errorf("unsupported module source type: %T", src)
 	}
@@ -139,17 +136,8 @@ func resolveInternal(ctx context.Context, moduleContent string, opts ResolutionO
 		return nil, fmt.Errorf("parse module content: %w", err)
 	}
 
-	reg := registryFromOptions(opts)
-	if opts.IncludeUnusedModules {
-		resolver := newSelectionResolver(reg, opts)
-		result, err := resolver.Resolve(ctx, moduleInfo)
-		if err != nil {
-			return nil, err
-		}
-		return result.Resolved, nil
-	}
-	resolver := newDependencyResolverWithOptions(reg, opts)
-	return resolver.ResolveDependencies(ctx, moduleInfo)
+	reg := buildRegistry(opts)
+	return (&selectionResolver{registry: reg, options: opts}).Resolve(ctx, moduleInfo)
 }
 
 // ResolveFile resolves dependencies from a MODULE.bazel file.
@@ -163,65 +151,13 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 		return nil, fmt.Errorf("parse module file: %w", err)
 	}
 
-	reg := registryFromOptions(opts)
-	if opts.IncludeUnusedModules {
-		resolver := newSelectionResolver(reg, opts)
-		result, err := resolver.Resolve(ctx, moduleInfo)
-		if err != nil {
-			return nil, err
-		}
-		return result.Resolved, nil
-	}
-	resolver := newDependencyResolverWithOptions(reg, opts)
-	if err := hydrateLocalPathOverrides(resolver, moduleInfo, moduleFilePath); err != nil {
-		return nil, err
-	}
-	return resolver.ResolveDependencies(ctx, moduleInfo)
+	// Resolve relative local_path_override paths against the MODULE.bazel file location.
+	resolveLocalPathOverrides(moduleInfo, moduleFilePath)
+
+	reg := buildRegistry(opts)
+	return (&selectionResolver{registry: reg, options: opts}).Resolve(ctx, moduleInfo)
 }
 
-func hydrateLocalPathOverrides(resolver *dependencyResolver, moduleInfo *ModuleInfo, moduleFilePath string) error {
-	baseDir := filepath.Dir(moduleFilePath)
-	for _, override := range moduleInfo.Overrides {
-		if override.Type != overrideTypeLocalPath {
-			continue
-		}
-		if override.ModuleName == "" {
-			continue
-		}
-		if override.Path == "" {
-			return fmt.Errorf("local_path_override for module %s has empty path", override.ModuleName)
-		}
-
-		overridePath := override.Path
-		if !filepath.IsAbs(overridePath) {
-			overridePath = filepath.Join(baseDir, overridePath)
-		}
-		moduleFile, err := moduleFileForLocalOverride(overridePath)
-		if err != nil {
-			return fmt.Errorf("resolve local_path_override for module %s: %w", override.ModuleName, err)
-		}
-
-		overrideInfo, err := ParseModuleFile(moduleFile)
-		if err != nil {
-			return fmt.Errorf("parse local_path_override module %s: %w", override.ModuleName, err)
-		}
-		if err := resolver.AddOverrideModuleInfo(override.ModuleName, overrideInfo); err != nil {
-			return fmt.Errorf("register local_path_override module %s: %w", override.ModuleName, err)
-		}
-	}
-	return nil
-}
-
-func moduleFileForLocalOverride(path string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	if info.IsDir() {
-		return filepath.Join(path, "MODULE.bazel"), nil
-	}
-	return path, nil
-}
 
 // ResolveModule resolves a module from the registry and returns its complete dependency graph.
 //
@@ -248,7 +184,8 @@ func ResolveModule(ctx context.Context, name, version string, opts ResolutionOpt
 
 // resolveModuleInternal is the internal implementation for registry-based resolution.
 func resolveModuleInternal(ctx context.Context, name, version string, opts ResolutionOptions) (*ResolutionList, error) {
-	reg := registryFromOptions(opts)
+	reg := buildRegistry(opts)
+	resolver := &selectionResolver{registry: reg, options: opts}
 
 	// Fetch the module's MODULE.bazel from registry
 	moduleInfo, err := reg.GetModuleFile(ctx, name, version)
@@ -266,20 +203,11 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 	}
 
 	// Resolve dependencies (treats moduleInfo as root)
-	if opts.IncludeUnusedModules {
-		resolver := newSelectionResolver(reg, opts)
-		result, err := resolver.Resolve(ctx, moduleInfo)
-		if err != nil {
-			return nil, fmt.Errorf("resolve dependencies for %s@%s: %w", name, version, err)
-		}
-		return result.Resolved, nil
-	}
-
-	resolver := newDependencyResolverWithOptions(reg, opts)
-	result, err := resolver.ResolveDependencies(ctx, moduleInfo)
+	result, err := resolver.Resolve(ctx, moduleInfo)
 	if err != nil {
 		return nil, fmt.Errorf("resolve dependencies for %s@%s: %w", name, version, err)
 	}
+
 
 	// Determine the registry URL for the target module
 	registryURL := reg.BaseURL()
@@ -327,62 +255,40 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 		}
 	}
 
-	// Insert target module and maintain sorted order by name
+	// Insert target module, recompute summary, and apply behaviors.
+	// Use a single-module list for the target so shared functions don't
+	// duplicate warnings already emitted for the resolved modules.
 	result.Modules = append(result.Modules, targetModule)
 	slices.SortFunc(result.Modules, func(a, b ModuleToResolve) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
+	computeSummary(result)
 
-	// Update summary
-	result.Summary.TotalModules++
-	result.Summary.ProductionModules++
-	if targetModule.Yanked {
-		result.Summary.YankedModules++
+	targetList := &ResolutionList{Modules: []ModuleToResolve{targetModule}}
+	computeSummary(targetList)
+	if err := applyYankedBehavior(targetList, opts); err != nil {
+		return nil, err
 	}
-	if targetModule.IsDeprecated {
-		result.Summary.DeprecatedModules++
+	applyDeprecatedWarnings(targetList, opts)
+	if err := applyBazelCompatBehavior(targetList, opts); err != nil {
+		return nil, err
 	}
-	if targetModule.IsBazelIncompatible {
-		result.Summary.IncompatibleModules++
-	}
-
-	// Apply yanked behavior for the target module.
-	if targetModule.Yanked {
-		switch opts.YankedBehavior {
-		case YankedVersionAllow:
-			// no-op
-		case YankedVersionWarn:
-			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("module %s@%s is yanked: %s", targetModule.Name, targetModule.Version, targetModule.YankReason))
-		case YankedVersionError:
-			return nil, &YankedVersionsError{Modules: []ModuleToResolve{targetModule}}
-		}
-	}
-
-	// Add deprecated warning for target module if enabled.
-	if opts.WarnDeprecated && targetModule.IsDeprecated {
-		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("module %s is deprecated: %s", targetModule.Name, targetModule.DeprecationReason))
-	}
-
-	// Apply Bazel compatibility behavior for the target module.
-	if targetModule.IsBazelIncompatible {
-		switch opts.BazelCompatibilityMode {
-		case BazelCompatibilityOff:
-			// no-op
-		case BazelCompatibilityWarn:
-			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("module %s@%s is incompatible with Bazel %s: %s",
-					targetModule.Name, targetModule.Version, opts.BazelVersion, targetModule.BazelIncompatibilityReason))
-		case BazelCompatibilityError:
-			return nil, &BazelIncompatibilityError{
-				BazelVersion: opts.BazelVersion,
-				Modules:      []ModuleToResolve{targetModule},
-			}
-		}
-	}
+	result.Warnings = append(result.Warnings, targetList.Warnings...)
 
 	return result, nil
+}
+
+// resolveLocalPathOverrides resolves relative local_path_override paths
+// against the MODULE.bazel file location. This ensures the selection
+// resolver can find local override modules regardless of working directory.
+func resolveLocalPathOverrides(moduleInfo *ModuleInfo, moduleFilePath string) {
+	baseDir := filepath.Dir(moduleFilePath)
+	for i := range moduleInfo.Overrides {
+		o := &moduleInfo.Overrides[i]
+		if o.Type == overrideTypeLocalPath && o.Path != "" && !filepath.IsAbs(o.Path) {
+			o.Path = filepath.Join(baseDir, o.Path)
+		}
+	}
 }
 
 // registryFromOptions creates a registry from ResolutionOptions.
