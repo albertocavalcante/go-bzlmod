@@ -1,5 +1,16 @@
 // Package bazeltools provides Bazel version-specific MODULE.tools dependencies.
 // These are the implicit dependencies that Bazel adds to every resolution.
+//
+// Source of truth: https://github.com/bazelbuild/bazel/blob/{tag}/src/MODULE.tools
+// Each version's deps are extracted from the bazel_dep() declarations in that file.
+//
+// To verify a specific version:
+//
+//	curl -sL "https://raw.githubusercontent.com/bazelbuild/bazel/{version}/src/MODULE.tools"
+//
+// Reference: MODULE.tools is loaded by BazelModuleResolutionFunction.java as an
+// implicit dependency of every Bazel workspace.
+// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/BazelModuleResolutionFunction.java
 package bazeltools
 
 import (
@@ -23,6 +34,7 @@ type VersionConfig struct {
 	Deps []ToolDep
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/6.6.0/src/MODULE.tools
 var bazel660Deps = []ToolDep{
 	{"rules_cc", "0.0.9"},
 	{"rules_java", "5.5.1"},
@@ -34,6 +46,7 @@ var bazel660Deps = []ToolDep{
 	{"zlib", "1.2.13"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/7.0.0/src/MODULE.tools
 var bazel700Deps = []ToolDep{
 	{"rules_cc", "0.0.9"},
 	{"rules_java", "7.1.0"},
@@ -46,6 +59,7 @@ var bazel700Deps = []ToolDep{
 	{"apple_support", "1.5.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/7.1.0/src/MODULE.tools
 var bazel710Deps = []ToolDep{
 	{"rules_cc", "0.0.9"},
 	{"rules_java", "7.4.0"},
@@ -59,6 +73,8 @@ var bazel710Deps = []ToolDep{
 	{"apple_support", "1.5.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/7.2.0/src/MODULE.tools
+// (also used for 7.2.1)
 var bazel720Deps = []ToolDep{
 	{"rules_cc", "0.0.9"},
 	{"rules_java", "7.6.1"},
@@ -72,6 +88,8 @@ var bazel720Deps = []ToolDep{
 	{"apple_support", "1.5.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/7.3.0/src/MODULE.tools
+// (also used for 7.3.1, 7.3.2, 7.4.0, 7.4.1, 7.5.0, 7.6.0, 7.6.1)
 var bazel730Deps = []ToolDep{
 	{"rules_cc", "0.0.9"},
 	{"rules_java", "7.6.5"},
@@ -85,6 +103,8 @@ var bazel730Deps = []ToolDep{
 	{"apple_support", "1.5.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/7.6.2/src/MODULE.tools
+// (also used for 7.7.0, 7.7.1)
 var bazel762Deps = []ToolDep{
 	{"rules_cc", "0.0.11"},
 	{"rules_java", "7.6.5"},
@@ -98,6 +118,9 @@ var bazel762Deps = []ToolDep{
 	{"apple_support", "1.23.1"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/8.0.0/src/MODULE.tools
+// (also used for 8.0.1)
+// Note: apple_support removed in 8.0 (was in 7.x); rules_shell added.
 var bazel800Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "7.1.2"},
@@ -112,6 +135,8 @@ var bazel800Deps = []ToolDep{
 	{"rules_shell", "0.2.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/8.1.0/src/MODULE.tools
+// (also used for 8.1.1)
 var bazel810Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "7.1.2"},
@@ -126,6 +151,8 @@ var bazel810Deps = []ToolDep{
 	{"rules_shell", "0.2.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/8.2.0/src/MODULE.tools
+// (also used for 8.2.1)
 var bazel820Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "7.1.2"},
@@ -140,6 +167,7 @@ var bazel820Deps = []ToolDep{
 	{"rules_shell", "0.2.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/8.3.0/src/MODULE.tools
 var bazel830Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "7.1.2"},
@@ -154,6 +182,7 @@ var bazel830Deps = []ToolDep{
 	{"rules_shell", "0.3.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/8.3.1/src/MODULE.tools
 var bazel831Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "7.1.2"},
@@ -168,6 +197,8 @@ var bazel831Deps = []ToolDep{
 	{"rules_shell", "0.2.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/8.4.0/src/MODULE.tools
+// (also used for 8.4.1)
 var bazel840Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "7.1.2"},
@@ -182,6 +213,8 @@ var bazel840Deps = []ToolDep{
 	{"rules_shell", "0.2.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/8.4.2/src/MODULE.tools
+// (also used for 8.5.0, 8.5.1, 8.6.0)
 var bazel842Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "7.1.2"},
@@ -196,6 +229,8 @@ var bazel842Deps = []ToolDep{
 	{"rules_shell", "0.2.0"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/9.0.0/src/MODULE.tools
+// Note: rules_apple, rules_swift, abseil-cpp added in 9.0; apple_support re-added.
 var bazel900Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "8.2.1"},
@@ -213,6 +248,8 @@ var bazel900Deps = []ToolDep{
 	{"abseil-cpp", "20250814.1"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/9.0.1/src/MODULE.tools
+// (also used for 9.0.2)
 var bazel901Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "8.5.1"},
@@ -230,6 +267,7 @@ var bazel901Deps = []ToolDep{
 	{"abseil-cpp", "20250814.1"},
 }
 
+// Source: https://github.com/bazelbuild/bazel/blob/9.1.0/src/MODULE.tools
 var bazel910Deps = []ToolDep{
 	{"rules_license", "1.0.0"},
 	{"buildozer", "8.5.1"},

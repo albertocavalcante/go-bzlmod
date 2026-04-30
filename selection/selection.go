@@ -590,6 +590,11 @@ func computeAllPossibleResolutions(
 	// Collect all distinct DepSpecs with max_compatibility_level.
 	// When multiple modules declare the same dep with different max_compat values,
 	// keep the most permissive (highest) to maximize the strategy search space.
+	//
+	// Reference: Selection.java lines 230-248 (computeAllPossibleResolutionResults)
+	// Bazel iterates all deps and groups by (name, version). The most permissive
+	// max_compatibility_level must win to ensure the strategy enumeration covers
+	// all valid compat-level upgrades (e.g., rules_swift compat 1→3 via max_compat=3).
 	seen := make(map[depSpecKey]DepSpec)
 	collectDep := func(dep DepSpec) {
 		if dep.MaxCompatibilityLevel < 0 {
