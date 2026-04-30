@@ -7,7 +7,45 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/albertocavalcante/go-bzlmod)](https://goreportcard.com/report/github.com/albertocavalcante/go-bzlmod)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-A Go library for Bazel module dependency resolution. Implements Bazel's [Selection algorithm](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java) with compatibility levels, multiple-version overrides, and graph pruning. Parses `MODULE.bazel` files and provides dependency graph analysis.
+A Go library that resolves Bazel module dependencies the same way Bazel does.
+
+## How Bazel Resolves Dependencies (bzlmod)
+
+Since Bazel 6, the [bzlmod](https://bazel.build/external/module) system manages external
+dependencies through `MODULE.bazel` files. When you run `bazel build`, here's what happens
+under the hood:
+
+**1. Discovery.** Bazel reads your root `MODULE.bazel`, fetches each `bazel_dep`'s
+`MODULE.bazel` from a registry (by default the [Bazel Central Registry](https://registry.bazel.build)),
+then recursively fetches their dependencies. This builds a raw dependency graph containing
+every version of every module that anyone in the transitive tree requested.
+
+**2. Selection.** With the full graph in hand, Bazel applies
+[Minimal Version Selection](https://research.swtch.com/vgo-mvs) (MVS) — for each module,
+it picks the **highest** version requested by any dependent. But Bazel's selection is more
+than textbook MVS:
+
+- **Compatibility levels** — modules declare a `compatibility_level` integer. Two versions
+  of the same module with different compatibility levels are treated as incompatible.
+  `max_compatibility_level` on a `bazel_dep` allows cross-level upgrades.
+- **Overrides** — the root module can pin versions (`single_version_override`), allow
+  multiple coexisting versions (`multiple_version_override`), or bypass the registry
+  entirely (`git_override`, `local_path_override`, `archive_override`).
+- **Strategy enumeration** — when `max_compatibility_level` creates ambiguity (a dep could
+  resolve to different compatibility levels), Bazel tries all valid combinations until
+  one produces a conflict-free graph.
+
+**3. Pruning.** After selection, Bazel walks the graph from the root and removes modules
+that are no longer reachable (because a selected version dropped a dependency). Nodep
+edges (from module extensions) participate in selection but don't create transitive edges.
+
+**4. MODULE.tools injection.** Bazel silently adds its own implicit dependencies from
+[`src/MODULE.tools`](https://github.com/bazelbuild/bazel/blob/master/src/MODULE.tools) —
+things like `rules_java`, `protobuf`, `platforms`, etc. These participate in selection
+but are hidden from `bazel mod graph` output by default.
+
+This library implements all four phases as a Go API, verified against 976 of 990 modules
+in the Bazel Central Registry across Bazel versions 6.6.0 through 9.1.0.
 
 ## Features
 
