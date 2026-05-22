@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 )
 
 // lockfilePermissions is the file permission mode for lockfiles.
@@ -41,6 +42,39 @@ func Parse(data []byte) (*Lockfile, error) {
 	}
 	if lf.Facts == nil {
 		lf.Facts = make(map[string]json.RawMessage)
+	}
+
+	// Normalize repo-rule identifier across schema versions:
+	//   - v13/v14 emit BzlFile + RuleClassName as separate fields.
+	//   - v18+ emits the consolidated RepoRuleID = "<BzlFile>%<RuleClassName>".
+	// Synthesize whichever direction is missing so callers can rely
+	// on both representations being populated regardless of source
+	// version. Split on the LAST '%' since BzlFile may itself contain
+	// other characters but never '%' per Bazel's label grammar.
+	for _, entry := range lf.ModuleExtensions {
+		for _, scope := range entry {
+			for repoName, spec := range scope.GeneratedRepoSpecs {
+				changed := false
+				if spec.RepoRuleID == "" && spec.BzlFile != "" && spec.RuleClassName != "" {
+					spec.RepoRuleID = spec.BzlFile + "%" + spec.RuleClassName
+					changed = true
+				}
+				if spec.RepoRuleID != "" && (spec.BzlFile == "" || spec.RuleClassName == "") {
+					if i := strings.LastIndexByte(spec.RepoRuleID, '%'); i > 0 && i < len(spec.RepoRuleID)-1 {
+						if spec.BzlFile == "" {
+							spec.BzlFile = spec.RepoRuleID[:i]
+						}
+						if spec.RuleClassName == "" {
+							spec.RuleClassName = spec.RepoRuleID[i+1:]
+						}
+						changed = true
+					}
+				}
+				if changed {
+					scope.GeneratedRepoSpecs[repoName] = spec
+				}
+			}
+		}
 	}
 
 	return &lf, nil
