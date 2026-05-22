@@ -98,7 +98,16 @@ func (p *Parser) parseStatement(expr build.Expr) Statement {
 				pos := p.position(call)
 				switch ident.Name {
 				case "use_extension":
-					return p.parseUseExtension(call, pos)
+					ue := p.parseUseExtension(call, pos)
+					if ue != nil {
+						// Capture LHS variable so downstream
+						// ExtensionTagCall.Extension references can
+						// resolve back to this UseExtension.
+						if lhs, ok := assign.LHS.(*build.Ident); ok {
+							ue.Variable = lhs.Name
+						}
+					}
+					return ue
 				case "use_repo_rule":
 					return p.parseUseRepoRule(call, pos)
 				}

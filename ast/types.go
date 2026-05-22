@@ -70,6 +70,14 @@ type UseExtension struct {
 	Pos           Position
 	ExtensionFile label.ApparentLabel
 	ExtensionName label.StarlarkIdentifier
+	// Variable is the LHS identifier of the use_extension assignment
+	// (e.g. for `gosdk = use_extension(...)`, Variable is "gosdk"). It
+	// is the name that subsequent ExtensionTagCall.Extension values
+	// reference, so downstream consumers need it to link tag calls
+	// back to the use_extension declaration that produced their
+	// proxy. Empty when the call is at the top level without an
+	// assignment (rare but valid Starlark).
+	Variable      string
 	DevDependency bool
 	Isolate       bool
 	// Tags contains the tag calls made on this extension proxy
