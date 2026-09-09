@@ -216,8 +216,10 @@ func (r *registryClient) fetchWithMirrors(ctx context.Context, path, moduleName,
 	logger := r.log()
 
 	// Build list of URLs to try: primary first, then mirrors
-	urls := []string{fmt.Sprintf("%s/%s", r.baseURL, path)}
-	for _, mirror := range r.getMirrors(ctx) {
+	mirrors := r.getMirrors(ctx)
+	urls := make([]string, 0, len(mirrors)+1)
+	urls = append(urls, fmt.Sprintf("%s/%s", r.baseURL, path))
+	for _, mirror := range mirrors {
 		urls = append(urls, fmt.Sprintf("%s/%s", strings.TrimSuffix(mirror, "/"), path))
 	}
 
@@ -457,36 +459,12 @@ func newRegistryClientWithTimeoutAndTrace(baseURL string, timeout time.Duration,
 	return newRegistryClientWithHTTPClientAndTrace(baseURL, nil, timeout, trace)
 }
 
-// newRegistryClientWithHTTPClient creates a registryClient with an optional custom HTTP client.
-// If client is nil, creates a default client with connection pooling.
-// If timeout is positive, it overrides the client's timeout.
-func newRegistryClientWithHTTPClient(baseURL string, client *http.Client, timeout time.Duration) *registryClient {
-	return newRegistryClientWithHTTPClientAndTrace(baseURL, client, timeout, nil)
-}
-
 func newRegistryClientWithHTTPClientAndTrace(baseURL string, client *http.Client, timeout time.Duration, trace *registryFileTrace) *registryClient {
 	return newRegistryClientWithOptionsAndTrace(baseURL, client, nil, timeout, trace)
 }
 
-// newRegistryClientWithOptions creates a registryClient with all optional parameters.
-// If client is nil, creates a default client with connection pooling.
-// If cache is nil, no external caching is used.
-// If timeout is positive, it overrides the client's timeout.
-func newRegistryClientWithOptions(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration) *registryClient {
-	return newRegistryClientWithOptionsAndTrace(baseURL, client, cache, timeout, nil)
-}
-
 func newRegistryClientWithOptionsAndTrace(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration, trace *registryFileTrace) *registryClient {
 	return newRegistryClientWithAllOptionsAndTrace(baseURL, client, cache, timeout, nil, trace)
-}
-
-// newRegistryClientWithAllOptions creates a registryClient with all optional parameters including logger.
-// If client is nil, creates a default client with connection pooling.
-// If cache is nil, no external caching is used.
-// If timeout is positive, it overrides the client's timeout.
-// If logger is nil, logging is disabled.
-func newRegistryClientWithAllOptions(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) *registryClient {
-	return newRegistryClientWithAllOptionsAndTrace(baseURL, client, cache, timeout, logger, nil)
 }
 
 func newRegistryClientWithAllOptionsAndTrace(baseURL string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, trace *registryFileTrace) *registryClient {

@@ -141,6 +141,100 @@ func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo)
 	return r.buildResult(ctx, result, rootModule, moduleInfoCache)
 }
 
+// buildDepSpecs converts Dependency entries to selection.DepSpec, applying
+// override-driven version rewrites (single_version pins the override version;
+// git/local_path/archive overrides resolve to an empty version since they are
+// not looked up in a registry). Non-root modules always ignore dev deps,
+// matching Bazel's behavior that only the root module's dev_dependency=True
+// bazel_dep entries participate in resolution.
+func (r *selectionResolver) buildDepSpecs(deps []Dependency, isRoot bool, overrideMap map[string]Override) []selection.DepSpec {
+	specs := make([]selection.DepSpec, 0, len(deps))
+	for _, dep := range deps {
+		// Match Bazel: non-root modules always ignore dev dependencies.
+		if dep.DevDependency && (!isRoot || !r.options.IncludeDevDeps) {
+			continue
+		}
+
+		depVersion := dep.Version
+		if override, ok := overrideMap[dep.Name]; ok {
+			switch override.Type {
+			case overrideTypeSingleVersion:
+				if override.Version != "" {
+					depVersion = override.Version
+				}
+			case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
+				// Match Bazel: non-registry overrides use empty version.
+				depVersion = ""
+			}
+		}
+
+		maxCL := dep.MaxCompatibilityLevel
+		if maxCL == 0 {
+			maxCL = -1
+		}
+		specs = append(specs, selection.DepSpec{
+			Name:                  dep.Name,
+			Version:               depVersion,
+			MaxCompatibilityLevel: maxCL,
+		})
+	}
+	return specs
+}
+
+// parseLocalPathOverrideModule parses the MODULE.bazel for a local_path
+// override target, which may point directly at a MODULE.bazel file or at a
+// directory containing one.
+func parseLocalPathOverrideModule(path string) (*ModuleInfo, error) {
+	moduleFile := path
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		moduleFile = filepath.Join(path, "MODULE.bazel")
+	}
+	return ParseModuleFile(moduleFile)
+}
+
+// addBuiltinBazelToolsDeps adds Bazel's built-in bazel_tools module (and, for
+// Bazel versions before 9.0.0, the local_config_platform module it used to
+// depend on) to modules, so the MODULE.tools dependencies participate in
+// selection even though the root module never declares them directly. It
+// returns rootDeps with a dep spec for bazel_tools appended, or rootDeps
+// unchanged if no BazelVersion was configured.
+func (r *selectionResolver) addBuiltinBazelToolsDeps(
+	modules map[selection.ModuleKey]*selection.Module,
+	buildDepSpecs func([]Dependency, bool) []selection.DepSpec,
+	rootDeps []selection.DepSpec,
+) []selection.DepSpec {
+	if r.options.BazelVersion == "" {
+		return rootDeps
+	}
+
+	builtinToolSpecs := buildDepSpecs(
+		bazelToolsRootDeps(
+			r.options.BazelVersion,
+			r.options.BazelToolsLookup,
+			r.options.BazelToolsTransformer,
+		),
+		true,
+	)
+	builtinDeps := make([]selection.DepSpec, 0, len(builtinToolSpecs)+1)
+	if includeVisibleLocalConfigPlatform(r.options.BazelVersion) {
+		localConfigKey := selection.ModuleKey{Name: builtinLocalConfigPlatformModule, Version: ""}
+		modules[localConfigKey] = &selection.Module{Key: localConfigKey}
+		builtinDeps = append(builtinDeps, selection.DepSpec{Name: builtinLocalConfigPlatformModule})
+	}
+	builtinDeps = append(builtinDeps, builtinToolSpecs...)
+
+	bazelToolsKey := selection.ModuleKey{Name: builtinBazelToolsModule, Version: ""}
+	modules[bazelToolsKey] = &selection.Module{
+		Key:  bazelToolsKey,
+		Deps: builtinDeps,
+	}
+	return append(rootDeps, selection.DepSpec{Name: builtinBazelToolsModule})
+}
+
 // buildDepGraph fetches all transitive dependencies and builds a selection.DepGraph.
 // It also returns a moduleInfoCache mapping "name@version" to *ModuleInfo for modules
 // that declare bazel_compatibility constraints, enabling post-resolution compat checks.
@@ -150,49 +244,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 	overrideMap := overrideIndex(rootModule.Overrides)
 
 	buildDepSpecs := func(deps []Dependency, isRoot bool) []selection.DepSpec {
-		specs := make([]selection.DepSpec, 0, len(deps))
-		for _, dep := range deps {
-			// Match Bazel: non-root modules always ignore dev dependencies.
-			if dep.DevDependency && (!isRoot || !r.options.IncludeDevDeps) {
-				continue
-			}
-
-			depVersion := dep.Version
-			if override, ok := overrideMap[dep.Name]; ok {
-				switch override.Type {
-				case overrideTypeSingleVersion:
-					if override.Version != "" {
-						depVersion = override.Version
-					}
-				case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
-					// Match Bazel: non-registry overrides use empty version.
-					depVersion = ""
-				}
-			}
-
-			maxCL := dep.MaxCompatibilityLevel
-			if maxCL == 0 {
-				maxCL = -1
-			}
-			specs = append(specs, selection.DepSpec{
-				Name:                  dep.Name,
-				Version:               depVersion,
-				MaxCompatibilityLevel: maxCL,
-			})
-		}
-		return specs
-	}
-
-	parseLocalPathOverrideModule := func(path string) (*ModuleInfo, error) {
-		moduleFile := path
-		info, err := os.Stat(path)
-		if err != nil {
-			return nil, err
-		}
-		if info.IsDir() {
-			moduleFile = filepath.Join(path, "MODULE.bazel")
-		}
-		return ParseModuleFile(moduleFile)
+		return r.buildDepSpecs(deps, isRoot, overrideMap)
 	}
 
 	// Create root module entry
@@ -202,30 +254,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 	}
 
 	rootDeps := buildDepSpecs(rootModule.Dependencies, true)
-	if r.options.BazelVersion != "" {
-		builtinToolSpecs := buildDepSpecs(
-			bazelToolsRootDeps(
-				r.options.BazelVersion,
-				r.options.BazelToolsLookup,
-				r.options.BazelToolsTransformer,
-			),
-			true,
-		)
-		builtinDeps := make([]selection.DepSpec, 0, len(builtinToolSpecs)+1)
-		if includeVisibleLocalConfigPlatform(r.options.BazelVersion) {
-			localConfigKey := selection.ModuleKey{Name: builtinLocalConfigPlatformModule, Version: ""}
-			modules[localConfigKey] = &selection.Module{Key: localConfigKey}
-			builtinDeps = append(builtinDeps, selection.DepSpec{Name: builtinLocalConfigPlatformModule})
-		}
-		builtinDeps = append(builtinDeps, builtinToolSpecs...)
-
-		bazelToolsKey := selection.ModuleKey{Name: builtinBazelToolsModule, Version: ""}
-		modules[bazelToolsKey] = &selection.Module{
-			Key:  bazelToolsKey,
-			Deps: builtinDeps,
-		}
-		rootDeps = append(rootDeps, selection.DepSpec{Name: builtinBazelToolsModule})
-	}
+	rootDeps = r.addBuiltinBazelToolsDeps(modules, buildDepSpecs, rootDeps)
 
 	rootNodepDeps := buildDepSpecs(rootModule.NodepDependencies, true)
 	modules[rootKey] = &selection.Module{
@@ -449,8 +478,27 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 		return nil, nil, err
 	}
 
-	// Verify that direct root production dependencies were found.
-	// Missing direct deps should fail resolution (matching Bazel behavior).
+	if err := r.verifyDirectDepsFetched(rootModule, overrideMap, modules); err != nil {
+		return nil, nil, err
+	}
+
+	return &selection.DepGraph{
+		Modules: modules,
+		RootKey: rootKey,
+	}, moduleInfoCache, nil
+}
+
+// verifyDirectDepsFetched checks that every direct production dependency of
+// the root module (i.e. not a dev dep when dev deps are excluded, and not a
+// non-registry override) was actually fetched into modules. A missing direct
+// dep means the registry returned 404 for it, which should fail resolution
+// outright rather than silently proceeding without it (matching Bazel
+// behavior).
+func (r *selectionResolver) verifyDirectDepsFetched(
+	rootModule *ModuleInfo,
+	overrideMap map[string]Override,
+	modules map[selection.ModuleKey]*selection.Module,
+) error {
 	for _, dep := range rootModule.Dependencies {
 		if dep.DevDependency && !r.options.IncludeDevDeps {
 			continue
@@ -467,15 +515,11 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 			depKey.Version = override.Version
 		}
 		if _, found := modules[depKey]; !found {
-			return nil, nil, fmt.Errorf("fetch %s@%s: registry returned status 404 for module %s@%s",
+			return fmt.Errorf("fetch %s@%s: registry returned status 404 for module %s@%s",
 				dep.Name, depKey.Version, dep.Name, depKey.Version)
 		}
 	}
-
-	return &selection.DepGraph{
-		Modules: modules,
-		RootKey: rootKey,
-	}, moduleInfoCache, nil
+	return nil
 }
 
 // convertOverrides converts gobzlmod.Override to selection.Override.
@@ -508,17 +552,6 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 	defaultRegistry := r.registry.BaseURL()
 	overridesByModule := overrideIndex(rootModule.Overrides)
 
-	// Build sets of root direct dependency types.
-	rootDevDeps := make(map[string]bool)
-	rootProdDeps := make(map[string]bool)
-	for _, dep := range rootModule.Dependencies {
-		if dep.DevDependency {
-			rootDevDeps[dep.Name] = true
-		} else {
-			rootProdDeps[dep.Name] = true
-		}
-	}
-
 	sourceGraph := result.ResolvedGraph
 	if r.options.IncludeUnusedModules {
 		sourceGraph = result.UnprunedGraph
@@ -526,22 +559,8 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 
 	// Compute reachability from root's production, dev, and builtin fronts.
 	// A module is dev-only iff reachable from dev deps and not from prod deps.
-	var prodStarts, devStarts, builtinStarts []selection.ModuleKey
 	rootKey := selection.ModuleKey{Name: rootModule.Name, Version: rootModule.Version}
-	if rootNode, ok := sourceGraph[rootKey]; ok {
-		for _, dep := range rootNode.Deps {
-			depKey := dep.ToModuleKey()
-			if rootProdDeps[dep.Name] {
-				prodStarts = append(prodStarts, depKey)
-			}
-			if rootDevDeps[dep.Name] && !rootProdDeps[dep.Name] {
-				devStarts = append(devStarts, depKey)
-			}
-			if dep.Name == builtinBazelToolsModule {
-				builtinStarts = append(builtinStarts, depKey)
-			}
-		}
-	}
+	prodStarts, devStarts, builtinStarts := computeReachabilityFronts(rootModule, sourceGraph, rootKey)
 	prodReachable := computeReachableKeys(sourceGraph, prodStarts)
 	devReachable := computeReachableKeys(sourceGraph, devStarts)
 	builtinReachable := computeReachableKeys(sourceGraph, builtinStarts)
@@ -558,23 +577,16 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		}
 	}
 
-	// isVisible returns whether a module key should appear in the output.
-	isVisible := func(key selection.ModuleKey) bool {
-		if key == rootKey {
-			return false
-		}
-		if r.options.IncludeUnusedModules {
-			if !allVisible[key] {
-				return false
-			}
-		} else if !prodReachable[key] && !devReachable[key] && !builtinReachable[key] {
-			return false
-		}
-		if !r.options.IncludeBuiltinModules && builtinReachable[key] && !prodReachable[key] && !devReachable[key] {
-			return false
-		}
-		return true
+	visibility := moduleVisibility{
+		rootKey:               rootKey,
+		includeUnusedModules:  r.options.IncludeUnusedModules,
+		includeBuiltinModules: r.options.IncludeBuiltinModules,
+		allVisible:            allVisible,
+		prodReachable:         prodReachable,
+		devReachable:          devReachable,
+		builtinReachable:      builtinReachable,
 	}
+	isVisible := visibility.isVisible
 
 	// Pre-compute reverse-dependency index in O(n*d) for efficient requiredBy lookup.
 	reverseIndex := make(map[selection.ModuleKey][]selection.ModuleKey)
@@ -689,8 +701,81 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 	return resolved, nil
 }
 
+// moduleVisibility decides whether a module key should appear in buildResult's
+// output, based on reachability from the root's production/dev/builtin
+// dependency fronts and the IncludeUnusedModules/IncludeBuiltinModules
+// options. The root itself is never visible (it's the implicit entry point,
+// not a resolved dependency).
+type moduleVisibility struct {
+	rootKey               selection.ModuleKey
+	includeUnusedModules  bool
+	includeBuiltinModules bool
+	allVisible            map[selection.ModuleKey]bool
+	prodReachable         map[selection.ModuleKey]bool
+	devReachable          map[selection.ModuleKey]bool
+	builtinReachable      map[selection.ModuleKey]bool
+}
+
+func (v moduleVisibility) isVisible(key selection.ModuleKey) bool {
+	if key == v.rootKey {
+		return false
+	}
+	if v.includeUnusedModules {
+		if !v.allVisible[key] {
+			return false
+		}
+	} else if !v.prodReachable[key] && !v.devReachable[key] && !v.builtinReachable[key] {
+		return false
+	}
+	if !v.includeBuiltinModules && v.builtinReachable[key] && !v.prodReachable[key] && !v.devReachable[key] {
+		return false
+	}
+	return true
+}
+
+// computeReachabilityFronts classifies the root module's direct dependencies
+// into production, dev, and builtin (bazel_tools) "fronts" -- the BFS
+// starting points computeReachableKeys uses to determine, for every module in
+// sourceGraph, whether it is a production dependency, a dev-only dependency,
+// or only reachable through the builtin bazel_tools module. A dep counts as
+// dev-only when it is declared with dev_dependency=True and is not also
+// declared as a production dep (Bazel allows both on the same module name).
+func computeReachabilityFronts(
+	rootModule *ModuleInfo,
+	sourceGraph map[selection.ModuleKey]*selection.Module,
+	rootKey selection.ModuleKey,
+) (prodStarts, devStarts, builtinStarts []selection.ModuleKey) {
+	rootDevDeps := make(map[string]bool)
+	rootProdDeps := make(map[string]bool)
+	for _, dep := range rootModule.Dependencies {
+		if dep.DevDependency {
+			rootDevDeps[dep.Name] = true
+		} else {
+			rootProdDeps[dep.Name] = true
+		}
+	}
+
+	rootNode, ok := sourceGraph[rootKey]
+	if !ok {
+		return nil, nil, nil
+	}
+	for _, dep := range rootNode.Deps {
+		depKey := dep.ToModuleKey()
+		if rootProdDeps[dep.Name] {
+			prodStarts = append(prodStarts, depKey)
+		}
+		if rootDevDeps[dep.Name] && !rootProdDeps[dep.Name] {
+			devStarts = append(devStarts, depKey)
+		}
+		if dep.Name == builtinBazelToolsModule {
+			builtinStarts = append(builtinStarts, depKey)
+		}
+	}
+	return prodStarts, devStarts, builtinStarts
+}
+
 func computeReachableKeys(
-	graph map[selection.ModuleKey]*selection.Module,
+	depGraph map[selection.ModuleKey]*selection.Module,
 	starts []selection.ModuleKey,
 ) map[selection.ModuleKey]bool {
 	reachable := make(map[selection.ModuleKey]bool, len(starts))
@@ -705,7 +790,7 @@ func computeReachableKeys(
 	for len(queue) > 0 {
 		key := queue[0]
 		queue = queue[1:]
-		module, ok := graph[key]
+		module, ok := depGraph[key]
 		if !ok {
 			continue
 		}
@@ -749,7 +834,10 @@ func buildSelectionGraph(
 	rootDeps := make([]graph.ModuleKey, 0, len(prodStarts)+len(devStarts)+len(builtinStarts))
 	rootSeen := make(map[graph.ModuleKey]bool)
 	appendRootDep := func(key selection.ModuleKey) {
-		gk := graph.ModuleKey{Name: key.Name, Version: key.Version}
+		// graph.ModuleKey is a type alias for selection.ModuleKey (see
+		// graph/types.go), so this is a same-type assignment, not a
+		// conversion.
+		gk := key
 		if !rootSeen[gk] {
 			rootSeen[gk] = true
 			rootDeps = append(rootDeps, gk)
@@ -785,7 +873,8 @@ func buildSelectionGraph(
 			if !visible[depKey] {
 				continue
 			}
-			deps = append(deps, graph.ModuleKey{Name: depKey.Name, Version: depKey.Version})
+			// depKey is already a graph.ModuleKey: the two types are aliased.
+			deps = append(deps, depKey)
 		}
 		modules = append(modules, graph.SimpleModule{
 			Name:          key.Name,
@@ -798,10 +887,13 @@ func buildSelectionGraph(
 }
 
 func calculateModuleDepthsSelection(g *graph.Graph) map[graph.ModuleKey]int {
-	depths := make(map[graph.ModuleKey]int, len(g.Modules))
+	// The nil check has to come first: len(g.Modules) dereferences g, so this
+	// guard used to sit one line below the dereference it was protecting and a
+	// nil graph panicked before ever reaching it.
 	if g == nil {
-		return depths
+		return map[graph.ModuleKey]int{}
 	}
+	depths := make(map[graph.ModuleKey]int, len(g.Modules))
 	queue := []graph.ModuleKey{g.Root}
 	depths[g.Root] = 0
 	for len(queue) > 0 {

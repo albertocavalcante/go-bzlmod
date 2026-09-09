@@ -44,8 +44,15 @@ bench:
     go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go test -bench=. -benchmem
 
 # Run golangci-lint (uses tools/lint module)
+#
+# Takes package patterns, NOT the `go list | xargs` form the other recipes use.
+# golangci-lint resolves its arguments as filesystem paths, so feeding it import
+# paths made it stat ./github.com/albertocavalcante/... , find nothing, lint
+# nothing, print "0 issues" and exit non-zero -- a gate that was red while
+# checking no code at all. Directory exclusions live in .golangci.toml
+# ([linters.exclusions] paths), which is where golangci-lint expects them.
 lint:
-    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go run -modfile=tools/lint/go.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+    go run -modfile=tools/lint/go.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint run ./...
 
 # Run staticcheck (uses tools/lint module)
 staticcheck:
@@ -122,3 +129,19 @@ dev: fmt lint test
 show-packages:
     @echo "Packages included in test/lint:"
     @go list ./... | grep -v -E '{{exclude_pattern}}'
+
+# Mutation testing over the selection algorithm: does the suite actually notice
+# when MVS is wrong?
+#
+# Not wired into `ci` on purpose -- it needs the `mutante` binary and takes
+# ~1min. Install with:
+#   go install github.com/albertocavalcante/mutante/cmd/mutante@latest
+#
+# Scoped to ./selection/... because that is where a wrong answer silently
+# resolves the wrong dependency version. The threshold sits below the 91.3%
+# achieved: one mutant (the seen-map dedup in computeAllPossibleResolutions) is
+# killed only probabilistically, so the score oscillates ~98.9-100% of the
+# non-suppressed set. Survivors that cannot or should not be killed live in
+# .mutante-suppress, each with a reason.
+mutate:
+    mutante run --min-score 88 ./selection/...

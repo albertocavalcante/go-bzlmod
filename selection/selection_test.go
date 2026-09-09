@@ -685,9 +685,10 @@ func TestStrategyEnumeration_MultipleStrategies_FirstSucceeds(t *testing.T) {
 	hasA2 := false
 	for key := range result.ResolvedGraph {
 		if key.Name == "A" {
-			if key.Version == "1.0" {
+			switch key.Version {
+			case "1.0":
 				hasA1 = true
-			} else if key.Version == "2.0" {
+			case "2.0":
 				hasA2 = true
 			}
 		}
@@ -885,7 +886,7 @@ func TestComputePossibleResolutionResults(t *testing.T) {
 
 	// Test: DepSpec with max_compat=3 should have 3 possible resolutions (compat 1, 2, 3)
 	depSpec := DepSpec{Name: "A", Version: "1.0", MaxCompatibilityLevel: 3}
-	results := computePossibleResolutionResultsForOneDepSpec(depSpec, graph, selectionGroups, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(depSpec, graph, selectedVersions)
 
 	// Should have results for compat levels 1, 2, and 3 (not 4)
 	if len(results) != 3 {
@@ -1484,9 +1485,9 @@ func TestResolutionResultsSortedByCompatLevel(t *testing.T) {
 		},
 	}
 
-	selectionGroups, selectedVersions := groupsAndVersionsForTest(t, graph)
+	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: 3}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectionGroups, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
 
 	if len(results) < 2 {
 		t.Fatalf("expected several possible resolutions, got %v", results)
@@ -1516,9 +1517,9 @@ func TestUnconstrainedDepHasPossibleResolutions(t *testing.T) {
 		},
 	}
 
-	selectionGroups, selectedVersions := groupsAndVersionsForTest(t, graph)
+	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: -1}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectionGroups, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
 
 	if len(results) == 0 {
 		t.Fatal("an unconstrained dep (min == max compat level) must still have a possible resolution")
@@ -1549,9 +1550,9 @@ func TestPossibleResolutionsIgnoreOtherModules(t *testing.T) {
 		},
 	}
 
-	selectionGroups, selectedVersions := groupsAndVersionsForTest(t, graph)
+	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: -1}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectionGroups, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
 
 	for _, r := range results {
 		if r.Version == "9.0" {
@@ -1586,8 +1587,8 @@ func TestCollectDepKeepsMostPermissiveMaxCompat(t *testing.T) {
 		},
 	}
 
-	selectionGroups, selectedVersions := groupsAndVersionsForTest(t, graph)
-	all := computeAllPossibleResolutions(graph, selectionGroups, selectedVersions)
+	_, selectedVersions := groupsAndVersionsForTest(t, graph)
+	all := computeAllPossibleResolutions(graph, selectedVersions)
 
 	key := depSpecKey{Name: "B", Version: "1.0"}
 	results, ok := all[key]
@@ -1653,9 +1654,9 @@ func TestMaxCompatBelowModuleLevelHasNoResolution(t *testing.T) {
 		},
 	}
 
-	selectionGroups, selectedVersions := groupsAndVersionsForTest(t, graph)
+	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: 0}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectionGroups, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
 
 	if len(results) != 0 {
 		t.Errorf("max_compatibility_level 0 against a level-1 module admits no resolution, got %v", results)
@@ -1693,9 +1694,9 @@ func TestPossibleResolutionsSkipOtherModulesThatWouldWin(t *testing.T) {
 		},
 	}
 
-	selectionGroups, selectedVersions := groupsAndVersionsForTest(t, graph)
+	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: -1}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectionGroups, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
 
 	for _, r := range results {
 		if r.Version == "1.5" {

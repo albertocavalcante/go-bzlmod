@@ -83,7 +83,6 @@ bazel_dep(name = "gazelle", version = "0.32.0")`
 			}
 		}
 	}
-
 }
 
 func TestResolveWithSelection_DevDeps(t *testing.T) {

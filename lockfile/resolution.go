@@ -76,7 +76,7 @@ func buildModuleFileURL(registryURL, moduleName, version string) string {
 		registryURL = "https://bcr.bazel.build"
 	}
 	// Strip trailing slash if present (and URL is non-empty after default assignment)
-	if len(registryURL) > 0 && registryURL[len(registryURL)-1] == '/' {
+	if registryURL != "" && registryURL[len(registryURL)-1] == '/' {
 		registryURL = registryURL[:len(registryURL)-1]
 	}
 
@@ -122,7 +122,7 @@ func (d *Diff) IsEmpty() bool {
 }
 
 // Compare compares two lockfiles and returns the differences.
-func Compare(old, new *Lockfile) *Diff {
+func Compare(old, updated *Lockfile) *Diff {
 	diff := &Diff{}
 
 	// Compare registry file hashes
@@ -131,7 +131,7 @@ func Compare(old, new *Lockfile) *Diff {
 		oldURLs[url] = cloneStringPointer(hash)
 	}
 
-	for url, newHash := range new.RegistryFileHashes {
+	for url, newHash := range updated.RegistryFileHashes {
 		if oldHash, exists := oldURLs[url]; exists {
 			if !registryHashEqual(oldHash, newHash) {
 				diff.Changed = append(diff.Changed, HashChange{
@@ -156,7 +156,7 @@ func Compare(old, new *Lockfile) *Diff {
 		oldYanked[key] = true
 	}
 
-	for key := range new.SelectedYankedVersions {
+	for key := range updated.SelectedYankedVersions {
 		if oldYanked[key] {
 			delete(oldYanked, key)
 		} else {

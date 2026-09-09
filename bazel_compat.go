@@ -65,7 +65,7 @@ func (c *bazelCompatConstraint) check(bazelVersion string) bool {
 //   - invalidConstraints: list of constraints that couldn't be parsed (for warning purposes)
 //
 // Reference: BazelModuleResolutionFunction.java lines 298-333
-func checkBazelCompatibility(bazelVersion string, constraints []string) (bool, string, []string) {
+func checkBazelCompatibility(bazelVersion string, constraints []string) (compatible bool, reason string, invalidConstraints []string) {
 	if len(constraints) == 0 {
 		return true, "", nil
 	}
@@ -78,7 +78,6 @@ func checkBazelCompatibility(bazelVersion string, constraints []string) (bool, s
 	normalizedBazel := normalizeBazelVersion(bazelVersion)
 
 	var failedConstraints []string
-	var invalidConstraints []string
 	for _, constraintStr := range constraints {
 		constraint, err := parseBazelCompatConstraint(constraintStr)
 		if err != nil {
@@ -115,7 +114,7 @@ func normalizeBazelVersion(v string) string {
 	parts := strings.Split(v, ".")
 	if len(parts) >= 3 {
 		// Ensure first 3 parts are numeric
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if _, err := strconv.Atoi(parts[i]); err != nil {
 				return v // Return original if not valid
 			}

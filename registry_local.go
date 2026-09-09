@@ -231,16 +231,12 @@ func isFileURL(url string) bool {
 	return strings.HasPrefix(url, "file://")
 }
 
-// createRegistryClientWithAllOptions creates a registry client with all optional parameters including logger.
+// createRegistryClientWithAllOptionsAndTrace creates a registry client with all optional parameters including logger.
 // Handles file:// URLs for local registries and http(s):// for remote.
 // If client is nil, creates a default client with connection pooling.
 // If cache is nil, no external caching is used (only applies to remote registries).
 // If timeout is positive, it overrides the client's timeout (for remote registries).
 // If logger is nil, logging is disabled.
-func createRegistryClientWithAllOptions(url string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger) (Registry, error) {
-	return createRegistryClientWithAllOptionsAndTrace(url, client, cache, timeout, logger, nil)
-}
-
 func createRegistryClientWithAllOptionsAndTrace(url string, client *http.Client, cache ModuleCache, timeout time.Duration, logger *slog.Logger, trace *registryFileTrace) (Registry, error) {
 	if isFileURL(url) {
 		path, err := parseFileURL(url)

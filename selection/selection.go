@@ -514,7 +514,6 @@ type resolutionResult struct {
 func computePossibleResolutionResultsForOneDepSpec(
 	depSpec DepSpec,
 	graph *DepGraph,
-	selectionGroups map[ModuleKey]SelectionGroup,
 	selectedVersions map[SelectionGroup]string,
 ) []resolutionResult {
 	// Get the target module to find its compatibility level
@@ -601,7 +600,6 @@ type depSpecKey struct {
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L230
 func computeAllPossibleResolutions(
 	graph *DepGraph,
-	selectionGroups map[ModuleKey]SelectionGroup,
 	selectedVersions map[SelectionGroup]string,
 ) map[depSpecKey][]resolutionResult {
 	result := make(map[depSpecKey][]resolutionResult)
@@ -636,7 +634,7 @@ func computeAllPossibleResolutions(
 	// Compute possible resolutions for each distinct DepSpec
 	for key, depSpec := range seen {
 		possibleResults := computePossibleResolutionResultsForOneDepSpec(
-			depSpec, graph, selectionGroups, selectedVersions,
+			depSpec, graph, selectedVersions,
 		)
 		if len(possibleResults) > 1 {
 			// Only include if there are multiple possibilities
@@ -664,7 +662,7 @@ func enumerateStrategies(
 	selectedVersions map[SelectionGroup]string,
 ) []resolutionStrategy {
 	// Compute all possible resolutions
-	allPossible := computeAllPossibleResolutions(graph, selectionGroups, selectedVersions)
+	allPossible := computeAllPossibleResolutions(graph, selectedVersions)
 
 	if len(allPossible) == 0 {
 		// No ambiguity - return single default strategy

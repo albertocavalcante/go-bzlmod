@@ -373,8 +373,8 @@ var bazelConfigs = map[string]VersionConfig{
 // GetConfig returns the MODULE.tools configuration for a Bazel version.
 // Returns nil if the version is not supported.
 // Use ClosestVersion to find the closest matching version.
-func GetConfig(version string) *VersionConfig {
-	if cfg, ok := bazelConfigs[version]; ok {
+func GetConfig(ver string) *VersionConfig {
+	if cfg, ok := bazelConfigs[ver]; ok {
 		return &cfg
 	}
 	return nil
@@ -382,8 +382,8 @@ func GetConfig(version string) *VersionConfig {
 
 // GetDeps returns the MODULE.tools dependencies for a Bazel version.
 // Returns nil if the version is not supported.
-func GetDeps(version string) []ToolDep {
-	if cfg := GetConfig(version); cfg != nil {
+func GetDeps(ver string) []ToolDep {
+	if cfg := GetConfig(ver); cfg != nil {
 		return cfg.Deps
 	}
 	return nil
@@ -394,8 +394,8 @@ func GetDeps(version string) []ToolDep {
 //
 // For example, "7.0.1" resolves to the "7.0.0" data when that is the closest
 // built-in match. Returns nil if no built-in configuration matches.
-func LookupDeps(version string) []ToolDep {
-	closestVersion := ClosestVersion(version)
+func LookupDeps(ver string) []ToolDep {
+	closestVersion := ClosestVersion(ver)
 	if closestVersion == "" {
 		return nil
 	}
@@ -430,30 +430,25 @@ func SupportedVersions() []string {
 	return slices.Clone(stableBazelVersions)
 }
 
-const (
-	// versionMinLenMajorMinor is the minimum length for major.minor pattern (e.g., "7.0.x").
-	versionMinLenMajorMinor = 5
-)
-
 // ClosestVersion finds the closest supported version for a given Bazel version.
 // For example, "7.0.1" would return "7.0.0", "7.1.2" would return "7.1.0".
 // Returns empty string if no suitable version is found.
-func ClosestVersion(version string) string {
+func ClosestVersion(ver string) string {
 	// Exact match
-	if _, ok := bazelConfigs[version]; ok {
-		return version
+	if _, ok := bazelConfigs[ver]; ok {
+		return ver
 	}
 
-	if prefix, ok := releasePrefix(version, 2); ok {
-		if closest := highestSupportedAtOrBelow(version, prefix+"."); closest != "" {
+	if prefix, ok := releasePrefix(ver, 2); ok {
+		if closest := highestSupportedAtOrBelow(ver, prefix+"."); closest != "" {
 			return closest
 		}
 	}
 
 	// Fall back to the highest known release in the same major line.
 	// For example, "9.2.0" prefers the highest known "9.x" snapshot.
-	if prefix, ok := releasePrefix(version, 1); ok {
-		if closest := highestSupportedAtOrBelow(version, prefix+"."); closest != "" {
+	if prefix, ok := releasePrefix(ver, 1); ok {
+		if closest := highestSupportedAtOrBelow(ver, prefix+"."); closest != "" {
 			return closest
 		}
 	}
