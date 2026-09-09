@@ -65,10 +65,29 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// Reference: Selection.java lines 285-291
 	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L285
 	// "selectedVersions.merge(selectionGroup, key.version(), Comparators::max)"
+	// The tie-break below is load-bearing. Bazel cannot reach this case: its
+	// Version.equals is defined on the parsed form, so two ModuleKeys whose
+	// versions compare equal ARE the same key and cannot both be in the graph.
+	// This port keys modules by the raw version string while comparing by parsed
+	// semantics, so two distinct keys CAN compare equal -- "1.0.0" and
+	// "1.0.0+build" (build metadata is stripped), or "1.0.7" and "1.0.07".
+	//
+	// Without an explicit tie-break, the winner would be whichever key this map
+	// range happened to visit first, i.e. resolution would be nondeterministic
+	// run to run, and the selected string is exactly what a lockfile records.
+	// Preferring the lexicographically smaller spelling is arbitrary but stable;
+	// any of the tied spellings is equally "the maximum" under MVS.
 	selectedVersions := make(map[SelectionGroup]string)
 	for key, group := range selectionGroups {
 		existing, ok := selectedVersions[group]
-		if !ok || version.Compare(key.Version, existing) > 0 {
+		if !ok {
+			selectedVersions[group] = key.Version
+			continue
+		}
+		switch c := version.Compare(key.Version, existing); {
+		case c > 0:
+			selectedVersions[group] = key.Version
+		case c == 0 && key.Version < existing:
 			selectedVersions[group] = key.Version
 		}
 	}
