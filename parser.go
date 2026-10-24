@@ -274,12 +274,12 @@ func integerAttribute(call *build.CallExpr, name string) (value int, present boo
 		}
 		literal, ok := assign.RHS.(*build.LiteralExpr)
 		if ok {
-			value, err = strconv.Atoi(literal.Token)
+			value, err = parseIntegerToken(literal.Token)
 			return value, true, err
 		}
 		if unary, ok := assign.RHS.(*build.UnaryExpr); ok && unary.Op == "-" {
 			if literal, ok := unary.X.(*build.LiteralExpr); ok {
-				value, err = strconv.Atoi("-" + literal.Token)
+				value, err = parseIntegerToken("-" + literal.Token)
 				return value, true, err
 			}
 		}
@@ -347,4 +347,9 @@ func validateLiteralArguments(call *build.CallExpr, directive string, registryVe
 		}
 	}
 	return nil
+}
+
+func parseIntegerToken(token string) (int, error) {
+	value, err := strconv.ParseInt(token, 0, strconv.IntSize)
+	return int(value), err
 }
