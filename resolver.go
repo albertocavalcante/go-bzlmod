@@ -239,6 +239,9 @@ func (r *selectionResolver) addBuiltinBazelToolsDeps(
 // It also returns a moduleInfoCache mapping "name@version" to *ModuleInfo for modules
 // that declare bazel_compatibility constraints, enabling post-resolution compat checks.
 func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *ModuleInfo) (*selection.DepGraph, map[string]*ModuleInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	modules := make(map[selection.ModuleKey]*selection.Module)
 	moduleInfoCache := make(map[string]*ModuleInfo)
 	overrideMap := overrideIndex(rootModule.Overrides)
@@ -267,6 +270,11 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 	// BFS to fetch all transitive dependencies
 	visited := make(map[selection.ModuleKey]bool)
 	visited[rootKey] = true
+	knownNames := map[string]bool{rootKey.Name: true}
+	for _, dep := range rootDeps {
+		knownNames[dep.Name] = true
+	}
+	pendingNodep := slices.Clone(rootNodepDeps)
 
 	queue := make([]selection.DepSpec, len(rootDeps))
 	copy(queue, rootDeps)
@@ -295,22 +303,21 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 
 			key := dep.ToModuleKey()
 
-			if predefinedModule, ok := modules[key]; ok {
+			mu.Lock()
+			predefinedModule, predefined := modules[key]
+			mu.Unlock()
+			if predefined {
 				mu.Lock()
 				if !visited[key] {
 					visited[key] = true
 					for _, d := range predefinedModule.Deps {
+						knownNames[d.Name] = true
 						dk := d.ToModuleKey()
 						if !visited[dk] {
 							queue = append(queue, d)
 						}
 					}
-					for _, d := range predefinedModule.NodepDeps {
-						dk := d.ToModuleKey()
-						if !visited[dk] {
-							queue = append(queue, d)
-						}
-					}
+					pendingNodep = append(pendingNodep, predefinedModule.NodepDeps...)
 				}
 				mu.Unlock()
 				continue
@@ -343,17 +350,13 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 								CompatLevel: localModule.CompatibilityLevel,
 							}
 							for _, d := range localDeps {
+								knownNames[d.Name] = true
 								dk := d.ToModuleKey()
 								if !visited[dk] {
 									queue = append(queue, d)
 								}
 							}
-							for _, d := range localNodepDeps {
-								dk := d.ToModuleKey()
-								if !visited[dk] {
-									queue = append(queue, d)
-								}
-							}
+							pendingNodep = append(pendingNodep, localNodepDeps...)
 						}
 						mu.Unlock()
 						continue
@@ -412,12 +415,10 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 				}
 				moduleInfo, err := registryToUse.GetModuleFile(ctx, k.Name, k.Version)
 				if err != nil {
-					if !isNotFound(err) {
-						select {
-						case errCh <- fmt.Errorf("fetch %s@%s: %w", k.Name, k.Version, err):
-							cancel()
-						default:
-						}
+					select {
+					case errCh <- fmt.Errorf("fetch %s@%s: %w", k.Name, k.Version, err):
+						cancel()
+					default:
 					}
 					return
 				}
@@ -438,17 +439,13 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 				}
 				// Add new deps to queue
 				for _, d := range deps {
+					knownNames[d.Name] = true
 					dk := d.ToModuleKey()
 					if !visited[dk] {
 						queue = append(queue, d)
 					}
 				}
-				for _, d := range nodepDeps {
-					dk := d.ToModuleKey()
-					if !visited[dk] {
-						queue = append(queue, d)
-					}
-				}
+				pendingNodep = append(pendingNodep, nodepDeps...)
 				mu.Unlock()
 			}(key)
 		}
@@ -456,8 +453,21 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 		// Wait for all workers to finish processing current batch
 		wg.Wait()
 
-		// Check if any new items were added to the queue
+		// A nodep requirement becomes eligible only after its module name is
+		// discovered through an ordinary edge. Repeat after every batch so a
+		// delayed ordinary dependency can activate an earlier nodep requirement.
 		mu.Lock()
+		remaining := pendingNodep[:0]
+		for _, dep := range pendingNodep {
+			if knownNames[dep.Name] {
+				if !visited[dep.ToModuleKey()] {
+					queue = append(queue, dep)
+				}
+			} else {
+				remaining = append(remaining, dep)
+			}
+		}
+		pendingNodep = remaining
 		hasMore := len(queue) > 0
 		mu.Unlock()
 
