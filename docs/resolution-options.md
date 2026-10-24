@@ -324,6 +324,13 @@ Reference: [`types.go:585-659`](../types.go#L585-L659)
 
 ## Progress Reporting
 
+Cache storage keys include a stable registry namespace, so sharing one cache across
+private and public registries cannot reuse the wrong module definition. Old
+unqualified entries are ignored. Clients apply the scope automatically. For
+manual prepopulation, write through `gobzlmod.ScopeModuleCache(cache, registryURL)`
+and pass the original cache to `WithCache`. Raw content and version values are
+preserved; custom caches should treat the name argument as an opaque key.
+
 ### WithProgress
 
 ```go

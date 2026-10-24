@@ -102,6 +102,9 @@ func (r *localRegistry) BaseURL() string {
 
 // GetModuleFile reads a MODULE.bazel file from the local registry.
 func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
+	if err := registry.ValidateModuleCoordinate(moduleName, version); err != nil {
+		return nil, err
+	}
 	cacheKey := moduleName + "@" + version
 	if cached, ok := r.cache.Load(cacheKey); ok {
 		return cached.(*ModuleInfo), nil
@@ -115,7 +118,7 @@ func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 	}
 
 	modulePath := filepath.Join(r.rootPath, "modules", moduleName, version, "MODULE.bazel")
-	data, err := os.ReadFile(modulePath) // #nosec G304 -- path is constructed from registry root, not user input
+	data, err := readLocalRegistryFile(r.rootPath, modulePath) // #nosec G304 -- path is constructed from registry root, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -139,6 +142,9 @@ func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 
 // GetModuleSource reads source.json from the local registry.
 func (r *localRegistry) GetModuleSource(ctx context.Context, moduleName, version string) (*registry.Source, error) {
+	if err := registry.ValidateModuleCoordinate(moduleName, version); err != nil {
+		return nil, err
+	}
 	cacheKey := moduleName + "@" + version + ":source"
 	if cached, ok := r.cache.Load(cacheKey); ok {
 		return cached.(*registry.Source), nil
@@ -152,7 +158,7 @@ func (r *localRegistry) GetModuleSource(ctx context.Context, moduleName, version
 	}
 
 	sourcePath := filepath.Join(r.rootPath, "modules", moduleName, version, "source.json")
-	data, err := os.ReadFile(sourcePath) // #nosec G304 -- path is constructed from registry root, not user input
+	data, err := readLocalRegistryFile(r.rootPath, sourcePath) // #nosec G304 -- path is constructed from registry root, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -176,6 +182,9 @@ func (r *localRegistry) GetModuleSource(ctx context.Context, moduleName, version
 
 // GetModuleMetadata reads metadata.json from the local registry.
 func (r *localRegistry) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
+	if err := registry.ValidateModuleName(moduleName); err != nil {
+		return nil, err
+	}
 	if cached, ok := r.metadataCache.Load(moduleName); ok {
 		return cached.(*registry.Metadata), nil
 	}
@@ -188,7 +197,7 @@ func (r *localRegistry) GetModuleMetadata(ctx context.Context, moduleName string
 	}
 
 	metadataPath := filepath.Join(r.rootPath, "modules", moduleName, "metadata.json")
-	data, err := os.ReadFile(metadataPath) // #nosec G304 -- path is constructed from registry root, not user input
+	data, err := readLocalRegistryFile(r.rootPath, metadataPath) // #nosec G304 -- path is constructed from registry root, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &RegistryError{
@@ -256,4 +265,18 @@ func createRegistryClientWithAllOptionsAndTrace(url string, client *http.Client,
 
 	// Remote registry
 	return newRegistryClientWithAllOptionsAndTrace(url, client, cache, timeout, logger, trace), nil
+}
+
+// readLocalRegistryFile confines reads even when registry entries are symlinks.
+func readLocalRegistryFile(rootPath, path string) ([]byte, error) {
+	relative, err := filepath.Rel(rootPath, path)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.ReadFile(relative)
 }

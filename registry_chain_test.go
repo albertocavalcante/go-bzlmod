@@ -353,9 +353,8 @@ func TestRegistryChain_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-func TestRegistryChain_FallbackOnError(t *testing.T) {
-	// Test that the chain falls back to the next registry on errors
-	// This tests the fix for https://github.com/bazelbuild/bazel/issues/26442
+func TestRegistryChain_DoesNotFallbackOnServerError(t *testing.T) {
+	// Server failures must not redirect a module to a different origin.
 
 	// Registry 1: Returns error for module_error
 	errorRegistry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -383,23 +382,16 @@ func TestRegistryChain_FallbackOnError(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// Should successfully get module from second registry despite first registry error
-	info, err := chain.GetModuleFile(ctx, "module_error", "1.0.0")
-	if err != nil {
-		t.Fatalf("GetModuleFile() should succeed with fallback, got error: %v", err)
+	_, err = chain.GetModuleFile(ctx, "module_error", "1.0.0")
+	if err == nil || isNotFound(err) {
+		t.Fatalf("want original server error, got %v", err)
 	}
-
-	if info.Name != "module_error" {
-		t.Errorf("got name %s, want module_error", info.Name)
-	}
-
-	// Verify it used the second registry
-	if chain.GetRegistryForModule("module_error") != successRegistry.URL {
-		t.Errorf("module_error should be mapped to second registry")
+	if chain.GetRegistryForModule("module_error") != "" {
+		t.Fatal("failed fetch must not bind another origin")
 	}
 }
 
-func TestRegistryChain_CachedRegistryVersionMissFallsBack(t *testing.T) {
+func TestRegistryChain_CachedRegistryVersionMissDoesNotChangeOrigin(t *testing.T) {
 	// Registry 1 serves only module_x@2.0.0
 	reg1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/modules/module_x/2.0.0/MODULE.bazel") {
@@ -432,18 +424,13 @@ func TestRegistryChain_CachedRegistryVersionMissFallsBack(t *testing.T) {
 		t.Fatalf("first lookup failed: %v", err)
 	}
 
-	// Second lookup requests a version missing from cached registry.
-	// Expected behavior: fallback to registry 2 rather than failing immediately.
-	info, err := chain.GetModuleFile(ctx, "module_x", "1.0.0")
-	if err != nil {
-		t.Fatalf("GetModuleFile() should fallback on cached-registry miss, got error: %v", err)
-	}
-	if info.Name != "module_x" || info.Version != "1.0.0" {
-		t.Fatalf("GetModuleFile() = %s@%s, want module_x@1.0.0", info.Name, info.Version)
+	_, err = chain.GetModuleFile(ctx, "module_x", "1.0.0")
+	if !isNotFound(err) {
+		t.Fatalf("want selected-registry 404, got %v", err)
 	}
 }
 
-func TestRegistryChain_CachedRegistryMetadataMissFallsBack(t *testing.T) {
+func TestRegistryChain_CachedRegistryMetadataMissDoesNotChangeOrigin(t *testing.T) {
 	// Registry 1 serves module file so module is cached there, but has no metadata.
 	reg1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/modules/module_meta/1.0.0/MODULE.bazel") {
@@ -475,16 +462,13 @@ func TestRegistryChain_CachedRegistryMetadataMissFallsBack(t *testing.T) {
 		t.Fatalf("GetModuleFile() error = %v", err)
 	}
 
-	metadata, err := chain.GetModuleMetadata(ctx, "module_meta")
-	if err != nil {
-		t.Fatalf("GetModuleMetadata() should fallback on cached-registry miss, got error: %v", err)
-	}
-	if len(metadata.Versions) != 1 || metadata.Versions[0] != "1.0.0" {
-		t.Fatalf("GetModuleMetadata() = %+v, want versions [1.0.0]", metadata)
+	_, err = chain.GetModuleMetadata(ctx, "module_meta")
+	if !isNotFound(err) {
+		t.Fatalf("want selected-registry metadata404, got %v", err)
 	}
 }
 
-func TestRegistryChain_CachedRegistrySourceMissFallsBack(t *testing.T) {
+func TestRegistryChain_CachedRegistrySourceMissDoesNotChangeOrigin(t *testing.T) {
 	// Registry 1 serves module file so module is cached there, but has no source.json.
 	reg1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/modules/module_src/1.0.0/MODULE.bazel") {
@@ -516,11 +500,8 @@ func TestRegistryChain_CachedRegistrySourceMissFallsBack(t *testing.T) {
 		t.Fatalf("GetModuleFile() error = %v", err)
 	}
 
-	source, err := chain.GetModuleSource(ctx, "module_src", "1.0.0")
-	if err != nil {
-		t.Fatalf("GetModuleSource() should fallback on cached-registry miss, got error: %v", err)
-	}
-	if source.URL != "https://example.com/module_src-1.0.0.tar.gz" {
-		t.Fatalf("GetModuleSource().URL = %q, want %q", source.URL, "https://example.com/module_src-1.0.0.tar.gz")
+	_, err = chain.GetModuleSource(ctx, "module_src", "1.0.0")
+	if !isNotFound(err) {
+		t.Fatalf("want selected-registry source404, got %v", err)
 	}
 }
