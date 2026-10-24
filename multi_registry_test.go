@@ -132,18 +132,12 @@ func TestMultiRegistry_SingleRegistryBackwardsCompatibility(t *testing.T) {
 	content := `module(name = "test", version = "0.0.0")
 bazel_dep(name = "core_module", version = "1.0.0")`
 
-	// Single registry: dep_b should not be found (only in reg2)
-	result, err := ResolveContent(context.Background(), content, ResolutionOptions{
+	// A missing transitive dependency must fail rather than disappear.
+	_, err := ResolveContent(context.Background(), content, ResolutionOptions{
 		Registries: []string{reg1.URL},
 	})
-	if err != nil {
-		t.Fatalf("ResolveContent() error = %v", err)
-	}
-
-	for _, mod := range result.Modules {
-		if mod.Name == "dep_b" {
-			t.Error("dep_b should not be resolved (only in registry2)")
-		}
+	if err == nil || !strings.Contains(err.Error(), "dep_b") {
+		t.Fatalf("expected missing dep_b error, got %v", err)
 	}
 
 	// Both registries: dep_b should be found

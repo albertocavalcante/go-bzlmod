@@ -2558,6 +2558,7 @@ func TestResolveModule_TargetBazelCompatibilityError(t *testing.T) {
 		Registries:             []string{server.URL},
 		BazelCompatibilityMode: BazelCompatibilityError,
 		BazelVersion:           "7.0.0",
+		BazelToolsLookup:       func(string) []bazeltools.ToolDep { return nil },
 	})
 	if err == nil {
 		t.Fatalf("expected BazelIncompatibilityError for incompatible target module")
@@ -2587,6 +2588,7 @@ func TestResolveModule_TargetBazelCompatibilityWarn(t *testing.T) {
 		Registries:             []string{server.URL},
 		BazelCompatibilityMode: BazelCompatibilityWarn,
 		BazelVersion:           "7.0.0",
+		BazelToolsLookup:       func(string) []bazeltools.ToolDep { return nil },
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
