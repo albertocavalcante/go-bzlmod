@@ -373,6 +373,14 @@ func validateDirectivePlacement(f *build.File) error {
 		}
 		switch ident.Name {
 		case directiveModule, directiveBazelDep, directiveSingleVersion, directiveMultipleVersion, directiveLocalPath, directiveGit, directiveArchive, "include":
+			// Keyword names are not references to builtin values.
+			if len(stack) >= 2 {
+				if assign, ok := stack[len(stack)-1].(*build.AssignExpr); ok && assign.LHS == ident {
+					if _, keyword := stack[len(stack)-2].(*build.CallExpr); keyword {
+						return
+					}
+				}
+			}
 			// Selecting builtins may only occur as the callee of a direct
 			// top-level call. Aliasing or rebinding them requires evaluation.
 			if len(stack) > 0 {
