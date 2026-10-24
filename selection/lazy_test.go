@@ -68,3 +68,33 @@ func BenchmarkSelectionFirstSuccess(b *testing.B) {
 		})
 	}
 }
+
+// Inject cancellation at successive checkpoints without timing-sensitive sleeps.
+type checkpointContext struct {
+	context.Context
+	cancel    context.CancelFunc
+	at, calls int
+}
+
+func (c *checkpointContext) Err() error {
+	c.calls++
+	if c.calls == c.at {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestCancellationOverridesEarlierStrategyFailure(t *testing.T) {
+	g := ambiguousGraph(1)
+	// The first choice conflicts; later attempts must still prioritize cancellation.
+	g.Modules[g.RootKey].Deps = append(g.Modules[g.RootKey].Deps, DepSpec{Name: "dep000", Version: "2.0", MaxCompatibilityLevel: -1})
+	for at := 1; at < 128; at++ {
+		base, cancel := context.WithCancel(context.Background())
+		ctx := &checkpointContext{Context: base, cancel: cancel, at: at}
+		result, err := RunContext(ctx, g, nil)
+		if base.Err() != nil && (result != nil || !errors.Is(err, context.Canceled)) {
+			t.Fatalf("checkpoint %d: cancellation lost to %v", at, err)
+		}
+		cancel()
+	}
+}
