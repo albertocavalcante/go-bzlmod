@@ -12,7 +12,8 @@ import (
 // Option configures resolution behavior.
 type Option func(*ResolutionOptions) error
 
-// DefaultOptions returns options with safe defaults that match Bazel's behavior.
+// DefaultOptions enables yank detection, warnings, deprecation checks, and a
+// 15-second timeout. Dev dependencies remain excluded; these are library defaults.
 func DefaultOptions() []Option {
 	return []Option{
 		WithYankedCheck(true),

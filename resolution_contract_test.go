@@ -127,3 +127,18 @@ func TestProgressEndIncludesTargetValidationFailure(t *testing.T) {
 		t.Fatalf("final target validation not inside lifecycle: last=%+v err=%v", last, err)
 	}
 }
+
+func TestRegistrySourceTraceIncludesTarget(t *testing.T) {
+	files := map[string]string{
+		"/modules/alpha/1.0/MODULE.bazel": discoveryModule("alpha", "1.0"),
+		"/modules/alpha/1.0/source.json":  `{"url":"https://sources.test/alpha.tar.gz"}`,
+	}
+	result, err := Resolve(context.Background(), RegistrySource{Name: "alpha", Version: "1.0"}, WithRegistries("http://registry.test"), WithHTTPClient(discoveryHTTPClient(files, nil)), WithRegistryTrace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := result.Module("alpha")
+	if module.Source == nil || module.Source.URL != "https://sources.test/alpha.tar.gz" || result.RegistryFileHashes["http://registry.test/modules/alpha/1.0/source.json"] == nil {
+		t.Fatalf("target source/trace omitted: %+v", result)
+	}
+}

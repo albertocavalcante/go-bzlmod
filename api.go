@@ -205,6 +205,10 @@ func resolveModuleRaw(ctx context.Context, name, version string, opts Resolution
 		return nil, fmt.Errorf("fetch module %s@%s: %w", name, version, err)
 	}
 
+	// Keep cached registry values immutable when filling missing identity fields.
+	copyInfo := *moduleInfo
+	moduleInfo = &copyInfo
+
 	// Ensure the module info has the correct name/version
 	// (Some MODULE.bazel files may not have module() directive)
 	if moduleInfo.Name == "" {
@@ -264,6 +268,16 @@ func resolveModuleRaw(ctx context.Context, name, version string, opts Resolution
 			targetModule.IsBazelIncompatible = true
 			targetModule.BazelIncompatibilityReason = reason
 		}
+	}
+
+	// RegistrySource includes its target, so trace its source as well as deps.
+	traceTarget := &ResolutionList{Modules: []ModuleToResolve{targetModule}}
+	if err := enrichResolutionList(ctx, reg, opts, nil, traceTarget); err != nil {
+		return nil, err
+	}
+	targetModule = traceTarget.Modules[0]
+	if opts.TraceRegistryFiles {
+		result.RegistryFileHashes = collectRegistryFileHashes(reg)
 	}
 
 	// Insert target module, recompute summary, and apply behaviors.
