@@ -66,7 +66,7 @@ func RunContext(ctx context.Context, graph *DepGraph, overrides map[string]Overr
 	//
 	// Reference: Selection.java lines 271-274
 	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L271
-	allowedVersionSets, err := computeAllowedVersionSets(overrides, graph)
+	allowedVersionSets, err := computeAllowedVersionSets(ctx, overrides, graph)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +80,9 @@ func RunContext(ctx context.Context, graph *DepGraph, overrides map[string]Overr
 	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L276
 	selectionGroups := make(map[ModuleKey]SelectionGroup)
 	for key, module := range graph.Modules {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		selectionGroups[key] = computeSelectionGroup(module, allowedVersionSets)
 	}
 
@@ -95,6 +98,9 @@ func RunContext(ctx context.Context, graph *DepGraph, overrides map[string]Overr
 
 	selectedVersions := make(map[SelectionGroup]string)
 	for key, group := range selectionGroups {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		existing, ok := selectedVersions[group]
 		if !ok {
 			selectedVersions[group] = key.Version
@@ -116,7 +122,7 @@ func RunContext(ctx context.Context, graph *DepGraph, overrides map[string]Overr
 	// When max_compatibility_level allows multiple valid versions for a DepSpec,
 	// we enumerate the cartesian product of all possible resolutions and try each
 	// strategy until one succeeds.
-	strategies := enumerateStrategies(graph, selectionGroups, selectedVersions)
+	strategies := enumerateStrategies(ctx, graph, selectionGroups, selectedVersions)
 
 	// Step 5: Two-phase graph walking with strategy enumeration (Bazel 7.6+ behavior)
 	//
@@ -130,6 +136,9 @@ func RunContext(ctx context.Context, graph *DepGraph, overrides map[string]Overr
 			return nil, err
 		}
 		result, err := tryStrategy(ctx, graph, overrides, selectionGroups, strategy)
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		if err == nil {
 			return result, nil
 		}
@@ -138,7 +147,10 @@ func RunContext(ctx context.Context, graph *DepGraph, overrides map[string]Overr
 		}
 	}
 
-	// All strategies failed - return first error
+	// All strategies failed - return first error unless canceled.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, firstError
 }
 
@@ -228,16 +240,22 @@ func tryStrategy(
 //
 // Reference: Selection.java lines 117-152
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L117
-func computeAllowedVersionSets(overrides map[string]Override, graph *DepGraph) (map[moduleNameAndCompatLevel][]string, error) {
+func computeAllowedVersionSets(ctx context.Context, overrides map[string]Override, graph *DepGraph) (map[moduleNameAndCompatLevel][]string, error) {
 	result := make(map[moduleNameAndCompatLevel][]string)
 
 	for moduleName, override := range overrides {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		mvo, ok := override.(*MultipleVersionOverride)
 		if !ok {
 			continue
 		}
 
 		for _, allowedVersion := range mvo.Versions {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			key := ModuleKey{Name: moduleName, Version: allowedVersion}
 			module, ok := graph.Modules[key]
 			if !ok {
@@ -541,6 +559,7 @@ type resolutionResult struct {
 // 4. For each matching group, get the selected version
 // 5. Return all valid versions (one per compatibility level to avoid duplicates)
 func computePossibleResolutionResultsForOneDepSpec(
+	ctx context.Context,
 	depSpec DepSpec,
 	graph *DepGraph,
 	selectedVersions map[SelectionGroup]string,
@@ -573,6 +592,9 @@ func computePossibleResolutionResultsForOneDepSpec(
 
 	// Iterate through all selection groups to find matching ones
 	for group, selectedVersion := range selectedVersions {
+		if ctx.Err() != nil {
+			return nil
+		}
 		// Must match module name
 		if group.ModuleName != depSpec.Name {
 			continue
@@ -628,6 +650,7 @@ type depSpecKey struct {
 // Reference: Selection.java lines 230-248
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L230
 func computeAllPossibleResolutions(
+	ctx context.Context,
 	graph *DepGraph,
 	selectedVersions map[SelectionGroup]string,
 ) map[depSpecKey][]resolutionResult {
@@ -652,6 +675,9 @@ func computeAllPossibleResolutions(
 		}
 	}
 	for _, module := range graph.Modules {
+		if ctx.Err() != nil {
+			return nil
+		}
 		for _, dep := range module.Deps {
 			collectDep(dep)
 		}
@@ -662,7 +688,11 @@ func computeAllPossibleResolutions(
 
 	// Compute possible resolutions for each distinct DepSpec
 	for key, depSpec := range seen {
+		if ctx.Err() != nil {
+			return nil
+		}
 		possibleResults := computePossibleResolutionResultsForOneDepSpec(
+			ctx,
 			depSpec, graph, selectedVersions,
 		)
 		if len(possibleResults) > 1 {
@@ -686,12 +716,13 @@ type resolutionStrategy func(DepSpec) string
 // Returns a lazy sequence of strategy functions. Each strategy represents one combination
 // of version choices for DepSpecs with multiple valid versions.
 func enumerateStrategies(
+	ctx context.Context,
 	graph *DepGraph,
 	selectionGroups map[ModuleKey]SelectionGroup,
 	selectedVersions map[SelectionGroup]string,
 ) iter.Seq[resolutionStrategy] {
 	// Compute all possible resolutions
-	allPossible := computeAllPossibleResolutions(graph, selectedVersions)
+	allPossible := computeAllPossibleResolutions(ctx, graph, selectedVersions)
 
 	if len(allPossible) == 0 {
 		// No ambiguity - return single default strategy
