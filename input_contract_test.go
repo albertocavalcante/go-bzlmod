@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/albertocavalcante/go-bzlmod/bazeltools"
 )
 
 func TestComputedCoordinatesReturnUnsupported(t *testing.T) {
@@ -81,13 +83,54 @@ func TestExplicitZeroCompatibilityConstraint(t *testing.T) {
 	}
 }
 
-func TestRegistryCoordinateAllowsComputedSelfVersion(t *testing.T) {
-	files := map[string]string{"/modules/alpha/1.0/MODULE.bazel": "module(name='alpha',version=BUILD_VERSION)"}
-	result, err := Resolve(context.Background(), RegistrySource{Name: "alpha", Version: "1.0"}, WithRegistries("http://registry.test"), WithHTTPClient(discoveryHTTPClient(files, nil)))
-	if err != nil {
-		t.Fatal(err)
+func TestRegistryCoordinateIsAuthoritative(t *testing.T) {
+	for _, selfVersion := range []string{"BUILD_VERSION", `"999.0"`} {
+		t.Run(selfVersion, func(t *testing.T) {
+			files := map[string]string{"/modules/alpha/1.0/MODULE.bazel": "module(name='alpha',version=" + selfVersion + ")"}
+			result, err := Resolve(context.Background(), RegistrySource{Name: "alpha", Version: "1.0"}, WithRegistries("http://registry.test"), WithHTTPClient(discoveryHTTPClient(files, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m := result.Module("alpha"); m == nil || m.Version != "1.0" {
+				t.Fatalf("registry coordinate was not authoritative: %v", m)
+			}
+			if result.Graph == nil || result.Graph.Root.Version != "1.0" {
+				t.Fatalf("graph root disagrees with registry coordinate: %+v", result.Graph)
+			}
+		})
 	}
-	if m := result.Module("alpha"); m == nil || m.Version != "1.0" {
-		t.Fatalf("registry coordinate was not authoritative: %v", m)
+}
+
+func TestSelectingCallsCannotHideInExpressions(t *testing.T) {
+	for _, declaration := range []string{
+		`ignored = bazel_dep(name="alpha", version="1.0")`,
+		`ignored = [bazel_dep(name="alpha", version="1.0")]`,
+		`ignored = include("//:deps.MODULE.bazel")`,
+		`unknown(include("//:deps.MODULE.bazel"))`,
+		`bazel_dep(name="alpha", version="1.0", **{"dev_dependency": True})`,
+		`bazel_dep("alpha", version="1.0")`,
+		`bazel_dep(name="alpha", version="1.0", version="2.0")`,
+	} {
+		t.Run(declaration, func(t *testing.T) {
+			_, err := ParseModuleContent(discoveryModule("root", "1.0") + declaration)
+			if !errors.Is(err, errors.ErrUnsupported) {
+				t.Fatalf("selecting call silently accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompatibilityLevelReleaseBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		version  string
+		enforced bool
+	}{{"8.5.0", true}, {"8.6.0", false}, {"9.0.0", true}, {"9.0.2", true}, {"9.1.0", false}} {
+		t.Run(tc.version, func(t *testing.T) {
+			files := map[string]string{"/modules/alpha/1.0/MODULE.bazel": "module(name='alpha',version='1.0',compatibility_level=1)"}
+			_, err := Resolve(context.Background(), ContentSource(discoveryModule("root", "1.0")+"bazel_dep(name='alpha',version='1.0',max_compatibility_level=0)"), WithRegistries("http://registry.test"), WithHTTPClient(discoveryHTTPClient(files, nil)), WithBazelVersion(tc.version), WithBazelToolsLookup(func(string) []bazeltools.ToolDep { return nil }))
+			if (err != nil) != tc.enforced {
+				t.Fatalf("version=%s enforced=%v err=%v", tc.version, tc.enforced, err)
+			}
+		})
 	}
 }

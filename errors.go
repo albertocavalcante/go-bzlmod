@@ -22,13 +22,18 @@ var (
 type UnsupportedInputError struct {
 	Directive string
 	Attribute string
+	Reason    string
 }
 
 func (e *UnsupportedInputError) Error() string {
+	if e.Reason != "" {
+		return "unsupported MODULE.bazel input: " + e.Directive + ": " + e.Reason
+	}
 	if e.Attribute != "" {
 		return "unsupported MODULE.bazel input: " + e.Directive + "." + e.Attribute + " requires a literal value"
 	}
 	return "unsupported MODULE.bazel directive: " + e.Directive
 }
 
+// Unwrap identifies unsupported static resolution inputs.
 func (e *UnsupportedInputError) Unwrap() error { return errors.ErrUnsupported }

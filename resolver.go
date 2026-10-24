@@ -71,6 +71,12 @@ func bazelToolsRootDeps(
 	return rootDeps
 }
 
+// ignoresCompatibilityLevels follows ModuleFileGlobals in the release branches:
+// 8.6 removed enforcement; 9.0 branched earlier and 9.1 removed it again.
+func ignoresCompatibilityLevels(bazelVersion string) bool {
+	return bazelVersion != "" && ((version.Compare(bazelVersion, "8.6.0") >= 0 && version.Compare(bazelVersion, "9.0.0") < 0) || version.Compare(bazelVersion, "9.1.0") >= 0)
+}
+
 // checkFieldCompatibility checks if bzlmod fields used in the root module are
 // compatible with the target Bazel version.
 func checkFieldCompatibility(rootModule *ModuleInfo, bazelVersion string) []string {
@@ -126,6 +132,20 @@ func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo)
 	depGraph, moduleInfoCache, err := r.buildDepGraph(ctx, rootModule)
 	if err != nil {
 		return nil, fmt.Errorf("build dependency graph: %w", err)
+	}
+
+	// Bazel 8.6 and 9.1 removed compatibility levels (the 9.0 branch retained
+	// them). Keep parsed intent intact and normalize only the effective graph.
+	if ignoresCompatibilityLevels(r.options.BazelVersion) {
+		for _, module := range depGraph.Modules {
+			module.CompatLevel = 0
+			for i := range module.Deps {
+				module.Deps[i].MaxCompatibilityLevel = -1
+			}
+			for i := range module.NodepDeps {
+				module.NodepDeps[i].MaxCompatibilityLevel = -1
+			}
+		}
 	}
 
 	// Phase 2: Convert overrides to selection package format

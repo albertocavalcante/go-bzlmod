@@ -22,6 +22,11 @@ import (
 const (
 	directiveModule                = "module"
 	directiveBazelDep              = "bazel_dep"
+	directiveSingleVersion         = "single_version_override"
+	directiveMultipleVersion       = "multiple_version_override"
+	directiveLocalPath             = "local_path_override"
+	directiveGit                   = "git_override"
+	directiveArchive               = "archive_override"
 	attributeVersion               = "version"
 	attributeModuleName            = "module_name"
 	attributeCompatibilityLevel    = "compatibility_level"
@@ -85,6 +90,9 @@ func parseModuleWithRegistryVersion(filename string, content []byte, registryVer
 // Reference: ModuleFileGlobals.java
 // See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
 func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, error) {
+	if err := validateDirectivePlacement(f); err != nil {
+		return nil, err
+	}
 	info := &ModuleInfo{
 		Dependencies:      []Dependency{},
 		NodepDependencies: []Dependency{},
@@ -129,7 +137,7 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 			foundModule = true
 			info.Name = buildutil.String(call, "name")
 			info.Version = buildutil.String(call, attributeVersion)
-			if info.Version == "" && registryVersion != "" {
+			if registryVersion != "" {
 				info.Version = registryVersion
 			}
 			info.CompatibilityLevel = buildutil.Int(call, attributeCompatibilityLevel)
@@ -186,7 +194,7 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 
 		// Reference: ModuleFileGlobals.singleVersionOverride() - lines 476-534
 		// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
-		case "single_version_override":
+		case directiveSingleVersion:
 			seenOtherDirective = true
 			override := Override{
 				Type:       "single_version",
@@ -199,7 +207,7 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 			}
 
 		// Bazel parity: parse multiple_version_override directives.
-		case "multiple_version_override":
+		case directiveMultipleVersion:
 			seenOtherDirective = true
 			override := Override{
 				Type:       "multiple_version",
@@ -213,7 +221,7 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 
 		// Reference: ModuleFileGlobals.gitOverride() - lines 608-672
 		// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
-		case "git_override":
+		case directiveGit:
 			seenOtherDirective = true
 			override := Override{
 				Type:       "git",
@@ -225,7 +233,7 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 
 		// Reference: ModuleFileGlobals.localPathOverride() - lines 674-706
 		// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
-		case "local_path_override":
+		case directiveLocalPath:
 			seenOtherDirective = true
 			override := Override{
 				Type:       overrideTypeLocalPath,
@@ -238,7 +246,7 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 
 		// Reference: ModuleFileGlobals.archiveOverride() - lines 536-606
 		// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileGlobals.java
-		case "archive_override":
+		case directiveArchive:
 			seenOtherDirective = true
 			override := Override{
 				Type:       "archive",
@@ -298,25 +306,29 @@ func validateLiteralArguments(call *build.CallExpr, directive string, registryVe
 		listsOnly = []string{"bazel_compatibility"}
 	case directiveBazelDep:
 		stringsOnly = []string{"name", attributeVersion, "repo_name"}
-	case "single_version_override":
+	case directiveSingleVersion:
 		stringsOnly = []string{attributeModuleName, attributeVersion, "registry"}
-	case "multiple_version_override":
+	case directiveMultipleVersion:
 		stringsOnly = []string{attributeModuleName, "registry"}
 		listsOnly = []string{"versions"}
-	case "local_path_override":
+	case directiveLocalPath:
 		stringsOnly = []string{attributeModuleName, "path"}
-	case "git_override", "archive_override":
+	case directiveGit, directiveArchive:
 		stringsOnly = []string{attributeModuleName}
+	default:
+		return nil
 	}
+	seen := make(map[string]bool)
 	for _, arg := range call.List {
 		assign, ok := arg.(*build.AssignExpr)
-		if !ok {
-			continue
+		if !ok || assign.Op != "=" {
+			return &UnsupportedInputError{Directive: directive, Reason: "only explicit keyword arguments are supported"}
 		}
 		name, ok := assign.LHS.(*build.Ident)
-		if !ok {
-			continue
+		if !ok || seen[name.Name] {
+			return &UnsupportedInputError{Directive: directive, Reason: "keyword arguments must be unique identifiers"}
 		}
+		seen[name.Name] = true
 		if directive == directiveBazelDep && name.Name == attributeDevDependency {
 			boolean, ok := assign.RHS.(*build.Ident)
 			if !ok || (boolean.Name != "True" && boolean.Name != "False") {
@@ -347,6 +359,33 @@ func validateLiteralArguments(call *build.CallExpr, directive string, registryVe
 		}
 	}
 	return nil
+}
+
+// Only direct top-level selection calls can be evaluated statically. Looking
+// through the entire AST prevents assignments and nested calls from silently
+// hiding dependencies or includes from the extractor.
+func validateDirectivePlacement(f *build.File) error {
+	topLevel := make(map[*build.CallExpr]bool)
+	for _, stmt := range f.Stmt {
+		if call, ok := stmt.(*build.CallExpr); ok {
+			topLevel[call] = true
+		}
+	}
+	var invalid error
+	build.Walk(f, func(expr build.Expr, _ []build.Expr) {
+		call, ok := expr.(*build.CallExpr)
+		if !ok || invalid != nil {
+			return
+		}
+		name := buildutil.FuncName(call)
+		switch name {
+		case directiveModule, directiveBazelDep, directiveSingleVersion, directiveMultipleVersion, directiveLocalPath, directiveGit, directiveArchive, "include":
+			if !topLevel[call] {
+				invalid = &UnsupportedInputError{Directive: name, Reason: "must be a direct top-level call"}
+			}
+		}
+	})
+	return invalid
 }
 
 func parseIntegerToken(token string) (int, error) {
