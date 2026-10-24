@@ -144,9 +144,6 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 			if value, present, err := integerAttribute(call, attributeCompatibilityLevel); err != nil {
 				return nil, &UnsupportedInputError{Directive: funcName, Attribute: attributeCompatibilityLevel}
 			} else if present {
-				if value < 0 {
-					return nil, fmt.Errorf("compatibility_level must not be negative")
-				}
 				info.CompatibilityLevel = value
 			}
 
@@ -170,9 +167,6 @@ func extractModuleInfo(f *build.File, registryVersion string) (*ModuleInfo, erro
 			maximum, maximumSet, err := integerAttribute(call, attributeMaxCompatibilityLevel)
 			if err != nil {
 				return nil, &UnsupportedInputError{Directive: funcName, Attribute: attributeMaxCompatibilityLevel}
-			}
-			if maximumSet && maximum < -1 {
-				return nil, fmt.Errorf("max_compatibility_level must be at least -1")
 			}
 			dep := Dependency{
 				Name:                     buildutil.String(call, "name"),
@@ -389,6 +383,6 @@ func validateDirectivePlacement(f *build.File) error {
 }
 
 func parseIntegerToken(token string) (int, error) {
-	value, err := strconv.ParseInt(token, 0, strconv.IntSize)
+	value, err := strconv.ParseInt(token, 0, 32)
 	return int(value), err
 }
