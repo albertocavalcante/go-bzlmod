@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,21 +21,21 @@ import (
 //
 // Key behaviors matching Bazel's implementation (ModuleFileFunction.java:745-810):
 //  1. Modules are looked up in registry order (first to last)
-//  2. The first registry where a module is found is used for ALL versions of that module
+//  2. Each module coordinate uses the first registry providing that version
 //  3. If a module is not found in any registry, an error is returned
 //
-// A registry owns all versions and metadata of a module once selected. Only
+// A registry owns each module version and its source metadata once selected. Only
 // not-found responses permit initial fallback; authentication, transport, and
 // parsing failures never redirect a module to another origin.
 type registryChain struct {
 	clients []Registry
 	trace   *registryFileTrace
 
-	// moduleRegistry tracks which registry provides each module (by module name)
-	// Once a module is found in a registry, all versions come from that registry
-	moduleRegistry   map[string]int // module name -> registry index
+	// moduleRegistry tracks the origin of each name@version coordinate.
+	// Sources and version-aware metadata retain that coordinate's selected origin.
+	moduleRegistry   map[string]int // name@version -> registry index
 	moduleRegistryMu sync.RWMutex
-	moduleLocks      sync.Map // module name -> chan struct{}; context-aware per-module serialization
+	moduleLocks      sync.Map // name@version -> chan struct{}; context-aware per-module serialization
 }
 
 // newRegistryChain creates a chain of registries from URLs.
@@ -111,29 +112,29 @@ func newRegistryChainWithAllOptionsAndTrace(registryURLs []string, httpClient *h
 }
 
 // GetModuleFile fetches a MODULE.bazel file using the registry chain.
-// It tries registries in order for the first request for a module name,
-// then caches which registry provides that module.
+// It tries registries in order for each module version and retains its origin.
 func (rc *registryChain) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
-	return lookupRegistry(ctx, rc, moduleName, func(client Registry) (*ModuleInfo, error) {
+	return lookupRegistry(ctx, rc, moduleName, version, func(client Registry) (*ModuleInfo, error) {
 		return client.GetModuleFile(ctx, moduleName, version)
 	})
 }
 
 // GetModuleMetadata fetches metadata from the module's selected registry.
 func (rc *registryChain) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
-	return lookupRegistry(ctx, rc, moduleName, func(client Registry) (*registry.Metadata, error) {
+	return lookupRegistry(ctx, rc, moduleName, "", func(client Registry) (*registry.Metadata, error) {
 		return client.GetModuleMetadata(ctx, moduleName)
 	})
 }
 
-// lookupRegistry binds a module atomically, including concurrent requests for
-// different versions. Requests for unrelated modules remain concurrent.
-func lookupRegistry[T any](ctx context.Context, rc *registryChain, name string, fetch func(Registry) (T, error)) (T, error) {
+// lookupRegistry binds a module coordinate atomically. Different versions and
+// unrelated modules remain concurrent, each retaining their own origin.
+func lookupRegistry[T any](ctx context.Context, rc *registryChain, name, version string, fetch func(Registry) (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
-	value, _ := rc.moduleLocks.LoadOrStore(name, make(chan struct{}, 1))
+	key := name + "@" + version
+	value, _ := rc.moduleLocks.LoadOrStore(key, make(chan struct{}, 1))
 	lock := value.(chan struct{})
 	select {
 	case lock <- struct{}{}:
@@ -142,7 +143,7 @@ func lookupRegistry[T any](ctx context.Context, rc *registryChain, name string, 
 		return zero, ctx.Err()
 	}
 	rc.moduleRegistryMu.RLock()
-	index, found := rc.moduleRegistry[name]
+	index, found := rc.moduleRegistry[key]
 	rc.moduleRegistryMu.RUnlock()
 	if found {
 		return fetch(rc.clients[index])
@@ -152,7 +153,7 @@ func lookupRegistry[T any](ctx context.Context, rc *registryChain, name string, 
 		result, err := fetch(client)
 		if err == nil {
 			rc.moduleRegistryMu.Lock()
-			rc.moduleRegistry[name] = i
+			rc.moduleRegistry[key] = i
 			rc.moduleRegistryMu.Unlock()
 			return result, nil
 		}
@@ -174,15 +175,53 @@ func (rc *registryChain) BaseURL() string {
 }
 
 // GetRegistryForModule returns the registry URL that provides the given module.
-// Returns empty string if the module hasn't been looked up yet.
+// Returns empty string if unknown or if observed versions have different origins.
 func (rc *registryChain) GetRegistryForModule(moduleName string) string {
 	rc.moduleRegistryMu.RLock()
 	defer rc.moduleRegistryMu.RUnlock()
-
-	if idx, found := rc.moduleRegistry[moduleName]; found {
-		return rc.clients[idx].BaseURL()
+	found := -1
+	for key, index := range rc.moduleRegistry {
+		if !strings.HasPrefix(key, moduleName+"@") {
+			continue
+		}
+		if found >= 0 && found != index {
+			return ""
+		}
+		found = index
+	}
+	if found >= 0 {
+		return rc.clients[found].BaseURL()
 	}
 	return ""
+}
+
+// GetRegistryForVersion returns the selected registry for a module coordinate.
+func (rc *registryChain) GetRegistryForVersion(name, version string) string {
+	rc.moduleRegistryMu.RLock()
+	defer rc.moduleRegistryMu.RUnlock()
+	if index, ok := rc.moduleRegistry[name+"@"+version]; ok {
+		return rc.clients[index].BaseURL()
+	}
+	return ""
+}
+
+// GetModuleVersionMetadata uses the origin of the selected MODULE.bazel.
+func (rc *registryChain) GetModuleVersionMetadata(ctx context.Context, name, version string) (*registry.Metadata, error) {
+	if _, err := rc.GetModuleFile(ctx, name, version); err != nil {
+		return nil, err
+	}
+	return lookupRegistry(ctx, rc, name, version, func(client Registry) (*registry.Metadata, error) {
+		return moduleMetadataForVersion(ctx, client, name, version)
+	})
+}
+
+func moduleMetadataForVersion(ctx context.Context, reg Registry, name, version string) (*registry.Metadata, error) {
+	if provider, ok := reg.(interface {
+		GetModuleVersionMetadata(context.Context, string, string) (*registry.Metadata, error)
+	}); ok {
+		return provider.GetModuleVersionMetadata(ctx, name, version)
+	}
+	return reg.GetModuleMetadata(ctx, name)
 }
 
 func (rc *registryChain) registryFileHashesSnapshot() map[string]*string {
@@ -207,7 +246,11 @@ func (rc *registryChain) registryFileTrace() *registryFileTrace {
 
 // GetModuleSource fetches source.json using the registry that provides this module.
 func (rc *registryChain) GetModuleSource(ctx context.Context, moduleName, version string) (*registry.Source, error) {
-	return lookupRegistry(ctx, rc, moduleName, func(client Registry) (*registry.Source, error) {
+	// MODULE.bazel selects the origin even when source metadata is requested first.
+	if _, err := rc.GetModuleFile(ctx, moduleName, version); err != nil {
+		return nil, err
+	}
+	return lookupRegistry(ctx, rc, moduleName, version, func(client Registry) (*registry.Source, error) {
 		return client.GetModuleSource(ctx, moduleName, version)
 	})
 }

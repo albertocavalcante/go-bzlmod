@@ -391,7 +391,7 @@ func TestRegistryChain_DoesNotFallbackOnServerError(t *testing.T) {
 	}
 }
 
-func TestRegistryChain_CachedRegistryVersionMissDoesNotChangeOrigin(t *testing.T) {
+func TestRegistryChain_VersionsKeepIndependentOrigins(t *testing.T) {
 	// Registry 1 serves only module_x@2.0.0
 	reg1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/modules/module_x/2.0.0/MODULE.bazel") {
@@ -424,9 +424,14 @@ func TestRegistryChain_CachedRegistryVersionMissDoesNotChangeOrigin(t *testing.T
 		t.Fatalf("first lookup failed: %v", err)
 	}
 
-	_, err = chain.GetModuleFile(ctx, "module_x", "1.0.0")
-	if !isNotFound(err) {
-		t.Fatalf("want selected-registry 404, got %v", err)
+	// Second lookup requests a version missing from cached registry.
+	// Expected behavior: fallback to registry 2 rather than failing immediately.
+	info, err := chain.GetModuleFile(ctx, "module_x", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetModuleFile() should fallback on cached-registry miss, got error: %v", err)
+	}
+	if info.Name != "module_x" || info.Version != "1.0.0" {
+		t.Fatalf("GetModuleFile() = %s@%s, want module_x@1.0.0", info.Name, info.Version)
 	}
 }
 
@@ -462,7 +467,7 @@ func TestRegistryChain_CachedRegistryMetadataMissDoesNotChangeOrigin(t *testing.
 		t.Fatalf("GetModuleFile() error = %v", err)
 	}
 
-	_, err = chain.GetModuleMetadata(ctx, "module_meta")
+	_, err = chain.GetModuleVersionMetadata(ctx, "module_meta", "1.0.0")
 	if !isNotFound(err) {
 		t.Fatalf("want selected-registry metadata404, got %v", err)
 	}

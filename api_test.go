@@ -2065,9 +2065,12 @@ bazel_dep(name = "dep", version = "2.0.0")`)
 bazel_dep(name = "top", version = "1.0.0")
 bazel_dep(name = "dep", version = "1.0.0")`
 
-	_, err := ResolveContent(ctx, content, ResolutionOptions{Registries: []string{server1.URL, server2.URL}})
-	if err == nil {
-		t.Fatal("expected selected registry's missing version to fail")
+	result, err := ResolveContent(ctx, content, ResolutionOptions{Registries: []string{server1.URL, server2.URL}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module := result.Module("dep"); module == nil || module.Version != "2.0.0" || module.Registry != server2.URL {
+		t.Fatalf("version origin lost: %+v", module)
 	}
 }
 

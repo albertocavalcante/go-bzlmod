@@ -593,7 +593,7 @@ func (r *selectionResolver) buildResult(ctx context.Context, result *selection.R
 		registryURL := registryURLForModule(defaultRegistry, key.Name, overridesByModule)
 		// For multi-registry chains, get the actual registry that provided this module.
 		if chain, ok := r.registry.(*registryChain); ok && registryURL == defaultRegistry {
-			if moduleRegistry := chain.GetRegistryForModule(key.Name); moduleRegistry != "" {
+			if moduleRegistry := chain.GetRegistryForVersion(key.Name, key.Version); moduleRegistry != "" {
 				registryURL = moduleRegistry
 			}
 		}
