@@ -1041,12 +1041,11 @@ func TestStrategyEnumeration_NoMaxCompatLevel(t *testing.T) {
 	}
 }
 
-// TestMVSTieBreakPrefersSmallestSpelling verifies the canonical tie-break when
-// distinct spellings compare as the same Bazel version.
-func TestMVSTieBreakPrefersSmallestSpelling(t *testing.T) {
+// TestMVSVersionSpelling verifies build-metadata ties and leading-zero ordering.
+func TestMVSVersionSpelling(t *testing.T) {
 	for _, tc := range []struct{ name, first, second, want string }{
 		{"build metadata", "1.0.0+build", "1.0.0", "1.0.0"},
-		{"leading zeros", "1.0.0", "01.0.0", "01.0.0"},
+		{"leading zeros", "1.0.0", "01.0.0", "1.0.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := ModuleKey{Name: "root", Version: "1.0"}

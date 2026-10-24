@@ -51,6 +51,18 @@ corpus, or the opt-in release matrix; use the explicit commands above and in the
 README for those suites. Go verifies downloaded module and tool dependencies
 against the committed go.sum files and the Go checksum database.
 
+CI also runs the full live E2E suite with a checksum-verified Bazel 7.0.0 binary.
+To reproduce it on Linux x86_64 or macOS arm64:
+
+```bash
+bash scripts/install-bazel.sh /tmp/go-bzlmod-bazel
+GO_BZLMOD_E2E_BAZEL=/tmp/go-bzlmod-bazel/bazel bash scripts/check.sh e2e-live
+```
+
+The installer pins each platform's digest. When upgrading Bazel, fetch the
+matching `.sha256` files from `https://releases.bazel.build/VERSION/release/`,
+cross-check the release asset, and update the version and digests together.
+
 **Linting:**
 
 ```bash

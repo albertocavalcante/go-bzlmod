@@ -206,8 +206,7 @@ func TestMax(t *testing.T) {
 // Every case in TestMax uses two *identical* strings for the equal case, so
 // Max's `>=` was indistinguishable from `>`: nothing observed which spelling
 // came back. Two versions can compare equal and still be textually different --
-// build metadata is stripped by the parser, and a leading zero in a numeric
-// identifier is insignificant -- and in MVS the selected string is what ends up
+// build metadata is stripped by the parser -- and in MVS the selected string is what ends up
 // in the lockfile, so which spelling wins is observable.
 func TestMaxPrefersFirstOnTie(t *testing.T) {
 	tests := []struct {
@@ -217,8 +216,6 @@ func TestMaxPrefersFirstOnTie(t *testing.T) {
 	}{
 		{"build metadata is stripped, so these compare equal", "1.0.0+build", "1.0.0", "1.0.0+build"},
 		{"and the other way round", "1.0.0", "1.0.0+build", "1.0.0"},
-		{"leading zeros are numerically insignificant", "1.0.07", "1.0.7", "1.0.07"},
-		{"and the other way round", "1.0.7", "1.0.07", "1.0.7"},
 		{"identical strings", "1.2.3", "1.2.3", "1.2.3"},
 	}
 	for _, tt := range tests {
@@ -240,6 +237,8 @@ func TestMaxPrefersFirstOnTie(t *testing.T) {
 // return and ParseError.Error at 0% coverage.
 func TestParseRejectsMalformed(t *testing.T) {
 	malformed := []string{
+		"1..0", ".1", "1.", "1.0-.alpha", "1.0-alpha.",
+		"18446744073709551616", "1.0-18446744073709551616",
 		"1.0-",   // trailing prerelease separator with nothing after it
 		"1.0.0-", // same, with a three-segment release
 		"-alpha", // prerelease with no release
@@ -283,17 +282,11 @@ func TestParseAcceptsSurprisingButValid(t *testing.T) {
 		in             string
 		wantNormalized string
 	}{
-		// The release character class includes '.', so consecutive dots parse
-		// as an empty middle identifier rather than failing.
-		{"1..0", "1..0"},
 		// Build metadata is matched and then discarded, including from Normalized.
 		{"1.0.0+build.5", "1.0.0"},
-		// Leading zeros survive verbatim in Normalized even though they do not
-		// affect comparison.
+		// Leading zeros survive in Normalized and break numeric comparison ties.
 		{"1.0.07", "1.0.07"},
-		// Wider than uint64: ParseIdentifier falls back to string comparison
-		// rather than erroring.
-		{"99999999999999999999", "99999999999999999999"},
+		{"18446744073709551615", "18446744073709551615"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
@@ -369,5 +362,18 @@ func TestParseIdentifierEdgeCases(t *testing.T) {
 	z := ParseIdentifier("007")
 	if !z.IsDigitsOnly || z.AsNumber != 7 || z.AsString != "007" {
 		t.Errorf(`ParseIdentifier("007") = %+v, want {IsDigitsOnly:true AsNumber:7 AsString:"007"}`, z)
+	}
+}
+
+// Bazel 9.1.0 compares equal numeric values by their original identifier text.
+func TestLeadingZeroComparison(t *testing.T) {
+	if got := Compare("1.0.07", "1.0.7"); got != -1 {
+		t.Fatalf("Compare leading zero = %d, want -1", got)
+	}
+	if got := Compare("1.0.7", "1.0.07"); got != 1 {
+		t.Fatalf("Compare reversed = %d, want 1", got)
+	}
+	if got := Max("1.0.07", "1.0.7"); got != "1.0.7" {
+		t.Fatalf("Max = %s, want 1.0.7", got)
 	}
 }

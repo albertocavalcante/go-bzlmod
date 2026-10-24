@@ -87,7 +87,8 @@ func CompareIdentifiers(a, b Identifier) int {
 		if a.AsNumber > b.AsNumber {
 			return 1
 		}
-		return 0
+		// Bazel uses the original text to break equal numeric values.
+		return strings.Compare(a.AsString, b.AsString)
 	}
 
 	// Both alphanumeric: compare lexicographically
@@ -120,15 +121,16 @@ func Parse(s string) (ParsedVersion, error) {
 	releaseStr := match[1]
 	prereleaseStr := match[2]
 
-	var release []Identifier
-	for _, part := range strings.Split(releaseStr, ".") {
-		release = append(release, ParseIdentifier(part))
+	release, err := parseIdentifiers(s, releaseStr)
+	if err != nil {
+		return ParsedVersion{}, err
 	}
 
 	var prerelease []Identifier
 	if prereleaseStr != "" {
-		for _, part := range strings.Split(prereleaseStr, ".") {
-			prerelease = append(prerelease, ParseIdentifier(part))
+		prerelease, err = parseIdentifiers(s, prereleaseStr)
+		if err != nil {
+			return ParsedVersion{}, err
 		}
 	}
 
@@ -142,6 +144,23 @@ func Parse(s string) (ParsedVersion, error) {
 		Prerelease: prerelease,
 		Normalized: normalized,
 	}, nil
+}
+
+// parseIdentifiers enforces Bazel 9.1.0's nonempty, uint64-bounded segments.
+func parseIdentifiers(version, component string) ([]Identifier, error) {
+	parts := strings.Split(component, ".")
+	identifiers := make([]Identifier, len(parts))
+	for i, part := range parts {
+		if part == "" {
+			return nil, &ParseError{Version: version, Message: "identifier is empty"}
+		}
+		identifier := ParseIdentifier(part)
+		if !identifier.IsDigitsOnly && strings.Trim(part, "0123456789") == "" {
+			return nil, &ParseError{Version: version, Message: "numeric version segment is too large: " + part}
+		}
+		identifiers[i] = identifier
+	}
+	return identifiers, nil
 }
 
 // ParseError represents a version parsing error.
