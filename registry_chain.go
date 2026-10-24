@@ -21,35 +21,21 @@ import (
 //
 // Key behaviors matching Bazel's implementation (ModuleFileFunction.java:745-810):
 //  1. Modules are looked up in registry order (first to last)
-//  2. The first registry where a module is found is used for ALL versions of that module
+//  2. Each module coordinate uses the first registry providing that version
 //  3. If a module is not found in any registry, an error is returned
 //
-// Resilience improvements over Bazel:
-//
-// This implementation falls back to the next registry on ANY error, including:
-//   - HTTP 404 (module not found)
-//   - HTTP 5xx (server errors)
-//   - TLS/certificate errors (Dec 2025 BCR outage)
-//   - Network timeouts and connection failures
-//
-// Known Bazel bugs we work around:
-//   - Bazel fails on source.json errors instead of trying next registry
-//   - Bazel has issues with TLS error recovery across multiple URLs
-//
-// References:
-//   - https://github.com/bazelbuild/bazel/issues/28101 (BCR TLS outage)
-//   - https://github.com/bazelbuild/bazel/issues/28158 (TLS recovery bug)
-//   - https://github.com/bazelbuild/bazel/issues/26442 (source.json fallback bug)
-//
-// By always falling back, we provide better resilience than Bazel itself.
+// A registry owns each module version and its source metadata once selected. Only
+// not-found responses permit initial fallback; authentication, transport, and
+// parsing failures never redirect a module to another origin.
 type registryChain struct {
 	clients []Registry
 	trace   *registryFileTrace
 
-	// moduleRegistry tracks which registry provides each module (by module name)
-	// Once a module is found in a registry, all versions come from that registry
-	moduleRegistry   map[string]int // module name -> registry index
+	// moduleRegistry tracks the origin of each name@version coordinate.
+	// Sources and version-aware metadata retain that coordinate's selected origin.
+	moduleRegistry   map[string]int // name@version -> registry index
 	moduleRegistryMu sync.RWMutex
+	moduleLocks      sync.Map // name@version -> chan struct{}; context-aware per-module serialization
 }
 
 // newRegistryChain creates a chain of registries from URLs.
@@ -126,145 +112,57 @@ func newRegistryChainWithAllOptionsAndTrace(registryURLs []string, httpClient *h
 }
 
 // GetModuleFile fetches a MODULE.bazel file using the registry chain.
-// It tries registries in order for the first request for a module name,
-// then caches which registry provides that module.
+// It tries registries in order for each module version and retains its origin.
 func (rc *registryChain) GetModuleFile(ctx context.Context, moduleName, version string) (*ModuleInfo, error) {
-	// Check if we've already determined which registry provides this module
-	rc.moduleRegistryMu.RLock()
-	registryIdx, found := rc.moduleRegistry[moduleName]
-	rc.moduleRegistryMu.RUnlock()
-
-	if found {
-		// Fast path: try the cached registry first.
-		moduleInfo, err := rc.clients[registryIdx].GetModuleFile(ctx, moduleName, version)
-		if err == nil {
-			return moduleInfo, nil
-		}
-
-		// If the cached registry can't serve this version, fallback to others.
-		// This improves resilience for partial mirrors/inconsistent registries.
-		notFoundErrors := []string{fmt.Sprintf("%s: %v", rc.clients[registryIdx].BaseURL(), err)}
-		for i, client := range rc.clients {
-			if i == registryIdx {
-				continue
-			}
-			moduleInfo, err := client.GetModuleFile(ctx, moduleName, version)
-			if err == nil {
-				return moduleInfo, nil
-			}
-			notFoundErrors = append(notFoundErrors, fmt.Sprintf("%s: %v", client.BaseURL(), err))
-		}
-
-		if len(notFoundErrors) == 1 {
-			return nil, fmt.Errorf("module %s@%s not found: %s", moduleName, version, notFoundErrors[0])
-		}
-		return nil, fmt.Errorf("module %s@%s not found in any registry:\n  - %s",
-			moduleName, version, strings.Join(notFoundErrors, "\n  - "))
-	}
-
-	// Try each registry in order to find the module
-	var notFoundErrors []string
-	for i, client := range rc.clients {
-		moduleInfo, err := client.GetModuleFile(ctx, moduleName, version)
-		if err == nil {
-			// Success! Remember this registry for future requests for this module
-			rc.moduleRegistryMu.Lock()
-			if _, exists := rc.moduleRegistry[moduleName]; !exists {
-				rc.moduleRegistry[moduleName] = i
-			}
-			rc.moduleRegistryMu.Unlock()
-			return moduleInfo, nil
-		}
-
-		// Check if it's a 404 (module not found in this registry)
-		if isNotFound(err) {
-			notFoundErrors = append(notFoundErrors, fmt.Sprintf("%s: %v", client.BaseURL(), err))
-			continue
-		}
-
-		// For other errors (TLS, network, server errors, etc.), continue to next registry.
-		// This provides resilience against infrastructure issues like:
-		//   - TLS certificate expiration
-		//     https://github.com/bazelbuild/bazel/issues/28101
-		//     https://github.com/bazelbuild/bazel/issues/28158
-		//   - Server errors when source.json is missing
-		//     https://github.com/bazelbuild/bazel/issues/26442
-		//   - Network timeouts and connection failures
-		notFoundErrors = append(notFoundErrors, fmt.Sprintf("%s: %v", client.BaseURL(), err))
-		continue
-	}
-
-	// Module not found in any registry
-	if len(notFoundErrors) == 1 {
-		return nil, fmt.Errorf("module %s@%s not found: %s", moduleName, version, notFoundErrors[0])
-	}
-	return nil, fmt.Errorf("module %s@%s not found in any registry:\n  - %s",
-		moduleName, version, strings.Join(notFoundErrors, "\n  - "))
+	return lookupRegistry(ctx, rc, moduleName, version, func(client Registry) (*ModuleInfo, error) {
+		return client.GetModuleFile(ctx, moduleName, version)
+	})
 }
 
-// GetModuleMetadata fetches metadata using the registry that provides this module.
+// GetModuleMetadata fetches metadata from the module's selected registry.
 func (rc *registryChain) GetModuleMetadata(ctx context.Context, moduleName string) (*registry.Metadata, error) {
-	// Check if we've already determined which registry provides this module
+	return lookupRegistry(ctx, rc, moduleName, "", func(client Registry) (*registry.Metadata, error) {
+		return client.GetModuleMetadata(ctx, moduleName)
+	})
+}
+
+// lookupRegistry binds a module coordinate atomically. Different versions and
+// unrelated modules remain concurrent, each retaining their own origin.
+func lookupRegistry[T any](ctx context.Context, rc *registryChain, name, version string, fetch func(Registry) (T, error)) (T, error) {
+	var zero T
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
+	key := name + "@" + version
+	value, _ := rc.moduleLocks.LoadOrStore(key, make(chan struct{}, 1))
+	lock := value.(chan struct{})
+	select {
+	case lock <- struct{}{}:
+		defer func() { <-lock }()
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
 	rc.moduleRegistryMu.RLock()
-	registryIdx, found := rc.moduleRegistry[moduleName]
+	index, found := rc.moduleRegistry[key]
 	rc.moduleRegistryMu.RUnlock()
-
 	if found {
-		// Fast path: try cached registry first.
-		metadata, err := rc.clients[registryIdx].GetModuleMetadata(ctx, moduleName)
-		if err == nil {
-			return metadata, nil
-		}
-
-		// Fallback to other registries if cached registry fails.
-		var lastErr = err
-		for i, client := range rc.clients {
-			if i == registryIdx {
-				continue
-			}
-			metadata, err := client.GetModuleMetadata(ctx, moduleName)
-			if err == nil {
-				return metadata, nil
-			}
-			lastErr = err
-		}
-
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		return nil, fmt.Errorf("metadata for module %s not found in any registry", moduleName)
+		return fetch(rc.clients[index])
 	}
-
-	// Try each registry in order to find the metadata
-	var lastErr error
+	var failures []error
 	for i, client := range rc.clients {
-		metadata, err := client.GetModuleMetadata(ctx, moduleName)
+		result, err := fetch(client)
 		if err == nil {
-			// Success! Remember this registry for future requests for this module
 			rc.moduleRegistryMu.Lock()
-			if _, exists := rc.moduleRegistry[moduleName]; !exists {
-				rc.moduleRegistry[moduleName] = i
-			}
+			rc.moduleRegistry[key] = i
 			rc.moduleRegistryMu.Unlock()
-			return metadata, nil
+			return result, nil
 		}
-
-		// Check if it's a 404 (module not found in this registry)
-		if isNotFound(err) {
-			lastErr = err
-			continue
+		if !isNotFound(err) {
+			return zero, err
 		}
-
-		// For other errors, continue to next registry
-		lastErr = err
-		continue
+		failures = append(failures, fmt.Errorf("%s: %w", client.BaseURL(), err))
 	}
-
-	// Module metadata not found in any registry
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("metadata for module %s not found in any registry", moduleName)
+	return zero, fmt.Errorf("module %s not found in any registry: %w", name, errors.Join(failures...))
 }
 
 // BaseURL returns the URL of the first registry in the chain.
@@ -277,15 +175,53 @@ func (rc *registryChain) BaseURL() string {
 }
 
 // GetRegistryForModule returns the registry URL that provides the given module.
-// Returns empty string if the module hasn't been looked up yet.
+// Returns empty string if unknown or if observed versions have different origins.
 func (rc *registryChain) GetRegistryForModule(moduleName string) string {
 	rc.moduleRegistryMu.RLock()
 	defer rc.moduleRegistryMu.RUnlock()
-
-	if idx, found := rc.moduleRegistry[moduleName]; found {
-		return rc.clients[idx].BaseURL()
+	found := -1
+	for key, index := range rc.moduleRegistry {
+		if !strings.HasPrefix(key, moduleName+"@") {
+			continue
+		}
+		if found >= 0 && found != index {
+			return ""
+		}
+		found = index
+	}
+	if found >= 0 {
+		return rc.clients[found].BaseURL()
 	}
 	return ""
+}
+
+// GetRegistryForVersion returns the selected registry for a module coordinate.
+func (rc *registryChain) GetRegistryForVersion(name, version string) string {
+	rc.moduleRegistryMu.RLock()
+	defer rc.moduleRegistryMu.RUnlock()
+	if index, ok := rc.moduleRegistry[name+"@"+version]; ok {
+		return rc.clients[index].BaseURL()
+	}
+	return ""
+}
+
+// GetModuleVersionMetadata uses the origin of the selected MODULE.bazel.
+func (rc *registryChain) GetModuleVersionMetadata(ctx context.Context, name, version string) (*registry.Metadata, error) {
+	if _, err := rc.GetModuleFile(ctx, name, version); err != nil {
+		return nil, err
+	}
+	return lookupRegistry(ctx, rc, name, version, func(client Registry) (*registry.Metadata, error) {
+		return moduleMetadataForVersion(ctx, client, name, version)
+	})
+}
+
+func moduleMetadataForVersion(ctx context.Context, reg Registry, name, version string) (*registry.Metadata, error) {
+	if provider, ok := reg.(interface {
+		GetModuleVersionMetadata(context.Context, string, string) (*registry.Metadata, error)
+	}); ok {
+		return provider.GetModuleVersionMetadata(ctx, name, version)
+	}
+	return reg.GetModuleMetadata(ctx, name)
 }
 
 func (rc *registryChain) registryFileHashesSnapshot() map[string]*string {
@@ -310,67 +246,13 @@ func (rc *registryChain) registryFileTrace() *registryFileTrace {
 
 // GetModuleSource fetches source.json using the registry that provides this module.
 func (rc *registryChain) GetModuleSource(ctx context.Context, moduleName, version string) (*registry.Source, error) {
-	// Check if we've already determined which registry provides this module
-	rc.moduleRegistryMu.RLock()
-	registryIdx, found := rc.moduleRegistry[moduleName]
-	rc.moduleRegistryMu.RUnlock()
-
-	if found {
-		// Fast path: try cached registry first.
-		source, err := rc.clients[registryIdx].GetModuleSource(ctx, moduleName, version)
-		if err == nil {
-			return source, nil
-		}
-
-		// Fallback to other registries if cached registry fails.
-		var lastErr = err
-		for i, client := range rc.clients {
-			if i == registryIdx {
-				continue
-			}
-			source, err := client.GetModuleSource(ctx, moduleName, version)
-			if err == nil {
-				return source, nil
-			}
-			lastErr = err
-		}
-
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		return nil, fmt.Errorf("source.json for module %s@%s not found in any registry", moduleName, version)
+	// MODULE.bazel selects the origin even when source metadata is requested first.
+	if _, err := rc.GetModuleFile(ctx, moduleName, version); err != nil {
+		return nil, err
 	}
-
-	// Try each registry in order to find the source
-	var lastErr error
-	for i, client := range rc.clients {
-		source, err := client.GetModuleSource(ctx, moduleName, version)
-		if err == nil {
-			// Success! Remember this registry for future requests for this module
-			rc.moduleRegistryMu.Lock()
-			if _, exists := rc.moduleRegistry[moduleName]; !exists {
-				rc.moduleRegistry[moduleName] = i
-			}
-			rc.moduleRegistryMu.Unlock()
-			return source, nil
-		}
-
-		// Check if it's a 404 (module not found in this registry)
-		if isNotFound(err) {
-			lastErr = err
-			continue
-		}
-
-		// For other errors, continue to next registry
-		lastErr = err
-		continue
-	}
-
-	// Module source not found in any registry
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("source.json for module %s@%s not found in any registry", moduleName, version)
+	return lookupRegistry(ctx, rc, moduleName, version, func(client Registry) (*registry.Source, error) {
+		return client.GetModuleSource(ctx, moduleName, version)
+	})
 }
 
 // Registry provides access to Bazel module registries.
