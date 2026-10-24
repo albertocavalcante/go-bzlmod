@@ -153,7 +153,7 @@ func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo)
 
 	// Phase 3: Run Bazel's selection algorithm
 	originalRootDeps := slices.Clone(depGraph.Modules[depGraph.RootKey].Deps)
-	result, err := selection.Run(depGraph, overrides)
+	result, err := selection.RunContext(ctx, depGraph, overrides)
 	if err != nil {
 		return nil, fmt.Errorf("selection algorithm: %w", err)
 	}

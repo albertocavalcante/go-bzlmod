@@ -5,7 +5,9 @@
 package selection
 
 import (
+	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -865,7 +867,7 @@ func TestComputePossibleResolutionResults(t *testing.T) {
 
 	// Test: DepSpec with max_compat=3 should have 3 possible resolutions (compat 1, 2, 3)
 	depSpec := DepSpec{Name: "A", Version: "1.0", MaxCompatibilityLevel: 3}
-	results := computePossibleResolutionResultsForOneDepSpec(depSpec, graph, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(context.Background(), depSpec, graph, selectedVersions)
 
 	// Should have results for compat levels 1, 2, and 3 (not 4)
 	if len(results) != 3 {
@@ -930,7 +932,7 @@ func TestEnumerateStrategies(t *testing.T) {
 		}
 	}
 
-	strategies := enumerateStrategies(graph, selectionGroups, selectedVersions)
+	strategies := slices.Collect(enumerateStrategies(context.Background(), graph, selectionGroups, selectedVersions))
 
 	// Should have 2 strategies: one using A@1.0, one using A@2.0
 	if len(strategies) != 2 {
@@ -967,7 +969,7 @@ func TestCartesianProduct(t *testing.T) {
 		},
 	}
 
-	combos := cartesianProduct(keys, allPossible)
+	combos := slices.Collect(cartesianProduct(keys, allPossible))
 
 	// Should have 2 * 2 = 4 combinations
 	if len(combos) != 4 {
@@ -987,7 +989,7 @@ func TestCartesianProduct(t *testing.T) {
 
 // TestCartesianProduct_Empty tests cartesian product with empty input.
 func TestCartesianProduct_Empty(t *testing.T) {
-	combos := cartesianProduct(nil, nil)
+	combos := slices.Collect(cartesianProduct(nil, nil))
 
 	// Should return one empty combination
 	if len(combos) != 1 {
@@ -1033,7 +1035,7 @@ func TestStrategyEnumeration_NoMaxCompatLevel(t *testing.T) {
 		}
 	}
 
-	strategies := enumerateStrategies(graph, selectionGroups, selectedVersions)
+	strategies := slices.Collect(enumerateStrategies(context.Background(), graph, selectionGroups, selectedVersions))
 
 	// Should have exactly 1 strategy (the default)
 	if len(strategies) != 1 {
@@ -1391,7 +1393,7 @@ func TestCartesianProductExactContentAndOrder(t *testing.T) {
 		b: {{Version: "1.0", CompatLevel: 1}, {Version: "3.0", CompatLevel: 3}},
 	}
 
-	got := cartesianProduct(keys, allPossible)
+	got := slices.Collect(cartesianProduct(keys, allPossible))
 
 	// Keys are iterated in slice order and possibilities in slice order, so the
 	// product is fully determined.
@@ -1443,7 +1445,7 @@ func TestResolutionResultsSortedByCompatLevel(t *testing.T) {
 
 	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: 3}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(context.Background(), dep, graph, selectedVersions)
 
 	if len(results) < 2 {
 		t.Fatalf("expected several possible resolutions, got %v", results)
@@ -1475,7 +1477,7 @@ func TestUnconstrainedDepHasPossibleResolutions(t *testing.T) {
 
 	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: -1}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(context.Background(), dep, graph, selectedVersions)
 
 	if len(results) == 0 {
 		t.Fatal("an unconstrained dep (min == max compat level) must still have a possible resolution")
@@ -1508,7 +1510,7 @@ func TestPossibleResolutionsIgnoreOtherModules(t *testing.T) {
 
 	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: -1}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(context.Background(), dep, graph, selectedVersions)
 
 	for _, r := range results {
 		if r.Version == "9.0" {
@@ -1544,7 +1546,7 @@ func TestCollectDepKeepsMostPermissiveMaxCompat(t *testing.T) {
 	}
 
 	_, selectedVersions := groupsAndVersionsForTest(t, graph)
-	all := computeAllPossibleResolutions(graph, selectedVersions)
+	all := computeAllPossibleResolutions(context.Background(), graph, selectedVersions)
 
 	key := depSpecKey{Name: "B", Version: "1.0"}
 	results, ok := all[key]
@@ -1571,7 +1573,7 @@ func TestCollectDepKeepsMostPermissiveMaxCompat(t *testing.T) {
 func groupsAndVersionsForTest(t *testing.T, graph *DepGraph) (map[ModuleKey]SelectionGroup, map[SelectionGroup]string) {
 	t.Helper()
 
-	allowed, err := computeAllowedVersionSets(nil, graph)
+	allowed, err := computeAllowedVersionSets(context.Background(), nil, graph)
 	if err != nil {
 		t.Fatalf("computeAllowedVersionSets: %v", err)
 	}
@@ -1612,7 +1614,7 @@ func TestMaxCompatBelowModuleLevelHasNoResolution(t *testing.T) {
 
 	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: 0}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(context.Background(), dep, graph, selectedVersions)
 
 	if len(results) != 0 {
 		t.Errorf("max_compatibility_level 0 against a level-1 module admits no resolution, got %v", results)
@@ -1652,7 +1654,7 @@ func TestPossibleResolutionsSkipOtherModulesThatWouldWin(t *testing.T) {
 
 	_, selectedVersions := groupsAndVersionsForTest(t, graph)
 	dep := DepSpec{Name: "B", Version: "1.0", MaxCompatibilityLevel: -1}
-	results := computePossibleResolutionResultsForOneDepSpec(dep, graph, selectedVersions)
+	results := computePossibleResolutionResultsForOneDepSpec(context.Background(), dep, graph, selectedVersions)
 
 	for _, r := range results {
 		if r.Version == "1.5" {
