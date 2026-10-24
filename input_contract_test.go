@@ -64,7 +64,7 @@ func TestExplicitZeroCompatibilityConstraint(t *testing.T) {
 	for _, tc := range []struct {
 		maximum, level int
 		wantError      bool
-	}{{0, 0, false}, {0, 1, true}, {-1, 1, false}} {
+	}{{0, 0, false}, {0, 1, true}, {-1, 1, false}, {-2, 1, false}} {
 		t.Run(fmt.Sprintf("max_%d_level_%d", tc.maximum, tc.level), func(t *testing.T) {
 			root := discoveryModule("root", "1.0") + fmt.Sprintf("bazel_dep(name='alpha',version='1.0',max_compatibility_level=%d)", tc.maximum)
 			parsed, err := ParseModuleContent(root)
@@ -132,5 +132,16 @@ func TestCompatibilityLevelReleaseBoundaries(t *testing.T) {
 				t.Fatalf("version=%s enforced=%v err=%v", tc.version, tc.enforced, err)
 			}
 		})
+	}
+}
+
+func TestCompatibilityLevelNegativeIntent(t *testing.T) {
+	parsed, err := ParseModuleContent("module(name='root',compatibility_level=-1)\nbazel_dep(name='alpha',version='1.0',max_compatibility_level=-2)")
+	if err != nil || parsed.CompatibilityLevel != -1 || parsed.Dependencies[0].MaxCompatibilityLevel != -2 {
+		t.Fatalf("literal integer intent rejected: parsed=%+v err=%v", parsed, err)
+	}
+	_, err = Resolve(context.Background(), ContentSource("module(name='root',compatibility_level=-1)"), WithBazelVersion("9.1.0"), WithBazelToolsLookup(func(string) []bazeltools.ToolDep { return nil }))
+	if err != nil {
+		t.Fatalf("modern no-op sentinel rejected: %v", err)
 	}
 }
