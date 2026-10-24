@@ -40,6 +40,7 @@ GO_BZLMOD_E2E_RELEASE_MATRIX_REGISTRY=file:///path/to/bazel-central-registry \
 go test -race -count=1 -timeout=5m -run TestE2E_BazelReleaseMatrix_VisibleGraphParity ./...
 ```
 
+The registry option applies to both the library and native Bazel in live/refresh mode.
 Omit `GO_BZLMOD_E2E_RELEASE_MATRIX_REGISTRY` to use the live BCR. This matrix is currently expected
 to fail for the documented gaps. Library errors fail the test; they are never broadly skipped.
 An explicit request combined with short mode also fails. Use the `FIXTURE`, `MODE` and `VERSION`

@@ -154,7 +154,7 @@ func runBazelModGraphJSON(t *testing.T, workspaceDir, bazelVersion string, args 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	cmdArgs := append([]string{"mod", "graph", "--output=json"}, args...)
+	cmdArgs := append([]string{"mod", "graph", "--output=json", "--registry=" + releaseMatrixRegistry()}, args...)
 	cmd := exec.CommandContext(ctx, bazelBinaryPath(t), cmdArgs...)
 	cmd.Dir = workspaceDir
 	cmd.Env = append(os.Environ(), "USE_BAZEL_VERSION="+bazelVersion)
@@ -244,17 +244,21 @@ func flattenVisibleModules(g *graphpkg.BazelModGraph) []string {
 	return result
 }
 
-func flattenVisibleLibraryModules(t *testing.T, fixture releaseMatrixFixture, mode releaseMatrixMode, bazelVersion string) ([]string, error) {
-	t.Helper()
-
+func releaseMatrixRegistry() string {
 	registryURL := os.Getenv("GO_BZLMOD_E2E_RELEASE_MATRIX_REGISTRY")
 	if registryURL == "" {
 		registryURL = gobzlmod.DefaultRegistry
 	}
+	return registryURL
+}
+
+func flattenVisibleLibraryModules(t *testing.T, fixture releaseMatrixFixture, mode releaseMatrixMode, bazelVersion string) ([]string, error) {
+	t.Helper()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	opts := gobzlmod.ResolutionOptions{
-		Registries:            []string{registryURL},
+		Registries:            []string{releaseMatrixRegistry()},
 		BazelVersion:          bazelVersion,
 		IncludeBuiltinModules: mode.includeBuiltinModules,
 		IncludeUnusedModules:  mode.includeUnusedModules,
