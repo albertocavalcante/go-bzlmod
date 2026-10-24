@@ -120,3 +120,21 @@ func TestDiscoveryCancelledContextDoesNotFetch(t *testing.T) {
 		t.Fatalf("cancelled resolution made %d HTTP requests", got)
 	}
 }
+
+func TestDiscoveryRootBackreferences(t *testing.T) {
+	for _, nodep := range []bool{false, true} {
+		t.Run(fmt.Sprintf("nodep_%t", nodep), func(t *testing.T) {
+			backreference := discoveryDep("root", "2.0")
+			if nodep {
+				backreference = "bazel_dep(name='root',version='2.0',repo_name=None)\n"
+			}
+			files := map[string]string{
+				"/modules/alpha/1.0/MODULE.bazel": discoveryModule("alpha", "1.0") + backreference,
+			}
+			result := resolveDiscovery(t, discoveryModule("root", "1.0")+discoveryDep("alpha", "1.0"), files)
+			if !result.HasModule("alpha") || result.HasModule("root") {
+				t.Fatalf("unexpected root backreference result: %+v", result.Modules)
+			}
+		})
+	}
+}

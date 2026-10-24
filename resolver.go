@@ -247,7 +247,16 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 	overrideMap := overrideIndex(rootModule.Overrides)
 
 	buildDepSpecs := func(deps []Dependency, isRoot bool) []selection.DepSpec {
-		return r.buildDepSpecs(deps, isRoot, overrideMap)
+		specs := r.buildDepSpecs(deps, isRoot, overrideMap)
+		// Bazel rewrites every reference to the root module to the actual
+		// root key, even when a dependency requests a different version.
+		for i := range specs {
+			if specs[i].Name == rootModule.Name {
+				specs[i].Version = rootModule.Version
+				specs[i].MaxCompatibilityLevel = -1
+			}
+		}
+		return specs
 	}
 
 	// Create root module entry

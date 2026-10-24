@@ -2034,9 +2034,7 @@ bazel_dep(name = "dev_dep", version = "1.0.0", dev_dependency = True)`
 // all versions come from that registry (Bazel behavior)
 func TestResolve_ModuleStickiness(t *testing.T) {
 	// Server 1: has dep@1.0.0 but NOT dep@2.0.0
-	callCount1 := 0
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount1++
 		switch r.URL.Path {
 		case "/modules/top/1.0.0/MODULE.bazel":
 			fmt.Fprint(w, `module(name = "top", version = "1.0.0")
