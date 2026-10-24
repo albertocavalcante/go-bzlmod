@@ -406,30 +406,19 @@ const (
 	BazelCompatibilityError
 )
 
-// LockfileMode controls how the lockfile is handled during resolution.
-//
-// Reference: BazelModuleResolutionFunction.java lines 113-147
-// See: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/BazelModuleResolutionFunction.java
+// LockfileMode reserves automatic lockfile integration. Resolution currently
+// supports only LockfileOff; other modes return errors.ErrUnsupported before IO.
+// The lockfile package offers explicit parsing, validation and serialization.
 type LockfileMode int
 
 const (
-	// LockfileOff disables lockfile handling (default).
-	// The lockfile is neither read nor written.
+	// LockfileOff leaves lockfiles untouched (default).
 	LockfileOff LockfileMode = iota
-
-	// LockfileUpdate reads the existing lockfile and updates it after resolution.
-	// If no lockfile exists, a new one is created.
-	// This is equivalent to Bazel's --lockfile_mode=update.
+	// LockfileUpdate is reserved and currently unsupported.
 	LockfileUpdate
-
-	// LockfileError fails if resolution differs from the lockfile.
-	// This ensures reproducible builds by requiring the lockfile to match.
-	// This is equivalent to Bazel's --lockfile_mode=error.
+	// LockfileError is reserved and currently unsupported.
 	LockfileError
-
-	// LockfileRefresh ignores the existing lockfile and creates a fresh one.
-	// All registry files are re-fetched and new hashes are computed.
-	// This is equivalent to Bazel's --lockfile_mode=refresh.
+	// LockfileRefresh is reserved and currently unsupported.
 	LockfileRefresh
 )
 
@@ -500,10 +489,8 @@ type ResolutionOptions struct {
 	// Default is DirectDepsOff for backwards compatibility.
 	DirectDepsMode DirectDepsCheckMode
 
-	// SubstituteYanked enables automatic substitution of yanked versions
-	// with the next non-yanked version in the same compatibility level.
-	// This matches Bazel's default behavior.
-	// Default is false for backwards compatibility.
+	// SubstituteYanked is reserved. True returns errors.ErrUnsupported.
+	// Bazel does not automatically substitute a selected yanked version.
 	SubstituteYanked bool
 
 	// BazelCompatibilityMode controls validation of bazel_compatibility constraints.
@@ -566,30 +553,20 @@ type ResolutionOptions struct {
 	// Airgap:  []string{"file:///opt/bazel-registry"}
 	Registries []string
 
-	// VendorDir specifies a directory containing vendored module files.
-	// When set, modules are first looked up in this directory before
-	// checking registries. This enables offline/airgap workflows.
-	//
-	// The vendor directory should have the same structure as a registry:
-	//   vendor/modules/{name}/{version}/MODULE.bazel
-	//
-	// This mirrors Bazel's --vendor_dir flag behavior.
+	// VendorDir is reserved; nonempty values return errors.ErrUnsupported.
+	// For a local registry layout use Registries with a file:// URL.
 	VendorDir string
 
-	// LockfileMode controls how the lockfile is handled during resolution.
-	// Default is LockfileOff for backwards compatibility.
-	//
-	// Reference: BazelModuleResolutionFunction.java lines 113-147
+	// LockfileMode supports only LockfileOff. Other modes return
+	// errors.ErrUnsupported. No automatic lockfile IO is performed.
 	LockfileMode LockfileMode
 
-	// LockfilePath specifies the path to the lockfile.
-	// If empty and LockfileMode is not Off, defaults to "MODULE.bazel.lock"
-	// in the same directory as the MODULE.bazel file.
+	// LockfilePath is reserved; nonempty values return errors.ErrUnsupported.
 	LockfilePath string
 
 	// Timeout specifies the HTTP request timeout for registry requests.
 	// When set to a positive value, overrides the default 15 second timeout.
-	// Zero or negative values use the default timeout.
+	// Zero uses the default timeout; negative values are invalid.
 	// This is useful for slow networks or testing scenarios.
 	//
 	// Example: 30 * time.Second for slower networks
