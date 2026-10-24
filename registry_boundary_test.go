@@ -2,7 +2,6 @@ package gobzlmod
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,14 +84,14 @@ func TestRegistrySelectedOriginIsStickyUnderConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Go(func() {
-			_, err := r.GetModuleFile(context.Background(), "alpha", "2.0")
-			if !errors.Is(err, ErrVersionNotFound) {
-				t.Errorf("want original version404, got %v", err)
+			_, err := r.GetModuleFile(context.Background(), "alpha", "1.0")
+			if err != nil {
+				t.Errorf("selected module fetch: %v", err)
 			}
-			if _, err = r.GetModuleSource(context.Background(), "alpha", "2.0"); err == nil {
+			if _, err = r.GetModuleSource(context.Background(), "alpha", "1.0"); err == nil {
 				t.Error("source must not switch origin")
 			}
-			if _, err = r.GetModuleMetadata(context.Background(), "alpha"); err == nil {
+			if _, err = moduleMetadataForVersion(context.Background(), r, "alpha", "1.0"); err == nil {
 				t.Error("metadata must not switch origin")
 			}
 		})
@@ -117,6 +116,56 @@ func TestRegistrySourcePathsDoNotRelocateMetadata(t *testing.T) {
 		if _, err = r.GetModuleFile(context.Background(), "alpha", version); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestRegistryVersionsHaveOrderIndependentOrigins(t *testing.T) {
+	one := boundaryServer(t, map[string]string{
+		"/modules/alpha/1.0/MODULE.bazel":  discoveryModule("alpha", "1.0"),
+		"/modules/alpha/1.0/source.json":   `{"url":"https://one.test/alpha1.tgz"}`,
+		"/modules/alpha/2.0/source.json":   `{"url":"https://wrong.test/alpha2.tgz"}`,
+		"/modules/alpha/metadata.json":     `{"versions":["1.0","2.0"],"yanked_versions":{"2.0":"wrong_origin"}}`,
+		"/modules/parent/1.0/MODULE.bazel": discoveryModule("parent", "1.0") + discoveryDep("alpha", "2.0"),
+		"/modules/parent/1.0/source.json":  `{"url":"https://one.test/parent.tgz"}`,
+	})
+	two := boundaryServer(t, map[string]string{
+		"/modules/alpha/1.0/MODULE.bazel": discoveryModule("alpha", "1.0"),
+		"/modules/alpha/2.0/MODULE.bazel": discoveryModule("alpha", "2.0"),
+		"/modules/alpha/2.0/source.json":  `{"url":"https://two.test/alpha2.tgz"}`,
+		"/modules/alpha/metadata.json":    `{"versions":["1.0","2.0"],"yanked_versions":{"2.0":"selected_origin"}}`,
+	})
+	for _, order := range [][]string{{"1.0", "2.0"}, {"2.0", "1.0"}} {
+		r, err := NewRegistry([]string{one.URL, two.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, version := range order {
+			if _, err = r.GetModuleFile(context.Background(), "alpha", version); err != nil {
+				t.Fatalf("order%v: %v", order, err)
+			}
+		}
+		source, err := r.GetModuleSource(context.Background(), "alpha", "2.0")
+		if err != nil || source.URL != "https://two.test/alpha2.tgz" {
+			t.Fatalf("mixed source origin: %+v (%v)", source, err)
+		}
+	}
+	// Source-first lookup must select the same MODULE.bazel origin as resolution.
+	r, err := NewRegistry([]string{one.URL, two.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := r.GetModuleSource(context.Background(), "alpha", "2.0")
+	if err != nil || source.URL != "https://two.test/alpha2.tgz" {
+		t.Fatalf("source-first origin: %+v (%v)", source, err)
+	}
+	root := discoveryModule("root", "1.0") + discoveryDep("alpha", "1.0") + discoveryDep("parent", "1.0")
+	result, err := Resolve(context.Background(), ContentSource(root), WithRegistries(one.URL, two.URL), WithYankedCheck(true), WithRegistryTrace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := result.Module("alpha")
+	if module == nil || module.Version != "2.0" || module.Registry != two.URL || module.YankReason != "selected_origin" || module.Source == nil || module.Source.URL != "https://two.test/alpha2.tgz" {
+		t.Fatalf("selected coordinate provenance: %+v", module)
 	}
 }
 

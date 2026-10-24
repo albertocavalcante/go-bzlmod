@@ -547,7 +547,7 @@ type ResolutionOptions struct {
 
 	// Registries is an ordered list of registry URLs to search for modules.
 	// When multiple registries are specified, modules are looked up in order.
-	// The first registry where a module is found is used for ALL versions of that module.
+	// Each module version is fetched from the first registry serving that coordinate.
 	// This matches Bazel's --registry flag behavior.
 	// If empty or nil, uses DefaultRegistries (BCR + GitHub mirror).
 	//

@@ -46,7 +46,7 @@ func checkModuleMetadata(ctx context.Context, registry Registry, opts Resolution
 			defer wg.Done()
 
 			module := &list.Modules[idx]
-			metadata, err := registry.GetModuleMetadata(ctx, module.Name)
+			metadata, err := moduleMetadataForVersion(ctx, registry, module.Name, module.Version)
 			if err != nil {
 				// Bazel's fail-open pattern: metadata fetch failures don't block resolution.
 				// This matches YankedVersionsFunction.java behavior (lines 47-62).
