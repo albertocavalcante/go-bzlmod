@@ -45,17 +45,10 @@ Reference: [`types.go:484-497`](../types.go#L484-L497), [Bazel registry docs](ht
 gobzlmod.WithVendorDir(dir string)
 ```
 
-Prepends a local vendor directory to the registry chain. Structure must match registry layout:
-
-```
-vendor/
-└── modules/
-    └── rules_go/
-        └── 0.50.1/
-            └── MODULE.bazel
-```
-
-Reference: [`types.go:499-507`](../types.go#L499-L507), [Bazel vendor docs](https://bazel.build/external/vendor)
+Reserved: a nonempty directory returns `errors.ErrUnsupported` before IO.
+For a directory with the registry `modules/{name}/{version}/MODULE.bazel`
+layout, use `WithRegistries("file:///absolute/path")`. This is a local registry;
+it does not implement Bazel's vendor mode.
 
 ### WithRegistryTrace
 
@@ -96,7 +89,9 @@ Reference: [`types.go:438-439`](../types.go#L438-L439)
 gobzlmod.WithDirectDepsMode(mode DirectDepsCheckMode)
 ```
 
-Validates that direct dependency versions match resolved versions.
+Compares effective root dependency edges before and after selection. Overrides
+and dev-dependency filtering apply first; aliases and multiple-version edges are
+checked independently. Versions differing only in build metadata compare equal.
 
 | Mode              | Behavior                          |
 | ----------------- | --------------------------------- |
@@ -140,7 +135,8 @@ Reference: [`types.go:327-344`](../types.go#L327-L344)
 gobzlmod.WithSubstituteYanked(substitute bool)
 ```
 
-Automatically replace yanked versions with the next non-yanked version in the same compatibility level. Matches Bazel's default behavior.
+Reserved: `true` returns `errors.ErrUnsupported`. Bazel does not automatically
+substitute selected yanked versions. Use `WithYankedBehavior` to allow, warn, or fail.
 
 Default: `false`
 
@@ -337,7 +333,11 @@ preserved; custom caches should treat the name argument as an opaque key.
 gobzlmod.WithProgress(fn func(ProgressEvent))
 ```
 
-Callback for resolution progress. Must be thread-safe.
+Callback for resolution progress. Must be thread-safe and return quickly.
+For valid options, one resolve start/end pair surrounds parsing, discovery,
+selection and final target checks. Every attempted registry module fetch has a
+start/end pair, including cache hits and failures. End events carry errors in
+`Message`. Invalid options fail before callbacks. Callback panics propagate.
 
 ```go
 gobzlmod.WithProgress(func(e gobzlmod.ProgressEvent) {
@@ -383,22 +383,16 @@ Reference: [`types.go:580-582`](../types.go#L580-L582)
 gobzlmod.WithLockfileMode(mode LockfileMode)
 ```
 
-| Mode              | Behavior                                 |
-| ----------------- | ---------------------------------------- |
-| `LockfileOff`     | Ignore lockfile (default)                |
-| `LockfileUpdate`  | Read existing, update after resolution   |
-| `LockfileError`   | Fail if resolution differs from lockfile |
-| `LockfileRefresh` | Ignore existing, create fresh lockfile   |
-
-Reference: [`types.go:377-402`](../types.go#L377-L402), [Bazel lockfile docs](https://bazel.build/external/lockfile)
+Only `LockfileOff` is supported. `LockfileUpdate`, `LockfileError`, and
+`LockfileRefresh` return `errors.ErrUnsupported` before resolution IO.
+No automatic lockfile read, verification or write is performed.
 
 ### WithLockfilePath
 
-```go
-gobzlmod.WithLockfilePath(path string)
-```
-
-Custom lockfile path. Default: `MODULE.bazel.lock` in same directory as MODULE.bazel.
+A nonempty path returns `errors.ErrUnsupported`, including with `LockfileOff`.
+For explicit operations use the [lockfile package](../lockfile/).
+`ResolutionList.ToLockfile()` creates a new registry trace snapshot; it is not
+an update of an existing lockfile and does not preserve extension evaluation data.
 
 ## Deprecated Options
 
