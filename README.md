@@ -60,7 +60,7 @@ in the Bazel Central Registry across Bazel versions 6.6.0 through 9.1.0.
 - **Override Support** — `single_version_override`, `multiple_version_override`, `git_override`, `local_path_override`, `archive_override`
 - **Graph Queries** — Dependency paths, explanations, cycle detection ([graph/](graph/))
 - **Bazel Compatibility** — Validate `bazel_compatibility` constraints ([bazel_compat.go](bazel_compat.go))
-- **Vendor Support** — Resolve from local vendor directories
+- **Local Registries** — Resolve from a local `file://` registry layout
 - **MODULE.tools** — Inject Bazel's implicit dependencies ([bazeltools/](bazeltools/))
 - **Nodep Edges** — Parse `repo_name = None` and handle nodep discovery semantics
 - **Registry Trace** — Record Bazel-style `registryFileHashes` and source metadata
