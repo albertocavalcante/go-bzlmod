@@ -21,16 +21,13 @@ const registryModulesPath = "modules"
 // This matches Bazel's DEFAULT_REGISTRIES in BazelRepositoryModule.java.
 const DefaultRegistry = "https://bcr.bazel.build"
 
-// DefaultRegistryMirror is the GitHub-hosted mirror of BCR.
-// This serves as a fallback when bcr.bazel.build is unavailable.
-// The BCR has experienced outages due to certificate expiration.
-// Using raw.githubusercontent.com provides resilience against such incidents.
-//
-// Reference: https://github.com/bazelbuild/bazel/issues/28101
+// DefaultRegistryMirror is the GitHub-hosted BCR mirror, tried after a 404
+// from the primary registry. TLS, server and authentication failures do not
+// permit fallback to another origin.
 const DefaultRegistryMirror = "https://raw.githubusercontent.com/bazelbuild/bazel-central-registry/main"
 
 // DefaultRegistries is the default list of registries with fallback.
-// BCR is tried first, with the GitHub mirror as backup.
+// BCR is tried first; the GitHub mirror is used only after an initial 404.
 var DefaultRegistries = []string{
 	DefaultRegistry,
 	DefaultRegistryMirror,

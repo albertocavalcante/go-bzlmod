@@ -1,5 +1,9 @@
 # go-bzlmod Code Review: Reference Implementation Comparison
 
+> Historical design/review notes. These are not current validation evidence. See
+> [the README](README.md) and
+> [current parity status](docs/BAZEL_PARITY_STATUS.md) for supported behavior and outstanding gaps.
+
 This document compares go-bzlmod against Bazel's reference implementation in `src/main/java/com/google/devtools/build/lib/bazel/bzlmod/`.
 
 ## Executive Summary
