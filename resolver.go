@@ -79,7 +79,7 @@ func checkFieldCompatibility(rootModule *ModuleInfo, bazelVersion string) []stri
 	}
 	var warnings []string
 	for _, dep := range rootModule.Dependencies {
-		if dep.MaxCompatibilityLevel > 0 {
+		if dep.MaxCompatibilityLevelSet || dep.MaxCompatibilityLevel > 0 {
 			if w := compat.CheckField(bazelVersion, "max_compatibility_level"); w != nil {
 				warnings = append(warnings,
 					fmt.Sprintf("bazel_dep(%s): %s", dep.Name, w.String()))
