@@ -63,18 +63,31 @@ var bcrCorpusSkips = map[string]string{
 // must continue to return its specific unsupported-input error; a new success or
 // a different error requires review, rather than an unconditional skip.
 var bcrUnsupportedInputs = map[string]struct{ directive, attribute, via string }{
-	"rules_kotlin":        {"bazel_dep", "version", ""},
-	"lanelet2":            {"bazel_dep", "version", ""},
-	"cel-cpp":             {"bazel_dep", "version", ""},
-	"protovalidate-cc":    {"bazel_dep", "version", "cel-cpp@0.11.0"},
-	"rules_pitest":        {"bazel_dep", "version", "contrib_rules_jvm@0.24.0"},
-	"rules_cc_hdrs_map":   {"archive_override", "", "rules_cc"},
-	"or-tools":            {"git_override", "", "pybind11_abseil"},
-	"jsinterop_base":      {"archive_override", "", "j2cl"},
-	"jsinterop_generator": {"archive_override", "", "j2cl"},
-	"elemental2":          {"archive_override", "", "j2cl"},
-	"rules_java":          {"archive_override", "", "rules_cc"},
-	"aspect_rules_py":     {"archive_override", "", "toolchains_llvm_bootstrapped"},
+	"rules_kotlin":                 {"bazel_dep", "version", ""},
+	"lanelet2":                     {"bazel_dep", "version", ""},
+	"cel-cpp":                      {"bazel_dep", "version", ""},
+	"protovalidate-cc":             {"bazel_dep", "version", "cel-cpp@0.11.0"},
+	"rules_pitest":                 {"bazel_dep", "version", "contrib_rules_jvm@0.24.0"},
+	"rules_cc_hdrs_map":            {"archive_override", "", "rules_cc"},
+	"or-tools":                     {"git_override", "", "pybind11_abseil"},
+	"jsinterop_base":               {"archive_override", "", "j2cl"},
+	"jsinterop_generator":          {"archive_override", "", "j2cl"},
+	"elemental2":                   {"archive_override", "", "j2cl"},
+	"rules_java":                   {"archive_override", "", "rules_cc"},
+	"aspect_rules_py":              {"bazel_dep", "dev_dependency", ""},
+	"bazel_lib":                    {"bazel_dep", "dev_dependency", ""},
+	"aspect_rules_lint":            {"bazel_dep", "dev_dependency", ""},
+	"rules_img_tool":               {"bazel_dep", "dev_dependency", "bazel_lib@3.1.1"},
+	"cargo_env.bzl":                {"bazel_dep", "dev_dependency", "bazel_lib@3.2.0"},
+	"toolchains_llvm_bootstrapped": {"bazel_dep", "dev_dependency", "bazel_lib@3.2.0"},
+	"build_stack_scala_gazelle":    {"bazel_dep", "", "rules_scala@7.1.5"},
+	"build_stack_rules_proto":      {"bazel_dep", "", "rules_scala@7.0.0"},
+	"rules_chisel":                 {"bazel_dep", "", "rules_scala@7.1.5"},
+	"boost.pin_version":            {"bazel_dep", "", ""},
+	"rules_docs":                   {"bazel_dep", "", ""},
+	"bazel_difftools":              {"bazel_dep", "", "rules_scala@7.0.0"},
+	"rules_scala":                  {"bazel_dep", "", ""},
+	"rules_proto_grpc_scala":       {"bazel_dep", "", "rules_scala@7.1.3"},
 }
 
 const bcrCorpusRevision = "ab4017a7417cbd1e7eba34cb55aba99aa2be9808"
@@ -112,7 +125,23 @@ func requireBCRCorpusEnabled(t *testing.T) {
 	if err != nil || len(status) != 0 {
 		t.Fatal("BCR corpus must be a complete, clean git checkout")
 	}
-
+	// git status considers sparse/skip-worktree omissions clean. Require every
+	// tracked corpus file to be materialized before enumerating the filesystem.
+	files, err := exec.Command("git", "-C", bcrPath(), "ls-files", "-v", "-z", "--", "modules").Output()
+	if err != nil || len(files) == 0 {
+		t.Fatalf("read tracked corpus inventory: %v", err)
+	}
+	for _, entry := range strings.Split(string(files), "\x00") {
+		if entry == "" {
+			continue
+		}
+		if entry[0] != 'H' {
+			t.Fatalf("BCR corpus must not omit tracked files: %s", entry)
+		}
+		if _, err := os.Stat(filepath.Join(bcrPath(), entry[2:])); err != nil {
+			t.Fatalf("BCR corpus is incomplete: %s: %v", entry[2:], err)
+		}
+	}
 }
 
 type bcrMetadata struct {
@@ -284,7 +313,7 @@ func TestE2E_BCRCorpus_Deterministic(t *testing.T) {
 			moduleFile := filepath.Join(bcrRoot, "modules", mod.name, mod.version, "MODULE.bazel")
 			content, err := os.ReadFile(moduleFile)
 			if err != nil {
-				t.Skipf("skip: %v", err)
+				t.Fatalf("required deterministic fixture missing: %v", err)
 			}
 
 			opts := []gobzlmod.Option{gobzlmod.WithRegistries(fileURL)}
