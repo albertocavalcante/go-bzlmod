@@ -74,8 +74,13 @@ type Dependency struct {
 	// for this dependency. If set (> 0), the resolved version must have a
 	// compatibility_level <= this value. This allows depending on modules
 	// that may upgrade within the same compatibility level range.
-	// A value of 0 means no constraint (default).
+	// A zero value without MaxCompatibilityLevelSet keeps the legacy default;
+	// an explicitly parsed zero is an actual constraint.
 	MaxCompatibilityLevel int `json:"max_compatibility_level,omitempty"`
+
+	// MaxCompatibilityLevelSet distinguishes an explicit zero constraint from
+	// the legacy zero-value default. Parsed declarations preserve this intent.
+	MaxCompatibilityLevelSet bool `json:"max_compatibility_level_set,omitempty"`
 
 	// RepoName overrides the default repository name for this dependency.
 	// If empty, the module name is used as the repo name.

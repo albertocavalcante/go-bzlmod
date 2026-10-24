@@ -16,3 +16,19 @@ var (
 	// ErrUnauthorized indicates authentication is required or failed.
 	ErrUnauthorized = errors.New("unauthorized")
 )
+
+// UnsupportedInputError reports syntax that static resolution cannot evaluate.
+// Callers can use errors.Is(err, errors.ErrUnsupported) or errors.As.
+type UnsupportedInputError struct {
+	Directive string
+	Attribute string
+}
+
+func (e *UnsupportedInputError) Error() string {
+	if e.Attribute != "" {
+		return "unsupported MODULE.bazel input: " + e.Directive + "." + e.Attribute + " requires a literal value"
+	}
+	return "unsupported MODULE.bazel directive: " + e.Directive
+}
+
+func (e *UnsupportedInputError) Unwrap() error { return errors.ErrUnsupported }
