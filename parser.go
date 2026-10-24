@@ -366,17 +366,21 @@ func validateDirectivePlacement(f *build.File) error {
 		}
 	}
 	var invalid error
-	build.Walk(f, func(expr build.Expr, _ []build.Expr) {
-		call, ok := expr.(*build.CallExpr)
+	build.Walk(f, func(expr build.Expr, stack []build.Expr) {
+		ident, ok := expr.(*build.Ident)
 		if !ok || invalid != nil {
 			return
 		}
-		name := buildutil.FuncName(call)
-		switch name {
+		switch ident.Name {
 		case directiveModule, directiveBazelDep, directiveSingleVersion, directiveMultipleVersion, directiveLocalPath, directiveGit, directiveArchive, "include":
-			if !topLevel[call] {
-				invalid = &UnsupportedInputError{Directive: name, Reason: "must be a direct top-level call"}
+			// Selecting builtins may only occur as the callee of a direct
+			// top-level call. Aliasing or rebinding them requires evaluation.
+			if len(stack) > 0 {
+				if call, ok := stack[len(stack)-1].(*build.CallExpr); ok && call.X == ident && topLevel[call] {
+					return
+				}
 			}
+			invalid = &UnsupportedInputError{Directive: ident.Name, Reason: "must be a direct top-level call; aliases and rebinding are unsupported"}
 		}
 	})
 	return invalid
