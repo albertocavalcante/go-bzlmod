@@ -155,8 +155,8 @@ func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 				info.Overrides = append(info.Overrides, override)
 			}
 
-			// Bazel parity: parse multiple_version_override directives.
-			case "multiple_version_override":
+		// Bazel parity: parse multiple_version_override directives.
+		case "multiple_version_override":
 			seenOtherDirective = true
 			override := Override{
 				Type:       "multiple_version",
@@ -185,7 +185,7 @@ func extractModuleInfo(f *build.File) (*ModuleInfo, error) {
 		case "local_path_override":
 			seenOtherDirective = true
 			override := Override{
-				Type:       "local_path",
+				Type:       overrideTypeLocalPath,
 				ModuleName: buildutil.String(call, "module_name"),
 				Path:       buildutil.String(call, "path"),
 			}

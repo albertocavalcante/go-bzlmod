@@ -87,7 +87,7 @@ func (v *vendorRegistry) GetModuleSource(ctx context.Context, moduleName, versio
 	if isNotFound(err) {
 		modulePath := filepath.Join(v.local.rootPath, "modules", moduleName, version)
 		return &registry.Source{
-			Type: "local_path",
+			Type: overrideTypeLocalPath,
 			Path: modulePath,
 		}, nil
 	}

@@ -8,6 +8,8 @@ import (
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
 
+const versionResolutionErrorCode = "VERSION_RESOLUTION_ERROR"
+
 // Run executes module selection (version resolution).
 //
 // This implements Bazel's Selection.run() from Selection.java lines 266-353.
@@ -217,7 +219,7 @@ func computeAllowedVersionSets(overrides map[string]Override, graph *DepGraph) (
 			module, ok := graph.Modules[key]
 			if !ok {
 				return nil, &SelectionError{
-					Code: "VERSION_RESOLUTION_ERROR",
+					Code: versionResolutionErrorCode,
 					Message: fmt.Sprintf(
 						"multiple_version_override for module %s contains version %s, "+
 							"but it doesn't exist in the dependency graph",
@@ -350,7 +352,7 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 				if resolvedModule, ok := w.oldGraph.Modules[resolvedKey]; ok {
 					if resolvedModule.CompatLevel > dep.MaxCompatibilityLevel {
 						return nil, nil, &SelectionError{
-							Code: "VERSION_RESOLUTION_ERROR",
+							Code: versionResolutionErrorCode,
 							Message: fmt.Sprintf(
 								"%v depends on %s with max_compatibility_level %d, "+
 									"but %s@%s has compatibility_level %d which is higher",
@@ -380,7 +382,7 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 					if resolvedModule, ok := w.oldGraph.Modules[resolvedKey]; ok {
 						if resolvedModule.CompatLevel > dep.MaxCompatibilityLevel {
 							return nil, nil, &SelectionError{
-								Code: "VERSION_RESOLUTION_ERROR",
+								Code: versionResolutionErrorCode,
 								Message: fmt.Sprintf(
 									"%v has nodep_dep on %s with max_compatibility_level %d, "+
 										"but %s@%s has compatibility_level %d which is higher",
@@ -454,7 +456,7 @@ func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, m
 			// Reference: Selection.java lines 416-429
 			// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L416
 			return &SelectionError{
-				Code: "VERSION_RESOLUTION_ERROR",
+				Code: versionResolutionErrorCode,
 				Message: fmt.Sprintf(
 					"%v depends on %v which is not allowed by the multiple_version_override on %s, "+
 						"which allows only %v",
@@ -471,7 +473,7 @@ func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, m
 		existing, ok := moduleByName[module.Key.Name]
 		if ok && existing.compatLevel != module.CompatLevel {
 			return &SelectionError{
-				Code: "VERSION_RESOLUTION_ERROR",
+				Code: versionResolutionErrorCode,
 				Message: fmt.Sprintf(
 					"%v depends on %v with compatibility level %d, but %v depends on %v "+
 						"with compatibility level %d which is different",

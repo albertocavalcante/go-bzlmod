@@ -795,7 +795,6 @@ func (e *DirectDepsMismatchError) Error() string {
 	return sb.String()
 }
 
-
 // BazelIncompatibilityError is returned when resolution selects modules that are
 // incompatible with the specified Bazel version and BazelCompatibilityError mode is configured.
 type BazelIncompatibilityError struct {

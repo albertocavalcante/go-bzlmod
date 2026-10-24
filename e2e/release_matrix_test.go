@@ -32,10 +32,10 @@ type releaseMatrixFixture struct {
 }
 
 type releaseMatrixMode struct {
-	name                   string
-	bazelArgs              []string
-	includeBuiltinModules  bool
-	includeUnusedModules   bool
+	name                  string
+	bazelArgs             []string
+	includeBuiltinModules bool
+	includeUnusedModules  bool
 }
 
 func requireReleaseMatrixEnabled(t *testing.T) {
@@ -226,10 +226,10 @@ func flattenVisibleLibraryModules(t *testing.T, fixture releaseMatrixFixture, mo
 	t.Helper()
 
 	opts := gobzlmod.ResolutionOptions{
-		Registries:             []string{"https://bcr.bazel.build"},
-		BazelVersion:           bazelVersion,
-		IncludeBuiltinModules:  mode.includeBuiltinModules,
-		IncludeUnusedModules:   mode.includeUnusedModules,
+		Registries:            []string{"https://bcr.bazel.build"},
+		BazelVersion:          bazelVersion,
+		IncludeBuiltinModules: mode.includeBuiltinModules,
+		IncludeUnusedModules:  mode.includeUnusedModules,
 	}
 	resolution, err := gobzlmod.ResolveContent(context.Background(), readFixtureModule(t, fixture), opts)
 	if err != nil {

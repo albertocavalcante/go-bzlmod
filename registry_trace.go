@@ -200,7 +200,7 @@ func sourceInfoFromOverride(override Override) *SourceInfo {
 	}
 
 	return &SourceInfo{
-		Type: "local_path",
+		Type: overrideTypeLocalPath,
 		Path: override.Path,
 	}
 }

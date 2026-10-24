@@ -20,19 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: stable
+          go-version: "1.27.2"
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
-        with:
-          # Use latest version for best performance and features
-          version: latest
-          # Show only new issues in PRs
-          only-new-issues: true
-          # Custom timeout to match your current setup
-          args: --timeout=5m
+      - name: Run pinned linters
+        run: |
+          bash scripts/check.sh lint
+          go tool -modfile=tools/lint/go.mod staticcheck ./...

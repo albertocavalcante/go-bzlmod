@@ -158,7 +158,6 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 	return (&selectionResolver{registry: reg, options: opts}).Resolve(ctx, moduleInfo)
 }
 
-
 // ResolveModule resolves a module from the registry and returns its complete dependency graph.
 //
 // Deprecated: Use Resolve with RegistrySource instead.
@@ -207,7 +206,6 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 	if err != nil {
 		return nil, fmt.Errorf("resolve dependencies for %s@%s: %w", name, version, err)
 	}
-
 
 	// Determine the registry URL for the target module
 	registryURL := reg.BaseURL()

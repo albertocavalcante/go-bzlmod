@@ -48,10 +48,10 @@ var bcrCorpusSkips = map[string]string{
 	// Bazel resolves these correctly when run from the actual workspace.
 
 	// local_path_override(module_name = "rules_webtesting", path = "..")
-	"rules_web_testing_go":    `monorepo sub-module: local_path_override(path = "..") for rules_webtesting`,
-	"rules_web_testing_java":  `monorepo sub-module: local_path_override(path = "..") for rules_webtesting`,
+	"rules_web_testing_go":     `monorepo sub-module: local_path_override(path = "..") for rules_webtesting`,
+	"rules_web_testing_java":   `monorepo sub-module: local_path_override(path = "..") for rules_webtesting`,
 	"rules_web_testing_python": `monorepo sub-module: local_path_override(path = "..") for rules_webtesting`,
-	"rules_web_testing_scala": `monorepo sub-module: local_path_override(path = "..") for rules_webtesting`,
+	"rules_web_testing_scala":  `monorepo sub-module: local_path_override(path = "..") for rules_webtesting`,
 
 	// local_path_override(module_name = "rules_python", path = "..")
 	"rules_python_gazelle_plugin": `monorepo sub-module: local_path_override(path = "..") for rules_python`,

@@ -337,30 +337,9 @@ func TestBFSOrder(t *testing.T) {
 	}
 }
 
-// TestMissingModuleIsSkippedNotAnError pins a deliberate behavior that looks
-// like a bug and is not.
-//
-// walk() skips a queued key absent from graph.Modules instead of erroring. That
-// reads like the riskiest silent-wrong-answer path here, and turning it into a
-// *SelectionError was tried -- it broke four tests across three files in the root
-// package, all of which depend on the skip:
-//
-//   - A non-registry override carries the empty version ("@_") and its own deps
-//     are never registry-resolved, so "bazel_tools@_ -> rules_cc@0.0.9" legitimately
-//     points outside the graph (api_test.go).
-//   - nodep deps are intentionally excluded from the resolved graph, so a nodep
-//     target is expected to be missing (resolver_test.go; see also
-//     TestNodepDeps_NotInResolvedGraph).
-//   - multi_registry_test.go relies on it for cross-registry modules.
-//
-// So the skip is load-bearing: graph construction, not selection, decides which
-// modules get fetched, and selection must tolerate an intentionally incomplete
-// graph. These tests exist so the behavior is asserted rather than merely
-// incidental, and so anyone tempted to "fix" it again finds the reasoning first.
-//
-// If a stricter contract is ever wanted it belongs at graph construction, where
-// "deliberately not fetched" is still distinguishable from "should have been
-// fetched".
+// TestMissingModuleIsSkippedNotAnError records the current lower-layer walk
+// behavior for sparse input. Discovery must separately reject missing required
+// dependencies; this test does not establish that incomplete resolution is valid.
 func TestMissingModuleIsSkippedNotAnError(t *testing.T) {
 	graph := &DepGraph{
 		Modules: map[ModuleKey]*Module{
@@ -1062,62 +1041,40 @@ func TestStrategyEnumeration_NoMaxCompatLevel(t *testing.T) {
 	}
 }
 
-// TestMVSTieBreakPrefersFirstSeenSpelling covers the `> 0` in Run's MVS maximum
-// (selection.go:71).
-//
-// Two versions can compare equal and still be textually different: build
-// metadata is stripped by the parser, so "1.0.0+build" and "1.0.0" are the same
-// version but not the same string. A `>= 0` mutation there overwrites the
-// already-selected spelling with the other one, and the selected string is what
-// a lockfile records -- so this is observable, not cosmetic.
-func TestMVSTieBreakPrefersFirstSeenSpelling(t *testing.T) {
-	rootKey := ModuleKey{Name: "root", Version: "1.0"}
-	plain := ModuleKey{Name: "B", Version: "1.0.0"}
-	tagged := ModuleKey{Name: "B", Version: "1.0.0+build"}
-
-	graph := &DepGraph{
-		RootKey: rootKey,
-		Modules: map[ModuleKey]*Module{
-			rootKey: {Key: rootKey, Deps: []DepSpec{
-				{Name: "B", Version: "1.0.0", MaxCompatibilityLevel: -1},
-				{Name: "B", Version: "1.0.0+build", MaxCompatibilityLevel: -1},
-			}},
-			plain:  {Key: plain},
-			tagged: {Key: tagged},
-		},
-	}
-
-	result, err := Run(graph, nil)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	// Exactly one B survives: the two spellings are one version.
-	var selected []string
-	for k := range result.ResolvedGraph {
-		if k.Name == "B" {
-			selected = append(selected, k.Version)
-		}
-	}
-	if len(selected) != 1 {
-		t.Fatalf("selected %d versions of B (%v), want exactly 1: the two spellings compare equal", len(selected), selected)
-	}
-	// Whichever spelling wins, it must be stable. Re-running must not flip it,
-	// which is what a `>=` comparison would allow once map order varies.
-	for range 20 {
-		again, err := Run(graph, nil)
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
-		var got string
-		for k := range again.ResolvedGraph {
-			if k.Name == "B" {
-				got = k.Version
+// TestMVSTieBreakPrefersSmallestSpelling verifies the canonical tie-break when
+// distinct spellings compare as the same Bazel version.
+func TestMVSTieBreakPrefersSmallestSpelling(t *testing.T) {
+	for _, tc := range []struct{ name, first, second, want string }{
+		{"build metadata", "1.0.0+build", "1.0.0", "1.0.0"},
+		{"leading zeros", "1.0.0", "01.0.0", "01.0.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := ModuleKey{Name: "root", Version: "1.0"}
+			first := ModuleKey{Name: "B", Version: tc.first}
+			second := ModuleKey{Name: "B", Version: tc.second}
+			graph := &DepGraph{RootKey: root, Modules: map[ModuleKey]*Module{
+				root: {Key: root, Deps: []DepSpec{
+					{Name: "B", Version: tc.first, MaxCompatibilityLevel: -1},
+					{Name: "B", Version: tc.second, MaxCompatibilityLevel: -1},
+				}},
+				first: {Key: first}, second: {Key: second},
+			}}
+			for range 20 {
+				result, err := Run(graph, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var selected []string
+				for key := range result.ResolvedGraph {
+					if key.Name == "B" {
+						selected = append(selected, key.Version)
+					}
+				}
+				if len(selected) != 1 || selected[0] != tc.want {
+					t.Fatalf("selected %v, want exactly [%s]", selected, tc.want)
+				}
 			}
-		}
-		if got != selected[0] {
-			t.Fatalf("selected spelling flipped between runs: %q then %q", selected[0], got)
-		}
+		})
 	}
 }
 

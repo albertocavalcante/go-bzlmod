@@ -1,11 +1,14 @@
 # go-bzlmod development commands
 # Run `just --list` to see available commands
 
+set dotenv-load := false
+
 # Packages to exclude from tests/linting (vendored code, tools)
 exclude_pattern := "third_party|tools/"
 
-# Default recipe: run tests
-default: test
+# Default recipe: list commands
+default:
+    @just --list --unsorted
 
 # Build all packages (includes third_party since it's part of the module)
 build:
@@ -52,11 +55,11 @@ bench:
 # checking no code at all. Directory exclusions live in .golangci.toml
 # ([linters.exclusions] paths), which is where golangci-lint expects them.
 lint:
-    go run -modfile=tools/lint/go.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint run ./...
+    bash scripts/check.sh lint
 
 # Run staticcheck (uses tools/lint module)
 staticcheck:
-    go list ./... | grep -v -E '{{exclude_pattern}}' | xargs go run -modfile=tools/lint/go.mod honnef.co/go/tools/cmd/staticcheck
+    go tool -modfile=tools/lint/go.mod staticcheck ./...
 
 # Run all linters
 lint-all: lint staticcheck
@@ -68,18 +71,9 @@ tidy:
     go mod tidy -modfile=tools.go.mod
     cd tools/lint && go mod tidy
 
-# Verify the module has no external dependencies
+# Verify the lean runtime dependency contract
 verify-deps:
-    #!/usr/bin/env bash
-    echo "Checking for direct dependencies..."
-    deps=$(go list -m -f '{{"{{if not .Indirect}}{{.Path}}{{end}}"}}' all 2>/dev/null | grep -v "^github.com/albertocavalcante/go-bzlmod$" || true)
-    if [ -z "$deps" ]; then
-        echo "✓ No direct dependencies!"
-    else
-        echo "✗ Found direct dependencies:"
-        echo "$deps"
-        exit 1
-    fi
+    bash scripts/check.sh deps
 
 # Run go vet (excludes third_party and tools)
 vet:
@@ -103,21 +97,12 @@ fmt-check:
 clean:
     go clean -cache
 
-# Vendor the buildtools parser (updates third_party/buildtools)
-vendor-parser tag="":
-    #!/usr/bin/env bash
-    if [ -z "{{tag}}" ]; then
-        go run ./tools/vendor-parser
-    else
-        go run ./tools/vendor-parser -tag {{tag}}
-    fi
+# Run the same checks as CI, including the independent E2E harness
+check:
+    bash scripts/check.sh
 
-# Show vendored parser version
-vendor-version:
-    @cat third_party/buildtools/VERSION | jq .
-
-# Run all checks (CI)
-ci: build test lint-all vet fmt-check
+# Backwards-compatible name for the canonical check
+ci: check
 
 # Run unit checks plus e2e module
 ci-e2e: ci test-e2e

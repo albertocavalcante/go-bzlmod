@@ -36,11 +36,11 @@ func resolveDependenciesWithBazelVersion(content, registry string, includeDevDep
 
 func resolveDependenciesWithBazelVersionAndBuiltins(content, registry string, includeDevDeps bool, bazelVersion string, includeBuiltinModules bool) (*ResolutionList, error) {
 	opts := gobzlmod.ResolutionOptions{
-		Registries:             []string{registry},
-		IncludeDevDeps:         includeDevDeps,
-		SubstituteYanked:       true,
-		BazelVersion:           bazelVersion,
-		IncludeBuiltinModules:  includeBuiltinModules,
+		Registries:            []string{registry},
+		IncludeDevDeps:        includeDevDeps,
+		SubstituteYanked:      true,
+		BazelVersion:          bazelVersion,
+		IncludeBuiltinModules: includeBuiltinModules,
 	}
 	ctx := context.Background()
 	resolutionList, err := gobzlmod.ResolveContent(ctx, content, opts)
