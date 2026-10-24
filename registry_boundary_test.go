@@ -2,6 +2,8 @@ package gobzlmod
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,6 +171,23 @@ func TestRegistryVersionsHaveOrderIndependentOrigins(t *testing.T) {
 	}
 }
 
+func TestRegistryOverrideOwnsYankedMetadata(t *testing.T) {
+	base := boundaryServer(t, map[string]string{
+		"/modules/alpha/1.0/MODULE.bazel": discoveryModule("alpha", "1.0"),
+		"/modules/alpha/metadata.json":    `{"versions":["1.0"]}`,
+	})
+	override := boundaryServer(t, map[string]string{
+		"/modules/alpha/1.0/MODULE.bazel": discoveryModule("alpha", "1.0"),
+		"/modules/alpha/metadata.json":    `{"versions":["1.0"],"yanked_versions":{"1.0":"override_origin"}}`,
+	})
+	root := discoveryModule("root", "1.0") + discoveryDep("alpha", "1.0") + fmt.Sprintf("single_version_override(module_name='alpha',registry=%q)", override.URL)
+	_, err := Resolve(context.Background(), ContentSource(root), WithRegistries(base.URL), WithYankedCheck(true), WithYankedBehavior(YankedVersionError))
+	var yanked *YankedVersionsError
+	if !errors.As(err, &yanked) || len(yanked.Modules) != 1 || yanked.Modules[0].YankReason != "override_origin" {
+		t.Fatalf("override yank was not enforced: %v", err)
+	}
+}
+
 func TestLocalRegistryRejectsTraversalAndEscapingSymlinks(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "registry")
@@ -202,5 +221,45 @@ func TestLocalRegistryRejectsTraversalAndEscapingSymlinks(t *testing.T) {
 	}
 	if _, err = r.GetModuleFile(context.Background(), "alpha", "1.0"); err == nil {
 		t.Fatal("followed a symlink outside registry root")
+	}
+}
+
+func TestRegistryConfigOnlyFetchedForTrace(t *testing.T) {
+	for _, trace := range []bool{false, true} {
+		t.Run(fmt.Sprint(trace), func(t *testing.T) {
+			var probes atomic.Int32
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/bazel_registry.json":
+					probes.Add(1)
+					_, _ = io.WriteString(w, `{}`)
+				case "/modules/alpha/1.0/MODULE.bazel":
+					_, _ = io.WriteString(w, discoveryModule("alpha", "1.0"))
+				case "/modules/alpha/1.0/source.json":
+					_, _ = io.WriteString(w, `{"url":"https://source.test/alpha.tgz"}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer s.Close()
+			opts := []Option{WithRegistries(s.URL)}
+			if trace {
+				opts = append(opts, WithRegistryTrace())
+			}
+			result, err := Resolve(context.Background(), ContentSource(discoveryModule("root", "1.0")+discoveryDep("alpha", "1.0")), opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := int32(0)
+			if trace {
+				want = 1
+			}
+			if probes.Load() != want {
+				t.Fatalf("config requests=%d, want %d", probes.Load(), want)
+			}
+			if trace && result.RegistryFileHashes[s.URL+"/bazel_registry.json"] == nil {
+				t.Fatal("configuration hash missing from trace")
+			}
+		})
 	}
 }

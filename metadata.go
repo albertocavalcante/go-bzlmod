@@ -46,7 +46,11 @@ func checkModuleMetadata(ctx context.Context, registry Registry, opts Resolution
 			defer wg.Done()
 
 			module := &list.Modules[idx]
-			metadata, err := moduleMetadataForVersion(ctx, registry, module.Name, module.Version)
+			if module.Version == "" {
+				return
+			}
+			origin := metadataRegistryForModule(registry, *module, opts)
+			metadata, err := moduleMetadataForVersion(ctx, origin, module.Name, module.Version)
 			if err != nil {
 				// Bazel's fail-open pattern: metadata fetch failures don't block resolution.
 				// This matches YankedVersionsFunction.java behavior (lines 47-62).
@@ -92,6 +96,23 @@ func checkModuleMetadata(ctx context.Context, registry Registry, opts Resolution
 			list.Modules[res.idx].DeprecationReason = res.deprecationReason
 		}
 	}
+}
+
+// metadataRegistryForModule preserves explicit registry overrides as well as
+// the default chain's selected coordinate origin.
+func metadataRegistryForModule(base Registry, module ModuleToResolve, opts ResolutionOptions) Registry {
+	if module.Registry == "" {
+		return base
+	}
+	if provider, ok := base.(interface{ GetRegistryForVersion(string, string) string }); ok {
+		if provider.GetRegistryForVersion(module.Name, module.Version) == module.Registry {
+			return base
+		}
+	}
+	if base.BaseURL() == module.Registry {
+		return base
+	}
+	return registryWithAllOptionsAndTrace(opts.HTTPClient, opts.Cache, opts.Timeout, opts.Logger, sharedRegistryFileTrace(base), module.Registry)
 }
 
 // buildAllowedYankedSet creates a set from AllowYankedVersions for O(1) lookup.

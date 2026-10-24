@@ -127,6 +127,9 @@ func (r *registryClient) registryFileTrace() *registryFileTrace {
 // loadRegistryConfig records the optional bazel_registry.json configuration.
 // This is called once lazily on first use.
 func (r *registryClient) loadRegistryConfig(ctx context.Context) {
+	if r.trace == nil || !r.trace.enabled {
+		return
+	}
 	r.configOnce.Do(func() {
 		url := fmt.Sprintf("%s/bazel_registry.json", r.baseURL)
 		logger := r.log()
