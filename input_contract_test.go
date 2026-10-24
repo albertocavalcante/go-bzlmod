@@ -104,6 +104,10 @@ func TestRegistryCoordinateIsAuthoritative(t *testing.T) {
 func TestSelectingCallsCannotHideInExpressions(t *testing.T) {
 	for _, declaration := range []string{
 		`ignored = bazel_dep(name="alpha", version="1.0")`,
+		"dep = bazel_dep\ndep(name='alpha',version='1.0')",
+		"inc = include\ninc('//:deps.MODULE.bazel')",
+		"override = local_path_override\noverride(module_name='alpha',path='.')",
+		"bazel_dep = use_extension('x','y')\nbazel_dep(name='alpha',version='1.0')",
 		`ignored = [bazel_dep(name="alpha", version="1.0")]`,
 		`ignored = include("//:deps.MODULE.bazel")`,
 		`unknown(include("//:deps.MODULE.bazel"))`,
