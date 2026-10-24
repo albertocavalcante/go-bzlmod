@@ -2,7 +2,9 @@ package selection
 
 import (
 	"cmp"
+	"context"
 	"fmt"
+	"iter"
 	"slices"
 
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
@@ -39,6 +41,26 @@ const versionResolutionErrorCode = "VERSION_RESOLUTION_ERROR"
 // the cartesian product of all these possibilities across all deps. Each strategy is
 // tried in turn until one succeeds, or we return the first error if all fail.
 func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
+	return RunContext(context.Background(), graph, overrides)
+}
+
+// RunContext executes selection with cancellation between strategies and graph
+// nodes. It performs no IO and preserves Run's deterministic first-success order.
+func RunContext(ctx context.Context, graph *DepGraph, overrides map[string]Override) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if graph == nil {
+		return nil, fmt.Errorf("selection requires a non-nil graph")
+	}
+	for key, module := range graph.Modules {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if module == nil {
+			return nil, fmt.Errorf("nil module at %s", key)
+		}
+	}
 	// Step 1: For any multiple-version overrides, build a mapping from
 	// (moduleName, compatibilityLevel) to the set of allowed versions.
 	//
@@ -103,8 +125,11 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// Reference: Selection.java lines 317-353, 397-403
 	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L317
 	var firstError error
-	for _, strategy := range strategies {
-		result, err := tryStrategy(graph, overrides, selectionGroups, strategy)
+	for strategy := range strategies {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result, err := tryStrategy(ctx, graph, overrides, selectionGroups, strategy)
 		if err == nil {
 			return result, nil
 		}
@@ -120,6 +145,7 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 // tryStrategy attempts to resolve the dependency graph using a single resolution strategy.
 // Returns the result if successful, or an error if the strategy fails validation.
 func tryStrategy(
+	ctx context.Context,
 	graph *DepGraph,
 	overrides map[string]Override,
 	selectionGroups map[ModuleKey]SelectionGroup,
@@ -129,6 +155,7 @@ func tryStrategy(
 	// This validates that all nodep dependencies exist and have valid versions,
 	// but doesn't include them in the final resolved graph.
 	walkerPhase1 := &depGraphWalker{
+		ctx:             ctx,
 		oldGraph:        graph,
 		overrides:       overrides,
 		selectionGroups: selectionGroups,
@@ -144,6 +171,7 @@ func tryStrategy(
 	// Phase 2: Walk without nodep deps (final pruning).
 	// Modules only reachable via nodep edges are excluded from final graph.
 	walkerPhase2 := &depGraphWalker{
+		ctx:             ctx,
 		oldGraph:        graph,
 		overrides:       overrides,
 		selectionGroups: selectionGroups,
@@ -158,6 +186,9 @@ func tryStrategy(
 	// Build unpruned graph with updated deps (includes all modules from phase 1)
 	unprunedGraph := make(map[ModuleKey]*Module, len(graph.Modules))
 	for key, module := range graph.Modules {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		newDeps := make([]DepSpec, len(module.Deps))
 		for i, dep := range module.Deps {
 			newDeps[i] = DepSpec{
@@ -288,6 +319,7 @@ func computeSelectionGroup(module *Module, allowedVersionSets map[moduleNameAndC
 // Reference: Selection.java lines 355-479, DepGraphWalker class
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L355
 type depGraphWalker struct {
+	ctx             context.Context
 	oldGraph        *DepGraph
 	overrides       map[string]Override
 	selectionGroups map[ModuleKey]SelectionGroup
@@ -317,6 +349,9 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 	known[w.oldGraph.RootKey] = true
 
 	for len(queue) > 0 {
+		if err := w.ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		item := queue[0]
 		queue = queue[1:]
 
@@ -648,20 +683,20 @@ type resolutionStrategy func(DepSpec) string
 // Reference: Selection.java lines 249-264 (enumerateStrategies)
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L249
 //
-// Returns a list of strategy functions. Each strategy represents one combination
+// Returns a lazy sequence of strategy functions. Each strategy represents one combination
 // of version choices for DepSpecs with multiple valid versions.
 func enumerateStrategies(
 	graph *DepGraph,
 	selectionGroups map[ModuleKey]SelectionGroup,
 	selectedVersions map[SelectionGroup]string,
-) []resolutionStrategy {
+) iter.Seq[resolutionStrategy] {
 	// Compute all possible resolutions
 	allPossible := computeAllPossibleResolutions(graph, selectedVersions)
 
 	if len(allPossible) == 0 {
 		// No ambiguity - return single default strategy
-		return []resolutionStrategy{
-			makeDefaultStrategy(selectionGroups, selectedVersions),
+		return func(yield func(resolutionStrategy) bool) {
+			yield(makeDefaultStrategy(selectionGroups, selectedVersions))
 		}
 	}
 
@@ -677,18 +712,13 @@ func enumerateStrategies(
 		return cmp.Compare(a.Version, b.Version)
 	})
 
-	// Compute cartesian product
-	combinations := cartesianProduct(keys, allPossible)
-
-	// Convert each combination to a strategy function
-	strategies := make([]resolutionStrategy, len(combinations))
-	for i, combo := range combinations {
-		strategies[i] = makeStrategyFromCombination(
-			combo, selectionGroups, selectedVersions,
-		)
+	return func(yield func(resolutionStrategy) bool) {
+		for combo := range cartesianProduct(keys, allPossible) {
+			if !yield(makeStrategyFromCombination(combo, selectionGroups, selectedVersions)) {
+				return
+			}
+		}
 	}
-
-	return strategies
 }
 
 // makeDefaultStrategy creates the default resolution strategy that uses
@@ -732,37 +762,41 @@ func makeStrategyFromCombination(
 }
 
 // cartesianProduct computes the cartesian product of all possible resolutions.
-// Returns a list of maps, where each map represents one complete assignment
+// Returns a lazy sequence of maps, where each map represents one complete assignment
 // of versions to DepSpecs.
 func cartesianProduct(
 	keys []depSpecKey,
 	allPossible map[depSpecKey][]resolutionResult,
-) []map[depSpecKey]string {
-	if len(keys) == 0 {
-		return []map[depSpecKey]string{{}}
-	}
-
-	// Start with empty combination
-	result := []map[depSpecKey]string{{}}
-
-	for _, key := range keys {
-		possibilities := allPossible[key]
-		var newResult []map[depSpecKey]string
-
-		for _, existing := range result {
-			for _, poss := range possibilities {
-				// Clone existing map and add new choice
-				newCombo := make(map[depSpecKey]string, len(existing)+1)
-				for k, v := range existing {
-					newCombo[k] = v
-				}
-				newCombo[key] = poss.Version
-				newResult = append(newResult, newCombo)
+) iter.Seq[map[depSpecKey]string] {
+	return func(yield func(map[depSpecKey]string) bool) {
+		// O(number of choices) state; the last key varies fastest, matching the
+		// original eager product. Each yielded map owns its storage.
+		indices := make([]int, len(keys))
+		for _, key := range keys {
+			if len(allPossible[key]) == 0 {
+				return
 			}
 		}
-
-		result = newResult
+		for {
+			combo := make(map[depSpecKey]string, len(keys))
+			for i, key := range keys {
+				combo[key] = allPossible[key][indices[i]].Version
+			}
+			if !yield(combo) {
+				return
+			}
+			i := len(keys) - 1
+			for i >= 0 {
+				indices[i]++
+				if indices[i] < len(allPossible[keys[i]]) {
+					break
+				}
+				indices[i] = 0
+				i--
+			}
+			if i < 0 {
+				return
+			}
+		}
 	}
-
-	return result
 }

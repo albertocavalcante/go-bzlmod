@@ -6,6 +6,7 @@ package selection
 
 import (
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -930,7 +931,7 @@ func TestEnumerateStrategies(t *testing.T) {
 		}
 	}
 
-	strategies := enumerateStrategies(graph, selectionGroups, selectedVersions)
+	strategies := slices.Collect(enumerateStrategies(graph, selectionGroups, selectedVersions))
 
 	// Should have 2 strategies: one using A@1.0, one using A@2.0
 	if len(strategies) != 2 {
@@ -967,7 +968,7 @@ func TestCartesianProduct(t *testing.T) {
 		},
 	}
 
-	combos := cartesianProduct(keys, allPossible)
+	combos := slices.Collect(cartesianProduct(keys, allPossible))
 
 	// Should have 2 * 2 = 4 combinations
 	if len(combos) != 4 {
@@ -987,7 +988,7 @@ func TestCartesianProduct(t *testing.T) {
 
 // TestCartesianProduct_Empty tests cartesian product with empty input.
 func TestCartesianProduct_Empty(t *testing.T) {
-	combos := cartesianProduct(nil, nil)
+	combos := slices.Collect(cartesianProduct(nil, nil))
 
 	// Should return one empty combination
 	if len(combos) != 1 {
@@ -1033,7 +1034,7 @@ func TestStrategyEnumeration_NoMaxCompatLevel(t *testing.T) {
 		}
 	}
 
-	strategies := enumerateStrategies(graph, selectionGroups, selectedVersions)
+	strategies := slices.Collect(enumerateStrategies(graph, selectionGroups, selectedVersions))
 
 	// Should have exactly 1 strategy (the default)
 	if len(strategies) != 1 {
@@ -1391,7 +1392,7 @@ func TestCartesianProductExactContentAndOrder(t *testing.T) {
 		b: {{Version: "1.0", CompatLevel: 1}, {Version: "3.0", CompatLevel: 3}},
 	}
 
-	got := cartesianProduct(keys, allPossible)
+	got := slices.Collect(cartesianProduct(keys, allPossible))
 
 	// Keys are iterated in slice order and possibilities in slice order, so the
 	// product is fully determined.
