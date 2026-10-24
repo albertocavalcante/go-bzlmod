@@ -149,3 +149,10 @@ func TestCompatibilityLevelNegativeIntent(t *testing.T) {
 		t.Fatalf("modern no-op sentinel rejected: %v", err)
 	}
 }
+
+func TestExtensionKeywordsAreNotBuiltinReferences(t *testing.T) {
+	_, err := ParseModuleContent(discoveryModule("root", "1.0") + `ext.tag(module="foo", include="bar", bazel_dep="value")`)
+	if err != nil {
+		t.Fatalf("extension keyword mistaken for selecting builtin: %v", err)
+	}
+}
