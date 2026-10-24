@@ -321,12 +321,18 @@ This library mirrors Bazel's `--registry` flag semantics
 - Supports `https://`, `http://`, and `file://` URL schemes
 - Each module name gets independent sticky-mapping (module A from Reg1, module B from Reg2)
 
-The library also provides **enhanced resilience** beyond Bazel's current behavior: if a
-cached registry returns a server error (HTTP 5xx, TLS failure, timeout), the library falls
-back to the next registry instead of failing immediately. This addresses known Bazel issues
-including [#26442](https://github.com/bazelbuild/bazel/issues/26442) (missing `source.json`
-not falling back) and [#28101](https://github.com/bazelbuild/bazel/issues/28101) (BCR TLS
-outage causing hard failures).
+Only a not-found response permits initial fallback to another registry. Once a
+module is assigned, missing versions, source metadata, and yanked metadata are
+reported from that registry; they do not switch origins. Authentication, server,
+TLS, parsing, and cancellation errors stop lookup. This replaces the previous
+fallback-on-any-error behavior, which could combine module definitions and source
+metadata from different registries. Source archive mirrors in `bazel_registry.json`
+are not used as registry metadata mirrors.
+
+External cache entries are namespaced by registry URL. Existing unqualified cache
+entries become misses. Registry clients add the namespace automatically; use
+`ScopeModuleCache(cache, registryURL)` only when explicitly seeding or inspecting
+entries for an origin. The cache still stores raw MODULE.bazel bytes.
 
 ## Known Limitations
 

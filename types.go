@@ -711,6 +711,9 @@ type BazelToolsTransformer func(version string, deps []bazeltools.ToolDep) []baz
 //	    return os.WriteFile(path, content, 0644)
 //	}
 type ModuleCache interface {
+	// Registry clients qualify name keys with a stable registry namespace.
+	// Treat names as opaque storage keys rather than unqualified module names.
+	// Use ScopeModuleCache to seed or inspect entries for a specific registry.
 	// Get retrieves cached MODULE.bazel content for a module version.
 	//
 	// Returns:

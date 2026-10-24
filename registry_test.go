@@ -240,7 +240,7 @@ func TestGetModuleFile_Caching(t *testing.T) {
 	}
 }
 
-func TestGetModuleFile_MirrorFallback(t *testing.T) {
+func TestGetModuleFile_SourceMirrorsDoNotServeMetadata(t *testing.T) {
 	// Primary server that fails
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "bazel_registry.json") {
@@ -282,17 +282,12 @@ func TestGetModuleFile_MirrorFallback(t *testing.T) {
 	client := newRegistryClient(configServer.URL)
 	ctx := context.Background()
 
-	info, err := client.GetModuleFile(ctx, "test_module", "1.0.0")
-	if err != nil {
-		t.Fatalf("GetModuleFile() error = %v", err)
+	_, err := client.GetModuleFile(ctx, "test_module", "1.0.0")
+	if err == nil {
+		t.Fatal("want primary registry error")
 	}
-
-	if info.Name != "test_module" {
-		t.Errorf("Name = %q, want test_module", info.Name)
-	}
-
-	if !mirrorUsed {
-		t.Error("expected mirror to be used after primary failed")
+	if mirrorUsed {
+		t.Fatal("source archive mirror must not serve registry metadata")
 	}
 }
 
@@ -735,7 +730,9 @@ func TestCache_HitSkipsHTTPFetch(t *testing.T) {
 
 	cache := newMockCache()
 	// Pre-populate cache
-	cache.store["test@1.0.0"] = []byte(`module(name = "test", version = "1.0.0")`)
+	if err := ScopeModuleCache(cache, server.URL).Put(context.Background(), "test", "1.0.0", []byte(`module(name = "test", version = "1.0.0")`)); err != nil {
+		t.Fatal(err)
+	}
 
 	reg := registryWithOptions(nil, cache, 0, server.URL)
 
@@ -782,7 +779,7 @@ func TestCache_MissFetchesAndStores(t *testing.T) {
 		t.Errorf("Cache Put called %d times, want 1", cache.putCount)
 	}
 	// Verify content was stored
-	if _, ok := cache.store["test@1.0.0"]; !ok {
+	if _, ok, err := ScopeModuleCache(cache, server.URL).Get(context.Background(), "test", "1.0.0"); err != nil || !ok {
 		t.Error("Content was not stored in cache")
 	}
 }
