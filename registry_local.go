@@ -131,7 +131,7 @@ func (r *localRegistry) GetModuleFile(ctx context.Context, moduleName, version s
 		return nil, fmt.Errorf("read local module file %s: %w", modulePath, err)
 	}
 
-	moduleInfo, err := ParseModuleContent(string(data))
+	moduleInfo, err := parseModuleWithRegistryVersion("MODULE.bazel", data, version)
 	if err != nil {
 		return nil, fmt.Errorf("parse local module file %s: %w", modulePath, err)
 	}
