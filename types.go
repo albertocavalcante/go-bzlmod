@@ -71,11 +71,12 @@ type Dependency struct {
 	Version string `json:"version"`
 
 	// MaxCompatibilityLevel specifies the maximum compatibility level allowed
-	// for this dependency. If set (> 0), the resolved version must have a
+	// for this dependency. If explicitly set (>= 0), the resolved version must have a
 	// compatibility_level <= this value. This allows depending on modules
 	// that may upgrade within the same compatibility level range.
 	// A zero value without MaxCompatibilityLevelSet keeps the legacy default;
-	// an explicitly parsed zero is an actual constraint.
+	// an explicitly parsed zero is an actual constraint. Negative values use the
+	// dependency's own compatibility level. Bazel 8.6 and 9.1+ ignore this field.
 	MaxCompatibilityLevel int `json:"max_compatibility_level,omitempty"`
 
 	// MaxCompatibilityLevelSet distinguishes an explicit zero constraint from
