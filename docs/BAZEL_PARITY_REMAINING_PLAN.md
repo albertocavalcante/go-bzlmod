@@ -1,5 +1,9 @@
 # Bazel Parity Remaining Plan
 
+> Historical design/review notes. These are not current validation evidence. See
+> [the README](../README.md) and
+> [current parity status](BAZEL_PARITY_STATUS.md) for supported behavior and outstanding gaps.
+
 This is the concrete remaining-work plan for getting closer to full Bazel parity.
 
 ## Goal

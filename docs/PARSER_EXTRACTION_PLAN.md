@@ -1,5 +1,9 @@
 # Starlark Parser Extraction Plan
 
+> Historical design/review notes. These are not current validation evidence. See
+> [the README](../README.md) and
+> [current parity status](BAZEL_PARITY_STATUS.md) for supported behavior and outstanding gaps.
+
 ## Current State Analysis
 
 ### go-bzlmod Vendoring (buildtools)
