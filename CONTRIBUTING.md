@@ -8,7 +8,7 @@ Bazel/Bazelisk is required only for live E2E comparisons.
 **Setup:**
 
 ```bash
-git clone https://github.com/your-username/go-bzlmod.git
+git clone https://github.com/albertocavalcante/go-bzlmod.git
 cd go-bzlmod
 go mod download
 go test ./...
@@ -30,10 +30,11 @@ go test -coverprofile=coverage.out ./...
 ```bash
 cd e2e && go test ./... -v
 cd e2e && go test ./... -run="TestDiagnostic" -v
-cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 GO_BZLMOD_E2E_RELEASE_MATRIX_REFRESH=1 go test ./... -run TestE2E_BazelReleaseMatrix_ToolSelectionParity
+cd e2e && GO_BZLMOD_E2E_RELEASE_MATRIX=1 go test ./... -run TestE2E_BazelReleaseMatrix_VisibleGraphParity
 ```
 
-Aim for >90% test coverage.
+Coverage is evidence about exercised paths, not a correctness or parity guarantee.
+Record failures and explicit skips separately. See [current parity status](docs/BAZEL_PARITY_STATUS.md).
 
 ## Code Quality
 
@@ -90,7 +91,18 @@ Describe the use case, provide API examples, consider alternatives, discuss brea
 
 ## Pull Request Process
 
-Create an issue first for significant changes. Write tests. Update documentation. Run CI locally.
+Create an issue first for significant changes. Use an isolated worktree, add meaningful regressions,
+update documentation, and run the canonical check. Preserve unrelated working-tree changes.
+
+Every PR needs an independent reviewer to inspect the complete final diff and relevant call paths,
+tests, trust boundaries, failure/cancellation modes and rollback behavior. Address actionable
+findings and obtain follow-up review of changed code. Record the exact reviewed head SHA, fixes,
+validation and limits in the PR. Re-review rebased or modified heads. Green CI is additional evidence,
+not a substitute for review. Unavailable or failed checks block merge; never skip or bypass them.
+
+Pin GitHub Actions to full SHAs with the verified exact version tag on the same line. Once reviewed
+and all required checks pass, squash merge using a handcrafted Conventional Commit subject of at
+most 72 characters and a meaningful body, then verify the merged PR and target-branch commit.
 
 **Checklist:**
 
@@ -118,7 +130,9 @@ Types: feat, fix, docs, style, refactor, test, chore
 api.go (public API), types.go (data structures), parser.go (MODULE.bazel parsing), registry.go (registry client), resolver.go (MVS algorithm)
 
 **Design principles:**
-Pure MVS implementation, thread-safe operations, context support, detailed error information.
+Pure selection core with explicit discovery IO, context cancellation and detailed errors.
+Registry clients support concurrent reads/cache clearing; callers synchronize mutable options,
+results, custom caches and callbacks.
 
 ## Resources
 
@@ -126,4 +140,4 @@ Pure MVS implementation, thread-safe operations, context support, detailed error
 
 ## License
 
-MIT License applies to all contributions.
+Contributions follow the repository's MIT OR Apache-2.0 license.

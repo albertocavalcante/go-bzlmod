@@ -41,10 +41,32 @@ type releaseMatrixMode struct {
 func requireReleaseMatrixEnabled(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
+		if os.Getenv(releaseMatrixEnv) != "" {
+			t.Fatal("explicit release matrix request cannot run in short mode")
+		}
 		t.Skip("skipping Bazel release matrix in short mode")
 	}
 	if os.Getenv(releaseMatrixEnv) == "" {
 		t.Skipf("set %s=1 to run the Bazel release matrix suite", releaseMatrixEnv)
+	}
+	var fixtureNames, modeNames []string
+	for _, fixture := range releaseMatrixFixtures() {
+		fixtureNames = append(fixtureNames, fixture.name)
+	}
+	for _, mode := range releaseMatrixModes() {
+		modeNames = append(modeNames, mode.name)
+	}
+	for _, filter := range []struct {
+		name, value string
+		allowed     []string
+	}{
+		{"fixture", selectedFixtureName(), fixtureNames},
+		{"mode", selectedModeName(), modeNames},
+		{"version", selectedVersionName(), bazeltools.SupportedVersions()},
+	} {
+		if filter.value != "" && !slices.Contains(filter.allowed, filter.value) {
+			t.Fatalf("unknown release matrix %s filter: %q", filter.name, filter.value)
+		}
 	}
 }
 
@@ -225,13 +247,19 @@ func flattenVisibleModules(g *graphpkg.BazelModGraph) []string {
 func flattenVisibleLibraryModules(t *testing.T, fixture releaseMatrixFixture, mode releaseMatrixMode, bazelVersion string) ([]string, error) {
 	t.Helper()
 
+	registryURL := os.Getenv("GO_BZLMOD_E2E_RELEASE_MATRIX_REGISTRY")
+	if registryURL == "" {
+		registryURL = gobzlmod.DefaultRegistry
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	opts := gobzlmod.ResolutionOptions{
-		Registries:            []string{"https://bcr.bazel.build"},
+		Registries:            []string{registryURL},
 		BazelVersion:          bazelVersion,
 		IncludeBuiltinModules: mode.includeBuiltinModules,
 		IncludeUnusedModules:  mode.includeUnusedModules,
 	}
-	resolution, err := gobzlmod.ResolveContent(context.Background(), readFixtureModule(t, fixture), opts)
+	resolution, err := gobzlmod.ResolveContent(ctx, readFixtureModule(t, fixture), opts)
 	if err != nil {
 		return nil, fmt.Errorf("library resolution failed for %s/%s: %v", bazelVersion, mode.name, err)
 	}
@@ -303,10 +331,7 @@ func TestE2E_BazelReleaseMatrix_VisibleGraphParity(t *testing.T) {
 							want := flattenVisibleModules(golden)
 							got, err := flattenVisibleLibraryModules(t, fixture, mode, bazelVersion)
 							if err != nil {
-								// The unified resolver correctly detects compatibility-level
-								// conflicts that Bazel handles internally for builtin MODULE.tools
-								// deps. Skip these as known parity gaps rather than hard failures.
-								t.Skipf("library resolution error (known builtin compat parity gap): %v", err)
+								t.Fatalf("library resolution failed: %v", err)
 							}
 							compareVisibleModules(t, fixture.name, mode.name, bazelVersion, want, got)
 						})

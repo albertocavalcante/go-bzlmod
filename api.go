@@ -1,9 +1,9 @@
 // Package gobzlmod provides a Go library for Bazel module dependency resolution
 // using Minimal Version Selection (MVS).
 //
-// This library implements pure MVS as described in Russ Cox's research
-// (https://research.swtch.com/vgo-mvs), which selects the minimum version that
-// satisfies all requirements in the dependency graph.
+// Static discovery supports literal selecting declarations and explicitly rejects
+// unsupported inputs. Selection follows Bazel's version groups and overrides;
+// full Bazel evaluation and augmented-graph parity remain outside this contract.
 //
 // # Overview
 //

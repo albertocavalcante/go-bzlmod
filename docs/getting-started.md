@@ -1,181 +1,25 @@
-# Getting Started
+# Getting started
 
-Installation and basic usage of go-bzlmod.
+The [README](../README.md#install) is the canonical installation and runnable resolution example.
+Requires Go 1.26.0+. Bazel is needed only for live comparisons, not library use.
 
-## Installation
+1. Install `github.com/albertocavalcante/go-bzlmod@latest` in your Go module.
+2. Choose `FileSource`, `ContentSource` or `RegistrySource` and call `Resolve` with a context.
+3. Check the returned error before reading `Modules` or `Graph`.
+4. Read the [supported input boundary](../README.md#resolution-behavior) before relying on results
+   for files that compute dependency values or acquire sources through overrides.
 
-```bash
-go get github.com/albertocavalcante/go-bzlmod
-```
+`FileSource` anchors relative local override paths beside the module file. `ContentSource` uses the
+process working directory. Content/file resolution excludes the root from `Modules`; registry
+resolution includes the requested target at depth 0. Results are sorted by name.
 
-Requires Go 1.21+.
+Defaults exclude dev dependencies and do not check yank status. See the
+[option reference](resolution-options.md) for explicit policy. Automatic vendor and lockfile modes
+and yanked substitution are unsupported and return errors before resolution IO.
 
-## Basic Usage
+For syntax trees, editing and labels, use the separate
+[go-bzlmod-ast module](https://github.com/albertocavalcante/go-bzlmod-ast).
 
-### Resolve from a File
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/albertocavalcante/go-bzlmod"
-)
-
-func main() {
-    result, err := gobzlmod.Resolve(context.Background(),
-        gobzlmod.FileSource("MODULE.bazel"),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    fmt.Printf("Resolved %d modules\n", result.Summary.TotalModules)
-    for _, m := range result.Modules {
-        fmt.Printf("  %s@%s\n", m.Name, m.Version)
-    }
-}
-```
-
-### Resolve from Content
-
-```go
-content := `
-module(name = "my_project", version = "1.0.0")
-
-bazel_dep(name = "rules_go", version = "0.50.1")
-bazel_dep(name = "gazelle", version = "0.40.0")
-`
-
-result, err := gobzlmod.Resolve(ctx, gobzlmod.ContentSource(content))
-```
-
-### Resolve a Registry Module
-
-Fetch a module from the registry and resolve its dependencies:
-
-```go
-// Resolve rules_go and all its transitive dependencies
-result, err := gobzlmod.Resolve(ctx, gobzlmod.RegistrySource{
-    Name:    "rules_go",
-    Version: "0.50.1",
-})
-// result.Modules is sorted by module name.
-// Find rules_go by name if you need the root module entry (Depth=0).
-```
-
-Reference: [`api.go:104-126`](../api.go#L104-L126)
-
-### Multiple Registries
-
-Chain registries with priority ordering (first match wins):
-
-```go
-result, err := gobzlmod.Resolve(ctx,
-    gobzlmod.FileSource("MODULE.bazel"),
-    gobzlmod.WithRegistries(
-        "https://my-private-registry.example.com",
-        gobzlmod.DefaultRegistry,  // BCR fallback
-    ),
-)
-```
-
-Once a module is found in a registry, ALL versions of that module come from that registry. This matches Bazel's `--registry` flag behavior.
-
-Reference: [Bazel registry documentation](https://bazel.build/external/registry)
-
-### Excluding Dev Dependencies
-
-```go
-// By default, dev dependencies are excluded
-result, err := gobzlmod.Resolve(ctx, gobzlmod.FileSource("MODULE.bazel"))
-
-// Explicitly include dev dependencies
-result, err := gobzlmod.Resolve(ctx,
-    gobzlmod.FileSource("MODULE.bazel"),
-    gobzlmod.WithDevDeps(),
-)
-
-fmt.Printf("Production: %d, Dev: %d\n",
-    result.Summary.ProductionModules,
-    result.Summary.DevModules)
-```
-
-## Understanding Results
-
-The [`ResolutionList`](../types.go#L119-L139) contains:
-
-```go
-type ResolutionList struct {
-    Modules  []ModuleToResolve  // All resolved modules, sorted by name
-    Graph    *graph.Graph       // Dependency graph for queries
-    Summary  ResolutionSummary  // Statistics
-    Warnings []string           // Non-fatal issues
-}
-```
-
-Each [`ModuleToResolve`](../types.go#L141-L197) includes:
-
-| Field           | Description                                      |
-| --------------- | ------------------------------------------------ |
-| `Name`          | Module name (e.g., "rules_go")                   |
-| `Version`       | Selected version (e.g., "0.50.1")                |
-| `Registry`      | Source registry URL                              |
-| `Depth`         | Distance from root (1 = direct, 2+ = transitive) |
-| `DevDependency` | Is this a dev-only dependency?                   |
-| `Dependencies`  | Direct dependencies of this module               |
-| `RequiredBy`    | Modules that required this one                   |
-
-## Convenience Methods
-
-```go
-// Get a specific module
-m := result.Module("rules_go")
-if m != nil {
-    fmt.Printf("Found %s@%s\n", m.Name, m.Version)
-}
-
-// Filter by type
-direct := result.DirectDeps()      // Depth == 1
-transitive := result.TransitiveDeps()  // Depth > 1
-prod := result.ProductionModules()     // DevDependency == false
-dev := result.DevModules()             // DevDependency == true
-
-// Check existence
-if result.HasModule("protobuf") {
-    fmt.Println("protobuf is in the dependency graph")
-}
-```
-
-Reference: [`types.go:242-298`](../types.go#L242-L298)
-
-## Error Handling
-
-```go
-result, err := gobzlmod.Resolve(ctx, src)
-if err != nil {
-    switch e := err.(type) {
-    case *gobzlmod.YankedVersionsError:
-        fmt.Printf("Yanked: %v\n", e.Modules)
-    case *gobzlmod.DirectDepsMismatchError:
-        fmt.Printf("Version mismatches: %v\n", e.Mismatches)
-    case *gobzlmod.BazelIncompatibilityError:
-        fmt.Printf("Incompatible with Bazel %s: %v\n", e.BazelVersion, e.Modules)
-    case *gobzlmod.MaxDepthExceededError:
-        fmt.Printf("Dependency too deep: %s\n", e.Path)
-    default:
-        fmt.Printf("Error: %v\n", err)
-    }
-}
-```
-
-Reference: [`types.go:661-791`](../types.go#L661-L791)
-
-## Next Steps
-
-- [Resolution Options](resolution-options.md) — All configuration options
-- [Graph API](graph-api.md) — Query dependency relationships
-- [Bazel Compatibility](bazel-compatibility.md) — Version validation
+For contributors, start with [CONTRIBUTING.md](../CONTRIBUTING.md) and `just check`.
+The default check compiles the E2E harness but skips its external suites. Run the explicit
+[live and corpus commands](../README.md#develop-and-validate) for that coverage.

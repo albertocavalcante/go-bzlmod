@@ -19,7 +19,9 @@ result, err := gobzlmod.Resolve(ctx, src,
 gobzlmod.WithRegistries(urls ...string)
 ```
 
-Sets the registry chain. Modules are looked up in order; once found, that module version keeps its registry.
+Sets the registry chain. Coordinates are looked up in order; only an initial 404
+permits fallback. Once found, that module version keeps its registry for its
+MODULE.bazel, source and metadata. Other errors are returned.
 
 ```go
 gobzlmod.WithRegistries(
@@ -35,9 +37,9 @@ Supported URL schemes:
 - `http://` — Remote (not recommended for production)
 - `file://` — Local filesystem registry
 
-Default: `["https://bcr.bazel.build"]`
+Default: BCR followed by the GitHub BCR mirror, with initial fallback only on 404.
 
-Reference: [`types.go:484-497`](../types.go#L484-L497), [Bazel registry docs](https://bazel.build/external/registry)
+Reference: [`types.go`](../types.go), [Bazel registry docs](https://bazel.build/external/registry)
 
 ### WithVendorDir
 
@@ -81,7 +83,7 @@ gobzlmod.WithDevDeps()
 
 Include root-module `dev_dependency = True` modules in resolution. By default, dev dependencies are excluded. Transitive `dev_dependency` edges are ignored to match Bazel semantics.
 
-Reference: [`types.go:438-439`](../types.go#L438-L439)
+Reference: [`types.go`](../types.go)
 
 ### WithDirectDepsMode
 
@@ -99,7 +101,7 @@ checked independently. Versions differing only in build metadata compare equal.
 | `DirectDepsWarn`  | Add warnings to `result.Warnings` |
 | `DirectDepsError` | Return `DirectDepsMismatchError`  |
 
-Reference: [`types.go:346-358`](../types.go#L346-L358)
+Reference: [`types.go`](../types.go)
 
 ## Yanked Version Options
 
@@ -127,7 +129,7 @@ How to handle yanked versions when detected:
 | `YankedVersionWarn`  | Add to `result.Warnings`          |
 | `YankedVersionError` | Return `YankedVersionsError`      |
 
-Reference: [`types.go:327-344`](../types.go#L327-L344)
+Reference: [`types.go`](../types.go)
 
 ### WithSubstituteYanked
 
@@ -140,7 +142,7 @@ substitute selected yanked versions. Use `WithYankedBehavior` to allow, warn, or
 
 Default: `false`
 
-Reference: [`types.go:465-469`](../types.go#L465-L469)
+Reference: [`types.go`](../types.go)
 
 ### WithAllowedYankedVersions
 
@@ -156,7 +158,7 @@ gobzlmod.WithAllowedYankedVersions("protobuf@3.19.0", "rules_go@0.40.0")
 
 Mirrors Bazel's `--allow_yanked_versions` flag.
 
-Reference: [`types.go:450-454`](../types.go#L450-L454)
+Reference: [`types.go`](../types.go)
 
 ## Bazel Compatibility Options
 
@@ -176,7 +178,7 @@ Target Bazel version. When set:
 gobzlmod.WithBazelVersion("7.0.0")
 ```
 
-Reference: [`types.go:478-482`](../types.go#L478-L482), [bazeltools/](../bazeltools/)
+Reference: [`types.go`](../types.go), [bazeltools/](../bazeltools/)
 
 ### WithBazelToolsLookup
 
@@ -254,7 +256,7 @@ How to handle `bazel_compatibility` constraint failures:
 
 Requires `WithBazelVersion` to be set.
 
-Reference: [`types.go:360-375`](../types.go#L360-L375), [BazelModuleResolutionFunction.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/BazelModuleResolutionFunction.java#L298-L333)
+Reference: [`types.go`](../types.go), [BazelModuleResolutionFunction.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/BazelModuleResolutionFunction.java#L298-L333)
 
 ## HTTP Options
 
@@ -295,7 +297,7 @@ client := &http.Client{
 gobzlmod.WithHTTPClient(client)
 ```
 
-Reference: [`types.go:538-560`](../types.go#L538-L560)
+Reference: [`types.go`](../types.go)
 
 ## Caching Options
 
@@ -316,7 +318,7 @@ type ModuleCache interface {
 
 Cache errors are handled gracefully—failures fall back to registry fetch.
 
-Reference: [`types.go:585-659`](../types.go#L585-L659)
+Reference: [`types.go`](../types.go)
 
 Cache storage keys include a stable registry namespace, so sharing one cache across
 private and public registries cannot reuse the wrong module definition. Old
@@ -354,7 +356,7 @@ gobzlmod.WithProgress(func(e gobzlmod.ProgressEvent) {
 
 Event types: `ProgressResolveStart`, `ProgressResolveEnd`, `ProgressModuleFetchStart`, `ProgressModuleFetchEnd`
 
-Reference: [`types.go:404-434`](../types.go#L404-L434)
+Reference: [`types.go`](../types.go)
 
 ## Logging
 
@@ -373,7 +375,7 @@ logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 gobzlmod.WithLogger(logger)
 ```
 
-Reference: [`types.go:580-582`](../types.go#L580-L582)
+Reference: [`types.go`](../types.go)
 
 ## Lockfile Options
 
