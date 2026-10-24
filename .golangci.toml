@@ -7,6 +7,8 @@ version = "2"
 timeout = "5m"
 tests = true
 modules-download-mode = "readonly"
+# Independent worktrees may run their checks concurrently.
+allow-parallel-runners = true
 
 # Linters
 [linters]
