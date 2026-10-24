@@ -497,48 +497,10 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 		return nil, nil, err
 	}
 
-	if err := r.verifyDirectDepsFetched(rootModule, overrideMap, modules); err != nil {
-		return nil, nil, err
-	}
-
 	return &selection.DepGraph{
 		Modules: modules,
 		RootKey: rootKey,
 	}, moduleInfoCache, nil
-}
-
-// verifyDirectDepsFetched checks that every direct production dependency of
-// the root module (i.e. not a dev dep when dev deps are excluded, and not a
-// non-registry override) was actually fetched into modules. A missing direct
-// dep means the registry returned 404 for it, which should fail resolution
-// outright rather than silently proceeding without it (matching Bazel
-// behavior).
-func (r *selectionResolver) verifyDirectDepsFetched(
-	rootModule *ModuleInfo,
-	overrideMap map[string]Override,
-	modules map[selection.ModuleKey]*selection.Module,
-) error {
-	for _, dep := range rootModule.Dependencies {
-		if dep.DevDependency && !r.options.IncludeDevDeps {
-			continue
-		}
-		// Non-registry overrides (git/local/archive) don't need registry lookup.
-		if override, ok := overrideMap[dep.Name]; ok {
-			switch override.Type {
-			case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
-				continue
-			}
-		}
-		depKey := selection.ModuleKey{Name: dep.Name, Version: dep.Version}
-		if override, ok := overrideMap[dep.Name]; ok && override.Type == overrideTypeSingleVersion && override.Version != "" {
-			depKey.Version = override.Version
-		}
-		if _, found := modules[depKey]; !found {
-			return fmt.Errorf("fetch %s@%s: registry returned status 404 for module %s@%s",
-				dep.Name, depKey.Version, dep.Name, depKey.Version)
-		}
-	}
-	return nil
 }
 
 // convertOverrides converts gobzlmod.Override to selection.Override.

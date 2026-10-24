@@ -138,3 +138,11 @@ func TestDiscoveryRootBackreferences(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscoveryDirectRootAlias(t *testing.T) {
+	root := discoveryModule("root", "1.0") + "bazel_dep(name='root',version='2.0',repo_name='self_alias')\n"
+	result := resolveDiscovery(t, root, nil)
+	if len(result.Modules) != 0 {
+		t.Fatalf("root alias must not become an external module: %+v", result.Modules)
+	}
+}
