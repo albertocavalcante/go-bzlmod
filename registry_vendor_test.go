@@ -326,7 +326,6 @@ type mockRegistry struct {
 	getModuleMetadata func(ctx context.Context, name string) (*registry.Metadata, error)
 }
 
-
 func (m *mockRegistry) GetModuleFile(ctx context.Context, name, version string) (*ModuleInfo, error) {
 	if m.getModuleFile != nil {
 		return m.getModuleFile(ctx, name, version)

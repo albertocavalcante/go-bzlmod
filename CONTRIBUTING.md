@@ -2,7 +2,8 @@
 
 ## Getting Started
 
-**Prerequisites:** Go 1.23.0+, Git, Bazel/Bazelisk (optional for e2e tests)
+**Prerequisites:** Go 1.26.0+, Git, and Just for the command shortcuts.
+Bazel/Bazelisk is required only for live E2E comparisons.
 
 **Setup:**
 
@@ -36,11 +37,36 @@ Aim for >90% test coverage.
 
 ## Code Quality
 
+Run the same checks used by CI:
+
+```bash
+just check
+# Equivalent without Just:
+bash scripts/check.sh
+```
+
+This checks dependencies, formatting, builds, race tests, pinned linters, and the
+independent E2E module's short-mode harness. It does not run live Bazel, the BCR
+corpus, or the opt-in release matrix; use the explicit commands above and in the
+README for those suites. Go verifies downloaded module and tool dependencies
+against the committed go.sum files and the Go checksum database.
+
+CI also runs the full live E2E suite with a checksum-verified Bazel 7.0.0 binary.
+To reproduce it on Linux x86_64 or macOS arm64:
+
+```bash
+bash scripts/install-bazel.sh /tmp/go-bzlmod-bazel
+GO_BZLMOD_E2E_BAZEL=/tmp/go-bzlmod-bazel/bazel bash scripts/check.sh e2e-live
+```
+
+The installer pins each platform's digest. When upgrading Bazel, fetch the
+matching `.sha256` files from `https://releases.bazel.build/VERSION/release/`,
+cross-check the release asset, and update the version and digests together.
+
 **Linting:**
 
 ```bash
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-golangci-lint run
+just lint-all
 ```
 
 **Formatting:**
@@ -71,7 +97,7 @@ Create an issue first for significant changes. Write tests. Update documentation
 ```
 Tests pass: go test ./...
 E2E tests pass: cd e2e && go test ./...
-Linting passes: golangci-lint run
+Canonical checks pass: just check
 Documentation updated (if applicable)
 Commits signed off: git commit -s
 ```

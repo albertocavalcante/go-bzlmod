@@ -319,7 +319,7 @@ func TestGraph_Stats_CyclicGraphWithDeeperReentryDoesNotCrash(t *testing.T) {
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestGraph_Stats_CyclicGraphWithDeeperReentryDoesNotCrash$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestGraph_Stats_CyclicGraphWithDeeperReentryDoesNotCrash$")
 	cmd.Env = append(os.Environ(), helperEnv+"=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {

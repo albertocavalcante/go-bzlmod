@@ -701,7 +701,6 @@ func TestResolveFromContent_WithOverrides(t *testing.T) {
 	}
 }
 
-
 func TestResolveFromContent_MVSSelection(t *testing.T) {
 	// Create mock server that simulates transitive dependencies with version conflicts
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

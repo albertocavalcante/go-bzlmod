@@ -8,6 +8,8 @@ import (
 	"github.com/albertocavalcante/go-bzlmod/selection/version"
 )
 
+const versionResolutionErrorCode = "VERSION_RESOLUTION_ERROR"
+
 // Run executes module selection (version resolution).
 //
 // This implements Bazel's Selection.run() from Selection.java lines 266-353.
@@ -65,10 +67,21 @@ func Run(graph *DepGraph, overrides map[string]Override) (*Result, error) {
 	// Reference: Selection.java lines 285-291
 	// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L285
 	// "selectedVersions.merge(selectionGroup, key.version(), Comparators::max)"
+	// Raw module keys may differ only in build metadata, which comparison
+	// ignores. Pick a stable spelling so Go map order cannot change output.
+	// Leading zeros are ordered by the version identifier's textual tie-break.
+
 	selectedVersions := make(map[SelectionGroup]string)
 	for key, group := range selectionGroups {
 		existing, ok := selectedVersions[group]
-		if !ok || version.Compare(key.Version, existing) > 0 {
+		if !ok {
+			selectedVersions[group] = key.Version
+			continue
+		}
+		switch c := version.Compare(key.Version, existing); {
+		case c > 0:
+			selectedVersions[group] = key.Version
+		case c == 0 && key.Version < existing:
 			selectedVersions[group] = key.Version
 		}
 	}
@@ -198,7 +211,7 @@ func computeAllowedVersionSets(overrides map[string]Override, graph *DepGraph) (
 			module, ok := graph.Modules[key]
 			if !ok {
 				return nil, &SelectionError{
-					Code: "VERSION_RESOLUTION_ERROR",
+					Code: versionResolutionErrorCode,
 					Message: fmt.Sprintf(
 						"multiple_version_override for module %s contains version %s, "+
 							"but it doesn't exist in the dependency graph",
@@ -331,7 +344,7 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 				if resolvedModule, ok := w.oldGraph.Modules[resolvedKey]; ok {
 					if resolvedModule.CompatLevel > dep.MaxCompatibilityLevel {
 						return nil, nil, &SelectionError{
-							Code: "VERSION_RESOLUTION_ERROR",
+							Code: versionResolutionErrorCode,
 							Message: fmt.Sprintf(
 								"%v depends on %s with max_compatibility_level %d, "+
 									"but %s@%s has compatibility_level %d which is higher",
@@ -361,7 +374,7 @@ func (w *depGraphWalker) walk(resolutionStrategy func(DepSpec) string) (map[Modu
 					if resolvedModule, ok := w.oldGraph.Modules[resolvedKey]; ok {
 						if resolvedModule.CompatLevel > dep.MaxCompatibilityLevel {
 							return nil, nil, &SelectionError{
-								Code: "VERSION_RESOLUTION_ERROR",
+								Code: versionResolutionErrorCode,
 								Message: fmt.Sprintf(
 									"%v has nodep_dep on %s with max_compatibility_level %d, "+
 										"but %s@%s has compatibility_level %d which is higher",
@@ -435,7 +448,7 @@ func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, m
 			// Reference: Selection.java lines 416-429
 			// https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L416
 			return &SelectionError{
-				Code: "VERSION_RESOLUTION_ERROR",
+				Code: versionResolutionErrorCode,
 				Message: fmt.Sprintf(
 					"%v depends on %v which is not allowed by the multiple_version_override on %s, "+
 						"which allows only %v",
@@ -452,7 +465,7 @@ func (w *depGraphWalker) visit(key ModuleKey, module *Module, from *ModuleKey, m
 		existing, ok := moduleByName[module.Key.Name]
 		if ok && existing.compatLevel != module.CompatLevel {
 			return &SelectionError{
-				Code: "VERSION_RESOLUTION_ERROR",
+				Code: versionResolutionErrorCode,
 				Message: fmt.Sprintf(
 					"%v depends on %v with compatibility level %d, but %v depends on %v "+
 						"with compatibility level %d which is different",
@@ -495,7 +508,6 @@ type resolutionResult struct {
 func computePossibleResolutionResultsForOneDepSpec(
 	depSpec DepSpec,
 	graph *DepGraph,
-	selectionGroups map[ModuleKey]SelectionGroup,
 	selectedVersions map[SelectionGroup]string,
 ) []resolutionResult {
 	// Get the target module to find its compatibility level
@@ -582,7 +594,6 @@ type depSpecKey struct {
 // https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Selection.java#L230
 func computeAllPossibleResolutions(
 	graph *DepGraph,
-	selectionGroups map[ModuleKey]SelectionGroup,
 	selectedVersions map[SelectionGroup]string,
 ) map[depSpecKey][]resolutionResult {
 	result := make(map[depSpecKey][]resolutionResult)
@@ -617,7 +628,7 @@ func computeAllPossibleResolutions(
 	// Compute possible resolutions for each distinct DepSpec
 	for key, depSpec := range seen {
 		possibleResults := computePossibleResolutionResultsForOneDepSpec(
-			depSpec, graph, selectionGroups, selectedVersions,
+			depSpec, graph, selectedVersions,
 		)
 		if len(possibleResults) > 1 {
 			// Only include if there are multiple possibilities
@@ -645,7 +656,7 @@ func enumerateStrategies(
 	selectedVersions map[SelectionGroup]string,
 ) []resolutionStrategy {
 	// Compute all possible resolutions
-	allPossible := computeAllPossibleResolutions(graph, selectionGroups, selectedVersions)
+	allPossible := computeAllPossibleResolutions(graph, selectedVersions)
 
 	if len(allPossible) == 0 {
 		// No ambiguity - return single default strategy

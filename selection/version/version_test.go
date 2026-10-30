@@ -1,6 +1,8 @@
 package version
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -196,5 +198,182 @@ func TestMax(t *testing.T) {
 				t.Errorf("Max(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMaxPrefersFirstOnTie pins the tie-break in Max.
+//
+// Every case in TestMax uses two *identical* strings for the equal case, so
+// Max's `>=` was indistinguishable from `>`: nothing observed which spelling
+// came back. Two versions can compare equal and still be textually different --
+// build metadata is stripped by the parser -- and in MVS the selected string is what ends up
+// in the lockfile, so which spelling wins is observable.
+func TestMaxPrefersFirstOnTie(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want string
+	}{
+		{"build metadata is stripped, so these compare equal", "1.0.0+build", "1.0.0", "1.0.0+build"},
+		{"and the other way round", "1.0.0", "1.0.0+build", "1.0.0"},
+		{"identical strings", "1.2.3", "1.2.3", "1.2.3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Precondition: these really do compare equal, otherwise the test
+			// would be asserting ordinary Max behavior rather than the tie-break.
+			if c := Compare(tt.a, tt.b); c != 0 {
+				t.Fatalf("precondition failed: Compare(%q, %q) = %d, want 0", tt.a, tt.b, c)
+			}
+			if got := Max(tt.a, tt.b); got != tt.want {
+				t.Errorf("Max(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseRejectsMalformed covers Parse's error path, which had no test at all:
+// every row of TestVersionParsing has wantErr false, leaving Parse's error
+// return and ParseError.Error at 0% coverage.
+func TestParseRejectsMalformed(t *testing.T) {
+	malformed := []string{
+		"1..0", ".1", "1.", "1.0-.alpha", "1.0-alpha.",
+		"18446744073709551616", "1.0-18446744073709551616",
+		"1.0-",   // trailing prerelease separator with nothing after it
+		"1.0.0-", // same, with a three-segment release
+		"-alpha", // prerelease with no release
+		"1.0 0",  // space is not in the permitted character class
+		"1.0!",   // punctuation other than . - +
+		"héllo",  // non-ASCII
+		"1.0.0+", // trailing build separator
+		"+build", // build metadata with no release
+	}
+	for _, s := range malformed {
+		t.Run(s, func(t *testing.T) {
+			_, err := Parse(s)
+			if err == nil {
+				t.Fatalf("Parse(%q) succeeded, want an error", s)
+			}
+
+			var pe *ParseError
+			if !errors.As(err, &pe) {
+				t.Fatalf("Parse(%q) error is %T, want *ParseError", s, err)
+			}
+			if pe.Version != s {
+				t.Errorf("ParseError.Version = %q, want %q", pe.Version, s)
+			}
+			// The message must name the offending input, or a resolution
+			// failure deep in a dependency graph is untraceable.
+			if !strings.Contains(pe.Error(), s) {
+				t.Errorf("ParseError.Error() = %q, should mention the input %q", pe.Error(), s)
+			}
+			if pe.Message == "" {
+				t.Error("ParseError.Message is empty")
+			}
+		})
+	}
+}
+
+// TestParseAcceptsSurprisingButValid documents inputs that look malformed and
+// are nevertheless accepted, so a future tightening of the regex is a
+// deliberate decision rather than an accident.
+func TestParseAcceptsSurprisingButValid(t *testing.T) {
+	tests := []struct {
+		in             string
+		wantNormalized string
+	}{
+		// Build metadata is matched and then discarded, including from Normalized.
+		{"1.0.0+build.5", "1.0.0"},
+		// Leading zeros survive in Normalized and break numeric comparison ties.
+		{"1.0.07", "1.0.07"},
+		{"18446744073709551615", "18446744073709551615"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			pv, err := Parse(tt.in)
+			if err != nil {
+				t.Fatalf("Parse(%q) = %v, want success", tt.in, err)
+			}
+			if pv.Normalized != tt.wantNormalized {
+				t.Errorf("Normalized = %q, want %q", pv.Normalized, tt.wantNormalized)
+			}
+		})
+	}
+}
+
+// TestCompareFallsBackToLexicographic covers Compare's `errA != nil || errB !=
+// nil` guard. The asymmetric case -- exactly one side malformed -- is what an
+// `&&` mutation breaks, and nothing exercised it.
+func TestCompareFallsBackToLexicographic(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want int
+	}{
+		// '!' (0x21) sorts below '.' (0x2e), so plain string comparison is negative.
+		{"only a is malformed", "1.0!", "1.0.0", strings.Compare("1.0!", "1.0.0")},
+		{"only b is malformed", "1.0.0", "1.0!", strings.Compare("1.0.0", "1.0!")},
+
+		// These two are the cases that actually distinguish the fallback from
+		// the mutation `errA != nil && errB != nil`. Under `&&`, a single
+		// malformed side is NOT short-circuited, so Compare proceeds with the
+		// zero ParsedVersion that Parse returns alongside its error -- an empty
+		// release list, which compareIdentifierLists always ranks as the shorter
+		// and therefore lesser operand. That coincides with strings.Compare
+		// whenever the malformed string also sorts lower, which is why
+		// "1.0!" vs "1.0.0" above cannot detect it. Picking a malformed string
+		// that sorts HIGHER separates them.
+		{"malformed a sorts above b", "z!", "1.0.0", strings.Compare("z!", "1.0.0")},
+		{"malformed b sorts above a", "1.0.0", "z!", strings.Compare("1.0.0", "z!")},
+		{"both malformed", "1.0!", "1.0@", strings.Compare("1.0!", "1.0@")},
+		{"both malformed and equal", "1.0!", "1.0!", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Compare(tt.a, tt.b); got != tt.want {
+				t.Errorf("Compare(%q, %q) = %d, want %d (strings.Compare fallback)", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseIdentifierEdgeCases covers the empty identifier and the uint64
+// overflow fallback, neither of which had a test.
+func TestParseIdentifierEdgeCases(t *testing.T) {
+	empty := ParseIdentifier("")
+	if empty.IsDigitsOnly {
+		t.Error(`ParseIdentifier("").IsDigitsOnly = true, want false`)
+	}
+	if empty.AsString != "" {
+		t.Errorf(`ParseIdentifier("").AsString = %q, want ""`, empty.AsString)
+	}
+
+	// Wider than uint64, so the numeric parse fails and it must degrade to a
+	// string identifier rather than silently truncating.
+	big := ParseIdentifier("99999999999999999999")
+	if big.IsDigitsOnly {
+		t.Error("a 20-digit identifier must fall back to string comparison, not claim to be numeric")
+	}
+	if big.AsNumber != 0 {
+		t.Errorf("AsNumber = %d, want 0 for the string fallback", big.AsNumber)
+	}
+
+	// Leading zeros: numerically 7, but the original text is preserved.
+	z := ParseIdentifier("007")
+	if !z.IsDigitsOnly || z.AsNumber != 7 || z.AsString != "007" {
+		t.Errorf(`ParseIdentifier("007") = %+v, want {IsDigitsOnly:true AsNumber:7 AsString:"007"}`, z)
+	}
+}
+
+// Bazel 9.1.0 compares equal numeric values by their original identifier text.
+func TestLeadingZeroComparison(t *testing.T) {
+	if got := Compare("1.0.07", "1.0.7"); got != -1 {
+		t.Fatalf("Compare leading zero = %d, want -1", got)
+	}
+	if got := Compare("1.0.7", "1.0.07"); got != 1 {
+		t.Fatalf("Compare reversed = %d, want 1", got)
+	}
+	if got := Max("1.0.07", "1.0.7"); got != "1.0.7" {
+		t.Fatalf("Max = %s, want 1.0.7", got)
 	}
 }

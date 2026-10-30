@@ -1,0 +1,77 @@
+# mutante suppressions v1.
+#
+# equivalent = semantically identical to the original, so no test can ever kill
+#              it. Excluded from the mutation score entirely.
+# accepted   = a real survivor we are choosing to tolerate. Stays in the score's
+#              denominator so the debt remains visible.
+#
+# <id>  <kind>  <operator>  <pkg>  <func>  # <file>:<line>  <reason>
+
+# --- equivalent ------------------------------------------------------------
+
+# Falling through instead of continuing re-evaluates version.Compare(key.Version,
+# "") which is -1 (the empty version sorts highest), so neither later branch
+# fires and the map already holds the value. The continue is a fast path.
+f056b983ebe8  equivalent  stmt_remove  github.com/albertocavalcante/go-bzlmod/selection  Run  # selection.go:85  fall-through recomputes Compare(v,"")=-1 and takes no branch; same result
+
+# After line 177 returned for differing IsEmpty flags, the two flags are provably
+# equal here, so && and || coincide.
+cb77bb75c746  equivalent  logical_connector  github.com/albertocavalcante/go-bzlmod/selection/version  Compare  # version.go:183  flags provably equal at this point, && and || agree
+
+# Without the break the loop keeps scanning after allDigits is already false and
+# reaches an identical result. Performance only.
+c9b059a25d75  equivalent  stmt_remove  github.com/albertocavalcante/go-bzlmod/selection/version  ParseIdentifier  # version.go:53  break is an early exit; the result is identical without it
+
+# len(existing)+1 is a map capacity hint. Changing it to -1 alters preallocation
+# only; make() clamps a negative hint to 0 and the map grows as needed.
+e40d52389ce1  equivalent  arith_binary  github.com/albertocavalcante/go-bzlmod/selection  cartesianProduct  # selection.go:788  map capacity hint only, no semantic effect
+
+# At equality the two DepSpecs are identical: the map key is (Name, Version) and
+# MaxCompatibilityLevel is the only other field, so overwriting writes the same
+# value.
+ead3f6a679f4  equivalent  cond_boundary  github.com/albertocavalcante/go-bzlmod/selection  computeAllPossibleResolutions  # selection.go:648  at equal max-compat the two DepSpecs are identical; the write is idempotent
+
+# A dimension with exactly one possibility contributes no branching to the
+# cartesian product, and makeStrategyFromCombination maps that dep to the same
+# version the default strategy would pick. Including it changes nothing.
+9101ff7dcf58  equivalent  cond_boundary  github.com/albertocavalcante/go-bzlmod/selection  computeAllPossibleResolutions  # selection.go:666  a single-possibility dimension adds no branching and resolves to the default anyway
+
+# --- accepted --------------------------------------------------------------
+
+# nil vs empty slice for a module that declares no nodep deps. Observable only
+# through a nil check on the unpruned graph, which no caller performs. Asserting
+# it would freeze an incidental representation detail rather than behavior.
+1f5322693c08  accepted  cond_boundary  github.com/albertocavalcante/go-bzlmod/selection  tryStrategy  # selection.go:176  only changes nil vs empty NodepDeps slice; no caller distinguishes them
+bb4d9206a29e  accepted  negate_cond  github.com/albertocavalcante/go-bzlmod/selection  tryStrategy  # selection.go:176  same: nil vs empty NodepDeps slice
+c760edb5f752  accepted  cond_boundary  github.com/albertocavalcante/go-bzlmod/selection  (*depGraphWalker).walk  # selection.go:392  same: nil vs empty NodepDeps slice on the walked graph
+
+# Reaching these needs TWO selection groups sharing one compatibility level for
+# the same module name. Without a multiple-version override a group is exactly
+# (name, compatLevel), so two such groups cannot exist; with one, the group also
+# carries TargetAllowedVersion, which makes it constructible but requires a
+# fixture where two allowed versions of one module are selected at the same
+# compat level AND both clear the MVS floor for the same dep. Worth building if
+# MVO support is extended; the "keep the lower version" rule is otherwise
+# unverified.
+edc1286bbe45  accepted  logical_connector  github.com/albertocavalcante/go-bzlmod/selection  computePossibleResolutionResultsForOneDepSpec  # selection.go:592  needs 2 groups at one compat level for one module: only reachable via a multiple-version override
+b112c0567430  accepted  cond_boundary  github.com/albertocavalcante/go-bzlmod/selection  computePossibleResolutionResultsForOneDepSpec  # selection.go:592  same precondition; the keep-the-lower-version tie-break is untested
+fe6e27c9258a  accepted  negate_cond  github.com/albertocavalcante/go-bzlmod/selection  computePossibleResolutionResultsForOneDepSpec  # selection.go:592  same precondition
+
+# Reachable only when a dep with max_compatibility_level exactly 0 also has more
+# than one possible resolution, which requires several same-name modules at
+# compat level 0 plus a dep pinned to 0 -- and the >1 filter at :666 then has to
+# admit it. Covered in spirit by TestMaxCompatBelowModuleLevelHasNoResolution.
+fb54837accac  accepted  cond_boundary  github.com/albertocavalcante/go-bzlmod/selection  computeAllPossibleResolutions  # selection.go:644  needs a max-compat-0 dep with >1 possible resolution; adjacent behavior is covered
+
+# RESIDUAL RISK, not a cosmetic gap. These two sorts are what keep strategy
+# enumeration independent of Go map iteration order; without them the same
+# dependency graph can resolve differently between runs. Do not delete them.
+#
+# TestResolutionIsDeterministic kills these mutants only PROBABILISTICALLY: it
+# re-resolves 50 times and compares, so it fires when map iteration happens to
+# differ and passes when it happens not to. Repeated mutante runs therefore show
+# these flipping between KILLED and SURVIVED. They are listed here so a run is
+# reproducible either way; a deterministic kill needs a fixture where two
+# different strategies both succeed with different results.
+45c9de00de1c  accepted  stmt_remove  github.com/albertocavalcante/go-bzlmod/selection  enumerateStrategies  # selection.go:706  load-bearing determinism sort; killing it needs two strategies succeeding with different results
+6f22dba6eb76  accepted  negate_cond  github.com/albertocavalcante/go-bzlmod/selection  enumerateStrategies  # selection.go:707  same: the comparator feeding the determinism sort

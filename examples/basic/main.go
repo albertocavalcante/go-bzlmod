@@ -13,13 +13,11 @@ func main() {
 	fmt.Println("===================")
 
 	// Resolve dependencies from the example MODULE.bazel file
-	resolutionList, err := gobzlmod.ResolveFile(
+	resolutionList, err := gobzlmod.Resolve(
 		context.Background(),
-		"../MODULE.bazel",
-		gobzlmod.ResolutionOptions{
-			Registries:     []string{"https://bcr.bazel.build"},
-			IncludeDevDeps: true,
-		},
+		gobzlmod.FileSource("../MODULE.bazel"),
+		gobzlmod.WithRegistries("https://bcr.bazel.build"),
+		gobzlmod.WithDevDeps(),
 	)
 	if err != nil {
 		log.Fatalf("❌ Failed to resolve dependencies: %v", err)

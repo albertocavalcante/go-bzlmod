@@ -123,12 +123,12 @@ func TestBazelCompatConstraintCheck(t *testing.T) {
 
 func TestCheckBazelCompatibility(t *testing.T) {
 	tests := []struct {
-		name            string
-		bazelVersion    string
-		constraints     []string
-		wantCompat      bool
-		wantReason      string
-		wantInvalidCnt  int
+		name           string
+		bazelVersion   string
+		constraints    []string
+		wantCompat     bool
+		wantReason     string
+		wantInvalidCnt int
 	}{
 		{
 			name:         "empty constraints",
@@ -202,19 +202,19 @@ func TestCheckBazelCompatibility(t *testing.T) {
 			wantCompat:   true,
 		},
 		{
-			name:            "invalid constraint is reported",
-			bazelVersion:    "7.0.0",
-			constraints:     []string{">=7.0.0", "invalid", "also-invalid"},
-			wantCompat:      true,
-			wantInvalidCnt:  2,
+			name:           "invalid constraint is reported",
+			bazelVersion:   "7.0.0",
+			constraints:    []string{">=7.0.0", "invalid", "also-invalid"},
+			wantCompat:     true,
+			wantInvalidCnt: 2,
 		},
 		{
-			name:            "mix of valid and invalid constraints",
-			bazelVersion:    "6.0.0",
-			constraints:     []string{">=7.0.0", "bad-format"},
-			wantCompat:      false,
-			wantReason:      "requires >=7.0.0",
-			wantInvalidCnt:  1,
+			name:           "mix of valid and invalid constraints",
+			bazelVersion:   "6.0.0",
+			constraints:    []string{">=7.0.0", "bad-format"},
+			wantCompat:     false,
+			wantReason:     "requires >=7.0.0",
+			wantInvalidCnt: 1,
 		},
 	}
 

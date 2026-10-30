@@ -5,11 +5,11 @@
 //
 // Usage from project root:
 //
-//	go run -modfile=tools/lint/go.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint run ./...
-//	go run -modfile=tools/lint/go.mod honnef.co/go/tools/cmd/staticcheck ./...
+//	go tool -modfile=tools/lint/go.mod golangci-lint run ./...
+//	go tool -modfile=tools/lint/go.mod staticcheck ./...
 //
-// Or use the Makefile:
+// Or use the Justfile:
 //
-//	make lint
-//	make staticcheck
+//	just lint
+//	just staticcheck
 package lint

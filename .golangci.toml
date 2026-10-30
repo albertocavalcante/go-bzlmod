@@ -7,6 +7,8 @@ version = "2"
 timeout = "5m"
 tests = true
 modules-download-mode = "readonly"
+# Independent worktrees may run their checks concurrently.
+allow-parallel-runners = true
 
 # Linters
 [linters]
@@ -72,6 +74,9 @@ check-blank = false # Allow _ = err for intentional ignores
 [linters.settings.goconst]
 min-len = 3
 min-occurrences = 3
+ignore-tests = true
+# Version table entries are independent data, even when releases repeat them.
+ignore-string-values = ['^[0-9]+(\.[a-zA-Z0-9]+)+$']
 
 [linters.settings.gocritic]
 enabled-tags = [
@@ -142,6 +147,11 @@ paths = [
 ]
 
 # Test files - relaxed linting
+[[linters.exclusions.rules]]
+# Each MODULE.tools snapshot deliberately spells out its upstream data.
+path = "^bazeltools/tools\\.go$"
+linters = ["goconst"]
+
 [[linters.exclusions.rules]]
 path = "_test\\.go"
 linters = [

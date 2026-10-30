@@ -36,11 +36,11 @@ func resolveDependenciesWithBazelVersion(content, registry string, includeDevDep
 
 func resolveDependenciesWithBazelVersionAndBuiltins(content, registry string, includeDevDeps bool, bazelVersion string, includeBuiltinModules bool) (*ResolutionList, error) {
 	opts := gobzlmod.ResolutionOptions{
-		Registries:             []string{registry},
-		IncludeDevDeps:         includeDevDeps,
-		SubstituteYanked:       true,
-		BazelVersion:           bazelVersion,
-		IncludeBuiltinModules:  includeBuiltinModules,
+		Registries:            []string{registry},
+		IncludeDevDeps:        includeDevDeps,
+		SubstituteYanked:      true,
+		BazelVersion:          bazelVersion,
+		IncludeBuiltinModules: includeBuiltinModules,
 	}
 	ctx := context.Background()
 	resolutionList, err := gobzlmod.ResolveContent(ctx, content, opts)
@@ -94,20 +94,26 @@ func runBazelModGraph(t *testing.T, workspaceDir string) (*BazelModGraph, error)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Build bazelisk from the Go module into a secure temp directory
-	bazeliskPath := filepath.Join(t.TempDir(), "bazelisk")
-	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", bazeliskPath, "github.com/bazelbuild/bazelisk")
-	if err := buildCmd.Run(); err != nil {
-		// Try to use system bazelisk or bazel if available
-		if bazeliskBin, err := exec.LookPath("bazelisk"); err == nil {
-			bazeliskPath = bazeliskBin
-		} else if bazelBin, err := exec.LookPath("bazel"); err == nil {
-			bazeliskPath = bazelBin
+	// CI supplies a pinned, checksum-verified native Bazel binary. Developers
+	// can still opt into their installed Bazel/Bazelisk when this is unset.
+	bazeliskPath := os.Getenv("GO_BZLMOD_E2E_BAZEL")
+	if bazeliskPath == "" {
+		// Build bazelisk from the Go module into a secure temp directory
+		bazeliskPath = filepath.Join(t.TempDir(), "bazelisk")
+		buildCmd := exec.CommandContext(ctx, "go", "build", "-o", bazeliskPath, "github.com/bazelbuild/bazelisk")
+		if err := buildCmd.Run(); err != nil {
+			// Try to use system bazelisk or bazel if available
+			if bazeliskBin, err := exec.LookPath("bazelisk"); err == nil {
+				bazeliskPath = bazeliskBin
+			} else if bazelBin, err := exec.LookPath("bazel"); err == nil {
+				bazeliskPath = bazelBin
+			} else {
+				return nil, fmt.Errorf("failed to build bazelisk and no system bazel/bazelisk found: %v", err)
+			}
 		} else {
-			return nil, fmt.Errorf("failed to build bazelisk and no system bazel/bazelisk found: %v", err)
+			defer os.Remove(bazeliskPath)
 		}
-	} else {
-		defer os.Remove(bazeliskPath)
+
 	}
 
 	// Set up environment

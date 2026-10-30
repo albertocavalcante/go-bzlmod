@@ -217,7 +217,7 @@ func (rc *registryChain) GetModuleMetadata(ctx context.Context, moduleName strin
 		}
 
 		// Fallback to other registries if cached registry fails.
-		var lastErr error = err
+		var lastErr = err
 		for i, client := range rc.clients {
 			if i == registryIdx {
 				continue
@@ -323,7 +323,7 @@ func (rc *registryChain) GetModuleSource(ctx context.Context, moduleName, versio
 		}
 
 		// Fallback to other registries if cached registry fails.
-		var lastErr error = err
+		var lastErr = err
 		for i, client := range rc.clients {
 			if i == registryIdx {
 				continue
