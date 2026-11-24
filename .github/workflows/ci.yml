@@ -75,19 +75,32 @@ jobs:
       contents: read
 
     steps:
-      # Secrets cannot be used in job-level `if`; derive an output instead so
-      # fork and Dependabot runs skip the analysis rather than fail.
+      # Secrets cannot be used in job-level `if`; derive an output instead.
+      # A missing token is only acceptable where GitHub withholds secrets
+      # (fork PRs, Dependabot); anywhere else it is a configuration error.
       - name: Check for SONAR_TOKEN
         id: token
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           if [ -n "$SONAR_TOKEN" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::SONAR_TOKEN is unavailable (fork or Dependabot run); skipping SonarCloud analysis."
+            exit 0
           fi
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            reason="fork pull request"
+          elif [ "$ACTOR" = "dependabot[bot]" ]; then
+            reason="Dependabot run"
+          else
+            echo "::error::SONAR_TOKEN is empty on a run that should have it (event: $EVENT_NAME, actor: $ACTOR). Restore the repository secret."
+            exit 1
+          fi
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::SONAR_TOKEN is unavailable ($reason); skipping SonarCloud analysis."
 
       - name: Check out code
         if: steps.token.outputs.available == 'true'
