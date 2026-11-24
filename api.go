@@ -54,7 +54,8 @@
 //
 // # Thread Safety
 //
-// All public types in this package are safe for concurrent use.
+// Registry clients support concurrent reads and cache clearing. Callers must
+// synchronize shared mutable options, result values, caches, and progress handlers.
 package gobzlmod
 
 import (
@@ -131,6 +132,10 @@ func ResolveContent(ctx context.Context, moduleContent string, opts ResolutionOp
 
 // resolveInternal is the internal implementation for content-based resolution.
 func resolveInternal(ctx context.Context, moduleContent string, opts ResolutionOptions) (*ResolutionList, error) {
+	return runResolution(ctx, opts, func() (*ResolutionList, error) { return resolveContentRaw(ctx, moduleContent, opts) })
+}
+
+func resolveContentRaw(ctx context.Context, moduleContent string, opts ResolutionOptions) (*ResolutionList, error) {
 	moduleInfo, err := ParseModuleContent(moduleContent)
 	if err != nil {
 		return nil, fmt.Errorf("parse module content: %w", err)
@@ -146,6 +151,10 @@ func resolveInternal(ctx context.Context, moduleContent string, opts ResolutionO
 //
 // Uses BCR by default if opts.Registries is empty.
 func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOptions) (*ResolutionList, error) {
+	return runResolution(ctx, opts, func() (*ResolutionList, error) { return resolveFileRaw(ctx, moduleFilePath, opts) })
+}
+
+func resolveFileRaw(ctx context.Context, moduleFilePath string, opts ResolutionOptions) (*ResolutionList, error) {
 	moduleInfo, err := ParseModuleFile(moduleFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("parse module file: %w", err)
@@ -165,7 +174,8 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 // Unlike Resolve/ResolveFile which resolve dependencies OF a root module (excluding the root),
 // ResolveModule resolves a specific module BY its coordinate and includes it in the result.
 //
-// The target module appears first with Depth=0. Its direct dependencies have Depth=1, etc.
+// The target module has Depth=0. Results are sorted by name; use result.Module(name)
+// to access the target. Its direct dependencies have Depth=1, etc.
 //
 // This is useful for:
 //   - Exploring what a module will bring into your project
@@ -175,22 +185,29 @@ func ResolveFile(ctx context.Context, moduleFilePath string, opts ResolutionOpti
 // Example:
 //
 //	result, err := gobzlmod.ResolveModule(ctx, "rules_go", "0.50.0", opts)
-//	// result.Modules[0] is rules_go@0.50.0 (Depth=0)
-//	// result.Modules[1:] are its transitive dependencies (Depth>=1)
+//	// result.Module("rules_go") is the target at Depth=0
 func ResolveModule(ctx context.Context, name, version string, opts ResolutionOptions) (*ResolutionList, error) {
 	return resolveModuleInternal(ctx, name, version, opts)
 }
 
 // resolveModuleInternal is the internal implementation for registry-based resolution.
 func resolveModuleInternal(ctx context.Context, name, version string, opts ResolutionOptions) (*ResolutionList, error) {
+	return runResolution(ctx, opts, func() (*ResolutionList, error) { return resolveModuleRaw(ctx, name, version, opts) })
+}
+
+func resolveModuleRaw(ctx context.Context, name, version string, opts ResolutionOptions) (*ResolutionList, error) {
 	reg := buildRegistry(opts)
 	resolver := &selectionResolver{registry: reg, options: opts}
 
 	// Fetch the module's MODULE.bazel from registry
-	moduleInfo, err := reg.GetModuleFile(ctx, name, version)
+	moduleInfo, err := fetchModuleWithProgress(ctx, reg, name, version, opts.OnProgress)
 	if err != nil {
 		return nil, fmt.Errorf("fetch module %s@%s: %w", name, version, err)
 	}
+
+	// Keep cached registry values immutable when filling missing identity fields.
+	copyInfo := *moduleInfo
+	moduleInfo = &copyInfo
 
 	// Ensure the module info has the correct name/version
 	// (Some MODULE.bazel files may not have module() directive)
@@ -251,6 +268,16 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 			targetModule.IsBazelIncompatible = true
 			targetModule.BazelIncompatibilityReason = reason
 		}
+	}
+
+	// RegistrySource includes its target, so trace its source as well as deps.
+	traceTarget := &ResolutionList{Modules: []ModuleToResolve{targetModule}}
+	if err := enrichResolutionList(ctx, reg, opts, nil, traceTarget); err != nil {
+		return nil, err
+	}
+	targetModule = traceTarget.Modules[0]
+	if opts.TraceRegistryFiles {
+		result.RegistryFileHashes = collectRegistryFileHashes(reg)
 	}
 
 	// Insert target module, recompute summary, and apply behaviors.

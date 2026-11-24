@@ -3,6 +3,7 @@ package gobzlmod
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -11,13 +12,13 @@ import (
 // Option configures resolution behavior.
 type Option func(*ResolutionOptions) error
 
-// DefaultOptions returns options with safe defaults that match Bazel's behavior.
+// DefaultOptions enables yank detection, warnings, deprecation checks, and a
+// 15-second timeout. Dev dependencies remain excluded; these are library defaults.
 func DefaultOptions() []Option {
 	return []Option{
 		WithYankedCheck(true),
 		WithYankedBehavior(YankedVersionWarn),
 		WithDeprecatedWarnings(true),
-		WithSubstituteYanked(true),
 		WithTimeout(15 * time.Second),
 	}
 }
@@ -65,7 +66,8 @@ func WithDirectDepsMode(mode DirectDepsCheckMode) Option {
 	return func(o *ResolutionOptions) error { o.DirectDepsMode = mode; return nil }
 }
 
-// WithSubstituteYanked enables automatic substitution of yanked versions.
+// WithSubstituteYanked retains the reserved substitution option. Passing true
+// returns errors.ErrUnsupported; resolution never silently changes yanked versions.
 func WithSubstituteYanked(substitute bool) Option {
 	return func(o *ResolutionOptions) error { o.SubstituteYanked = substitute; return nil }
 }
@@ -116,17 +118,19 @@ func WithRegistries(urls ...string) Option {
 	}
 }
 
-// WithVendorDir sets the local vendor directory for modules.
+// WithVendorDir is reserved. A nonempty value returns errors.ErrUnsupported.
+// To resolve a local registry layout, use WithRegistries("file:///path").
 func WithVendorDir(dir string) Option {
 	return func(o *ResolutionOptions) error { o.VendorDir = dir; return nil }
 }
 
-// WithLockfileMode sets how the lockfile is handled during resolution.
+// WithLockfileMode is reserved. Modes other than LockfileOff return
+// errors.ErrUnsupported. Use the lockfile package for explicit parsing/writing.
 func WithLockfileMode(mode LockfileMode) Option {
 	return func(o *ResolutionOptions) error { o.LockfileMode = mode; return nil }
 }
 
-// WithLockfilePath sets the path to the lockfile.
+// WithLockfilePath is reserved. A nonempty path returns errors.ErrUnsupported.
 func WithLockfilePath(path string) Option {
 	return func(o *ResolutionOptions) error { o.LockfilePath = path; return nil }
 }
@@ -162,7 +166,29 @@ func WithLogger(l *slog.Logger) Option {
 // validateOptions checks configuration for logical consistency.
 func validateOptions(opts *ResolutionOptions) error {
 	if opts.SubstituteYanked && !opts.CheckYanked {
-		return errors.New("substituteYanked requires checkYanked to be enabled")
+		return fmt.Errorf("substituteYanked requires checkYanked to be enabled; substitution: %w", errors.ErrUnsupported)
+	}
+	for _, setting := range []struct {
+		name   string
+		active bool
+	}{
+		{"SubstituteYanked", opts.SubstituteYanked},
+		{"VendorDir", opts.VendorDir != ""},
+		{"LockfileMode", opts.LockfileMode != LockfileOff},
+		{"LockfilePath", opts.LockfilePath != ""},
+	} {
+		if setting.active {
+			return fmt.Errorf("resolution option %s: %w", setting.name, errors.ErrUnsupported)
+		}
+	}
+	if opts.DirectDepsMode < DirectDepsOff || opts.DirectDepsMode > DirectDepsError {
+		return fmt.Errorf("invalid direct dependency mode: %d", opts.DirectDepsMode)
+	}
+	if opts.YankedBehavior < YankedVersionAllow || opts.YankedBehavior > YankedVersionError {
+		return fmt.Errorf("invalid yanked version behavior: %d", opts.YankedBehavior)
+	}
+	if opts.BazelCompatibilityMode < BazelCompatibilityOff || opts.BazelCompatibilityMode > BazelCompatibilityError {
+		return fmt.Errorf("invalid Bazel compatibility mode: %d", opts.BazelCompatibilityMode)
 	}
 	if opts.Timeout < 0 {
 		return errors.New("timeout must be positive")

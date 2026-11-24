@@ -152,13 +152,23 @@ func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo)
 	overrides := convertOverrides(rootModule.Overrides)
 
 	// Phase 3: Run Bazel's selection algorithm
+	originalRootDeps := slices.Clone(depGraph.Modules[depGraph.RootKey].Deps)
 	result, err := selection.Run(depGraph, overrides)
 	if err != nil {
 		return nil, fmt.Errorf("selection algorithm: %w", err)
 	}
 
 	// Phase 4: Convert result to ResolutionList
-	return r.buildResult(ctx, result, rootModule, moduleInfoCache)
+	list, err := r.buildResult(ctx, result, rootModule, moduleInfoCache)
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := checkDirectDeps(r.options.DirectDepsMode, originalRootDeps, result.ResolvedGraph[depGraph.RootKey].Deps)
+	if err != nil {
+		return nil, err
+	}
+	list.Warnings = append(list.Warnings, warnings...)
+	return list, nil
 }
 
 // buildDepSpecs converts Dependency entries to selection.DepSpec, applying
@@ -429,7 +439,7 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 						override.Registry,
 					)
 				}
-				moduleInfo, err := registryToUse.GetModuleFile(ctx, k.Name, k.Version)
+				moduleInfo, err := fetchModuleWithProgress(ctx, registryToUse, k.Name, k.Version, r.options.OnProgress)
 				if err != nil {
 					select {
 					case errCh <- fmt.Errorf("fetch %s@%s: %w", k.Name, k.Version, err):
