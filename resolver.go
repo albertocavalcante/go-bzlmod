@@ -71,6 +71,12 @@ func bazelToolsRootDeps(
 	return rootDeps
 }
 
+// ignoresCompatibilityLevels follows ModuleFileGlobals in the release branches:
+// 8.6 removed enforcement; 9.0 branched earlier and 9.1 removed it again.
+func ignoresCompatibilityLevels(bazelVersion string) bool {
+	return bazelVersion != "" && ((version.Compare(bazelVersion, "8.6.0") >= 0 && version.Compare(bazelVersion, "9.0.0") < 0) || version.Compare(bazelVersion, "9.1.0") >= 0)
+}
+
 // checkFieldCompatibility checks if bzlmod fields used in the root module are
 // compatible with the target Bazel version.
 func checkFieldCompatibility(rootModule *ModuleInfo, bazelVersion string) []string {
@@ -79,7 +85,7 @@ func checkFieldCompatibility(rootModule *ModuleInfo, bazelVersion string) []stri
 	}
 	var warnings []string
 	for _, dep := range rootModule.Dependencies {
-		if dep.MaxCompatibilityLevel > 0 {
+		if dep.MaxCompatibilityLevelSet || dep.MaxCompatibilityLevel > 0 {
 			if w := compat.CheckField(bazelVersion, "max_compatibility_level"); w != nil {
 				warnings = append(warnings,
 					fmt.Sprintf("bazel_dep(%s): %s", dep.Name, w.String()))
@@ -128,6 +134,20 @@ func (r *selectionResolver) Resolve(ctx context.Context, rootModule *ModuleInfo)
 		return nil, fmt.Errorf("build dependency graph: %w", err)
 	}
 
+	// Bazel 8.6 and 9.1 removed compatibility levels (the 9.0 branch retained
+	// them). Keep parsed intent intact and normalize only the effective graph.
+	if ignoresCompatibilityLevels(r.options.BazelVersion) {
+		for _, module := range depGraph.Modules {
+			module.CompatLevel = 0
+			for i := range module.Deps {
+				module.Deps[i].MaxCompatibilityLevel = -1
+			}
+			for i := range module.NodepDeps {
+				module.NodepDeps[i].MaxCompatibilityLevel = -1
+			}
+		}
+	}
+
 	// Phase 2: Convert overrides to selection package format
 	overrides := convertOverrides(rootModule.Overrides)
 
@@ -169,7 +189,7 @@ func (r *selectionResolver) buildDepSpecs(deps []Dependency, isRoot bool, overri
 		}
 
 		maxCL := dep.MaxCompatibilityLevel
-		if maxCL == 0 {
+		if maxCL == 0 && !dep.MaxCompatibilityLevelSet {
 			maxCL = -1
 		}
 		specs = append(specs, selection.DepSpec{
@@ -194,6 +214,17 @@ func parseLocalPathOverrideModule(path string) (*ModuleInfo, error) {
 		moduleFile = filepath.Join(path, "MODULE.bazel")
 	}
 	return ParseModuleFile(moduleFile)
+}
+
+// loadSourceOverride keeps source acquisition at an explicit I/O boundary.
+func loadSourceOverride(override Override) (*ModuleInfo, error) {
+	if override.Type != overrideTypeLocalPath {
+		return nil, &UnsupportedInputError{Directive: override.Type + "_override"}
+	}
+	if override.Path == "" {
+		return nil, fmt.Errorf("local_path_override requires a nonempty path")
+	}
+	return parseLocalPathOverrideModule(override.Path)
 }
 
 // addBuiltinBazelToolsDeps adds Bazel's built-in bazel_tools module (and, for
@@ -336,50 +367,26 @@ func (r *selectionResolver) buildDepGraph(ctx context.Context, rootModule *Modul
 			if override, ok := overrideMap[dep.Name]; ok {
 				switch override.Type {
 				case overrideTypeGit, overrideTypeLocalPath, overrideTypeArchive:
-					// Match Bazel: non-registry overrides resolve to empty version.
-					key = selection.ModuleKey{Name: dep.Name, Version: ""}
-
-					if override.Type == overrideTypeLocalPath && override.Path != "" {
-						localModule, err := parseLocalPathOverrideModule(override.Path)
-						if err != nil {
-							cancel()
-							wg.Wait()
-							return nil, nil, fmt.Errorf("parse local_path override for %s: %w", dep.Name, err)
-						}
-						localDeps := buildDepSpecs(localModule.Dependencies, false)
-						localNodepDeps := buildDepSpecs(localModule.NodepDependencies, false)
-
-						mu.Lock()
-						if !visited[key] {
-							visited[key] = true
-							modules[key] = &selection.Module{
-								Key:         key,
-								Deps:        localDeps,
-								NodepDeps:   localNodepDeps,
-								CompatLevel: localModule.CompatibilityLevel,
-							}
-							for _, d := range localDeps {
-								knownNames[d.Name] = true
-								dk := d.ToModuleKey()
-								if !visited[dk] {
-									queue = append(queue, d)
-								}
-							}
-							pendingNodep = append(pendingNodep, localNodepDeps...)
-						}
-						mu.Unlock()
-						continue
+					localModule, err := loadSourceOverride(override)
+					if err != nil {
+						cancel()
+						wg.Wait()
+						return nil, nil, fmt.Errorf("resolve override for %s: %w", dep.Name, err)
 					}
-
+					key = selection.ModuleKey{Name: dep.Name, Version: ""}
+					localDeps := buildDepSpecs(localModule.Dependencies, false)
+					localNodepDeps := buildDepSpecs(localModule.NodepDependencies, false)
 					mu.Lock()
 					if !visited[key] {
 						visited[key] = true
-						// Add placeholder for non-registry modules
-						modules[key] = &selection.Module{
-							Key:         key,
-							Deps:        nil,
-							CompatLevel: 0,
+						modules[key] = &selection.Module{Key: key, Deps: localDeps, NodepDeps: localNodepDeps, CompatLevel: localModule.CompatibilityLevel}
+						for _, d := range localDeps {
+							knownNames[d.Name] = true
+							if !visited[d.ToModuleKey()] {
+								queue = append(queue, d)
+							}
 						}
+						pendingNodep = append(pendingNodep, localNodepDeps...)
 					}
 					mu.Unlock()
 					continue

@@ -3,6 +3,7 @@ package gobzlmod
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -377,13 +378,8 @@ git_override(module_name = "bazel_skylib", remote = "https://github.com/bazelbui
 			IncludeDevDeps: false,
 		}
 		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
-		if err != nil {
-			t.Fatalf("error: %v", err)
-		}
-
-		// Should resolve successfully even though we didn't mock bazel_skylib in registry
-		if result == nil {
-			t.Error("should resolve with git_override")
+		if result != nil || !errors.Is(err, errors.ErrUnsupported) {
+			t.Fatalf("want explicit unsupported source discovery, got result=%v err=%v", result, err)
 		}
 	})
 
@@ -397,19 +393,9 @@ git_override(module_name = "local_mod", remote = "https://example.com/local_mod.
 			IncludeDevDeps: false,
 		}
 		result, err := resolveWithSelection(context.Background(), moduleContent, opts)
-		if err != nil {
-			t.Fatalf("error: %v", err)
+		if result != nil || !errors.Is(err, errors.ErrUnsupported) {
+			t.Fatalf("want explicit unsupported source discovery, got result=%v err=%v", result, err)
 		}
-
-		for _, m := range result.Modules {
-			if m.Name == "local_mod" {
-				if m.Version != "" {
-					t.Fatalf("local_mod version = %q, want empty version for non-registry override", m.Version)
-				}
-				return
-			}
-		}
-		t.Fatal("local_mod should be in resolved modules")
 	})
 
 	t.Run("local_path_override hydrates local module deps", func(t *testing.T) {

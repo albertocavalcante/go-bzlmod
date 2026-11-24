@@ -3,10 +3,13 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,23 +27,6 @@ const (
 // Each entry is verified: Bazel resolves these correctly in their native workspace.
 // The library's resolver is NOT at fault — these are inherent to corpus testing.
 var bcrCorpusSkips = map[string]string{
-	// --- Starlark expression in version ---
-	// These MODULE.bazel files use Starlark string operations to compute dep versions.
-	// Our parser handles literal strings, not Starlark evaluation.
-	// Bazel evaluates Starlark and resolves these correctly.
-
-	// version = ".".join(proto_version.split(".")[-2:])  → "33.4"
-	// protobuf@33.4 exists in BCR. Bazel resolves fine.
-	"rules_kotlin": `Starlark expression: version = ".".join(proto_version_parts[-2:]) for protobuf`,
-
-	// version = BOOST_VERSION + ".bcr.2"  → "1.89.0.bcr.2"
-	// boost.config@1.89.0.bcr.2 exists in BCR. Bazel resolves fine.
-	"lanelet2": `Starlark expression: version = BOOST_VERSION + ".bcr.2" for boost deps`,
-
-	// version = ANTLR4_VERSION  where ANTLR4_VERSION = "4.13.2"
-	// antlr4-cpp-runtime@4.13.2 exists in BCR. Bazel resolves fine.
-	"cel-cpp": `Starlark expression: version = ANTLR4_VERSION for antlr4-cpp-runtime`,
-
 	// --- Monorepo sub-modules with workspace-relative local_path_override ---
 	// These are sub-modules in a monorepo. Their local_path_override declarations
 	// reference sibling directories (path = "..", path = "../proto", etc.) that
@@ -73,6 +59,39 @@ var bcrCorpusSkips = map[string]string{
 	"engflowapis-go":   `monorepo sub-module: local_path_override(path = "..") for engflowapis`,
 }
 
+// These are explicit static-resolution exclusions for the pinned corpus. Each
+// must continue to return its specific unsupported-input error; a new success or
+// a different error requires review, rather than an unconditional skip.
+var bcrUnsupportedInputs = map[string]struct{ directive, attribute, via string }{
+	"rules_kotlin":                 {"bazel_dep", "version", ""},
+	"lanelet2":                     {"bazel_dep", "version", ""},
+	"cel-cpp":                      {"bazel_dep", "version", ""},
+	"protovalidate-cc":             {"bazel_dep", "version", "cel-cpp@0.11.0"},
+	"rules_pitest":                 {"bazel_dep", "version", "contrib_rules_jvm@0.24.0"},
+	"rules_cc_hdrs_map":            {"archive_override", "", "rules_cc"},
+	"or-tools":                     {"git_override", "", "pybind11_abseil"},
+	"jsinterop_base":               {"archive_override", "", "j2cl"},
+	"jsinterop_generator":          {"archive_override", "", "j2cl"},
+	"elemental2":                   {"archive_override", "", "j2cl"},
+	"rules_java":                   {"archive_override", "", "rules_cc"},
+	"aspect_rules_py":              {"bazel_dep", "dev_dependency", ""},
+	"bazel_lib":                    {"bazel_dep", "dev_dependency", ""},
+	"aspect_rules_lint":            {"bazel_dep", "dev_dependency", ""},
+	"rules_img_tool":               {"bazel_dep", "dev_dependency", "bazel_lib@3.1.1"},
+	"cargo_env.bzl":                {"bazel_dep", "dev_dependency", "bazel_lib@3.2.0"},
+	"toolchains_llvm_bootstrapped": {"bazel_dep", "dev_dependency", "bazel_lib@3.2.0"},
+	"build_stack_scala_gazelle":    {"bazel_dep", "", "rules_scala@7.1.5"},
+	"build_stack_rules_proto":      {"bazel_dep", "", "rules_scala@7.0.0"},
+	"rules_chisel":                 {"bazel_dep", "", "rules_scala@7.1.5"},
+	"boost.pin_version":            {"bazel_dep", "", ""},
+	"rules_docs":                   {"bazel_dep", "", ""},
+	"bazel_difftools":              {"bazel_dep", "", "rules_scala@7.0.0"},
+	"rules_scala":                  {"bazel_dep", "", ""},
+	"rules_proto_grpc_scala":       {"bazel_dep", "", "rules_scala@7.1.3"},
+}
+
+const bcrCorpusRevision = "ab4017a7417cbd1e7eba34cb55aba99aa2be9808"
+
 func bcrPath() string {
 	if p := os.Getenv(bcrPathEnv); p != "" {
 		return p
@@ -83,13 +102,45 @@ func bcrPath() string {
 func requireBCRCorpusEnabled(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
+		if os.Getenv(bcrCorpusEnv) != "" {
+			t.Fatal("explicit corpus request cannot run in short mode")
+		}
 		t.Skip("skipping BCR corpus test in short mode")
 	}
 	if os.Getenv(bcrCorpusEnv) == "" {
 		t.Skipf("set %s=1 to run the BCR corpus suite", bcrCorpusEnv)
 	}
 	if _, err := os.Stat(filepath.Join(bcrPath(), "modules")); err != nil {
-		t.Skipf("BCR clone not found at %s (set %s to override)", bcrPath(), bcrPathEnv)
+		t.Fatalf("BCR clone not found at %s (set %s to override)", bcrPath(), bcrPathEnv)
+	}
+	expected := os.Getenv("GO_BZLMOD_E2E_BCR_REVISION")
+	if expected == "" {
+		expected = bcrCorpusRevision
+	}
+	head, err := exec.Command("git", "-C", bcrPath(), "rev-parse", "HEAD").Output()
+	if err != nil || strings.TrimSpace(string(head)) != expected {
+		t.Fatalf("BCR corpus must be at %s; got %s (%v)", expected, strings.TrimSpace(string(head)), err)
+	}
+	status, err := exec.Command("git", "-C", bcrPath(), "status", "--porcelain").Output()
+	if err != nil || len(status) != 0 {
+		t.Fatal("BCR corpus must be a complete, clean git checkout")
+	}
+	// git status considers sparse/skip-worktree omissions clean. Require every
+	// tracked corpus file to be materialized before enumerating the filesystem.
+	files, err := exec.Command("git", "-C", bcrPath(), "ls-files", "-v", "-z", "--", "modules").Output()
+	if err != nil || len(files) == 0 {
+		t.Fatalf("read tracked corpus inventory: %v", err)
+	}
+	for _, entry := range strings.Split(string(files), "\x00") {
+		if entry == "" {
+			continue
+		}
+		if entry[0] != 'H' {
+			t.Fatalf("BCR corpus must not omit tracked files: %s", entry)
+		}
+		if _, err := os.Stat(filepath.Join(bcrPath(), entry[2:])); err != nil {
+			t.Fatalf("BCR corpus is incomplete: %s: %v", entry[2:], err)
+		}
 	}
 }
 
@@ -140,7 +191,7 @@ func TestE2E_BCRCorpus_ResolveLatestVersions(t *testing.T) {
 	fileURL := "file://" + bcrRoot
 	ctx := context.Background()
 
-	var passed, failed, skipped atomic.Int32
+	var passed, failed, skipped, unsupported atomic.Int32
 	start := time.Now()
 
 	for _, entry := range entries {
@@ -159,21 +210,32 @@ func TestE2E_BCRCorpus_ResolveLatestVersions(t *testing.T) {
 			metadataFile := filepath.Join(modulesDir, moduleName, "metadata.json")
 			version, err := latestNonYankedVersion(metadataFile)
 			if err != nil {
-				skipped.Add(1)
-				t.Skipf("skip %s: %v", moduleName, err)
+				failed.Add(1)
+				t.Fatalf("missing or invalid metadata for %s: %v", moduleName, err)
 			}
 
 			moduleFile := filepath.Join(modulesDir, moduleName, version, "MODULE.bazel")
 			content, err := os.ReadFile(moduleFile)
 			if err != nil {
-				skipped.Add(1)
-				t.Skipf("skip %s@%s: %v", moduleName, version, err)
+				failed.Add(1)
+				t.Fatalf("missing MODULE.bazel for %s@%s: %v", moduleName, version, err)
 			}
 
 			result, err := gobzlmod.Resolve(ctx,
 				gobzlmod.ContentSource(string(content)),
 				gobzlmod.WithRegistries(fileURL),
 			)
+			if expected, ok := bcrUnsupportedInputs[moduleName]; ok {
+				var detail *gobzlmod.UnsupportedInputError
+				if !errors.As(err, &detail) || detail.Directive != expected.directive || detail.Attribute != expected.attribute || !strings.Contains(err.Error(), expected.via) {
+					failed.Add(1)
+					t.Fatalf("unsupported-input classification drift: want %+v; got %v", expected, err)
+				}
+				unsupported.Add(1)
+				t.Logf("expected unsupported input: %v", err)
+				return
+			}
+
 			if err != nil {
 				failed.Add(1)
 				t.Errorf("%s@%s resolution failed: %v", moduleName, version, err)
@@ -181,13 +243,17 @@ func TestE2E_BCRCorpus_ResolveLatestVersions(t *testing.T) {
 			}
 
 			validateResolutionResult(t, moduleName, version, result)
-			passed.Add(1)
+			if t.Failed() {
+				failed.Add(1)
+			} else {
+				passed.Add(1)
+			}
 		})
 	}
 
 	t.Cleanup(func() {
-		t.Logf("BCR corpus: %d passed, %d failed, %d skipped in %s",
-			passed.Load(), failed.Load(), skipped.Load(), time.Since(start).Round(time.Millisecond))
+		t.Logf("BCR corpus: %d resolved, %d expected unsupported, %d failed, %d skipped in %s",
+			passed.Load(), unsupported.Load(), failed.Load(), skipped.Load(), time.Since(start).Round(time.Millisecond))
 	})
 }
 
@@ -247,7 +313,7 @@ func TestE2E_BCRCorpus_Deterministic(t *testing.T) {
 			moduleFile := filepath.Join(bcrRoot, "modules", mod.name, mod.version, "MODULE.bazel")
 			content, err := os.ReadFile(moduleFile)
 			if err != nil {
-				t.Skipf("skip: %v", err)
+				t.Fatalf("required deterministic fixture missing: %v", err)
 			}
 
 			opts := []gobzlmod.Option{gobzlmod.WithRegistries(fileURL)}

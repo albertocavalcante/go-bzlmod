@@ -459,7 +459,7 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 	if r.externalCache != nil {
 		if data, found, err := r.externalCache.Get(ctx, moduleName, version); err == nil && found {
 			// Parse and validate the cached content
-			moduleInfo, err := ParseModuleContent(string(data))
+			moduleInfo, err := parseModuleWithRegistryVersion("MODULE.bazel", data, version)
 			if err == nil {
 				logger.Debug("module cache hit (external)", "name", moduleName, "version", version)
 				// Store in in-memory cache for faster subsequent access
@@ -484,7 +484,7 @@ func (r *registryClient) GetModuleFile(ctx context.Context, moduleName, version 
 		return nil, err
 	}
 
-	moduleInfo, err := ParseModuleContent(string(data))
+	moduleInfo, err := parseModuleWithRegistryVersion("MODULE.bazel", data, version)
 	if err != nil {
 		return nil, fmt.Errorf("parse module %s@%s: %w", moduleName, version, err)
 	}
