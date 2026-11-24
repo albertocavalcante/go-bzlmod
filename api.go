@@ -210,7 +210,7 @@ func resolveModuleInternal(ctx context.Context, name, version string, opts Resol
 	// Determine the registry URL for the target module
 	registryURL := reg.BaseURL()
 	if chain, ok := reg.(*registryChain); ok {
-		if moduleReg := chain.GetRegistryForModule(name); moduleReg != "" {
+		if moduleReg := chain.GetRegistryForVersion(name, version); moduleReg != "" {
 			registryURL = moduleReg
 		}
 	}

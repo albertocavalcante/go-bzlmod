@@ -272,7 +272,7 @@ func TestRegistryChain_MixedLocalAndRemote(t *testing.T) {
 
 	// Verify it was cached to the local registry (index 0)
 	chain.moduleRegistryMu.RLock()
-	idx, found := chain.moduleRegistry["local-only"]
+	idx, found := chain.moduleRegistry["local-only@1.0.0"]
 	chain.moduleRegistryMu.RUnlock()
 
 	if !found {

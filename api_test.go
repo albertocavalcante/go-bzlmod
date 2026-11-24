@@ -1240,7 +1240,7 @@ single_version_override(
 	}
 }
 
-func TestResolve_RegistryTrace_CacheHitUsesConfiguredModuleBasePath(t *testing.T) {
+func TestResolve_RegistryTrace_CacheHitUsesStandardMetadataPath(t *testing.T) {
 	moduleContent := `module(name = "cached_dep", version = "1.0.0")`
 	sourceContent := `{"url":"https://example.com/cached_dep-1.0.0.tar.gz","integrity":"sha256-ddd"}`
 
@@ -1248,7 +1248,7 @@ func TestResolve_RegistryTrace_CacheHitUsesConfiguredModuleBasePath(t *testing.T
 		switch r.URL.Path {
 		case "/bazel_registry.json":
 			fmt.Fprint(w, `{"module_base_path":"custom_modules"}`)
-		case "/custom_modules/cached_dep/1.0.0/source.json":
+		case "/modules/cached_dep/1.0.0/source.json":
 			fmt.Fprint(w, sourceContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -1257,7 +1257,9 @@ func TestResolve_RegistryTrace_CacheHitUsesConfiguredModuleBasePath(t *testing.T
 	defer server.Close()
 
 	cache := newMockCache()
-	cache.store["cached_dep@1.0.0"] = []byte(moduleContent)
+	if err := ScopeModuleCache(cache, server.URL).Put(context.Background(), "cached_dep", "1.0.0", []byte(moduleContent)); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := Resolve(
 		context.Background(),
@@ -1272,9 +1274,9 @@ bazel_dep(name = "cached_dep", version = "1.0.0")`),
 	}
 
 	expected := map[string]*string{
-		server.URL + "/bazel_registry.json":                          testSHA256Hex(`{"module_base_path":"custom_modules"}`),
-		server.URL + "/custom_modules/cached_dep/1.0.0/MODULE.bazel": testSHA256Hex(moduleContent),
-		server.URL + "/custom_modules/cached_dep/1.0.0/source.json":  testSHA256Hex(sourceContent),
+		server.URL + "/bazel_registry.json":                   testSHA256Hex(`{"module_base_path":"custom_modules"}`),
+		server.URL + "/modules/cached_dep/1.0.0/MODULE.bazel": testSHA256Hex(moduleContent),
+		server.URL + "/modules/cached_dep/1.0.0/source.json":  testSHA256Hex(sourceContent),
 	}
 
 	if len(result.RegistryFileHashes) != len(expected) {
@@ -2063,25 +2065,15 @@ bazel_dep(name = "dep", version = "2.0.0")`)
 bazel_dep(name = "top", version = "1.0.0")
 bazel_dep(name = "dep", version = "1.0.0")`
 
-	result, err := ResolveContent(ctx, content, ResolutionOptions{
-		Registries: []string{server1.URL, server2.URL},
-	})
-
+	result, err := ResolveContent(ctx, content, ResolutionOptions{Registries: []string{server1.URL, server2.URL}})
 	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+		t.Fatal(err)
 	}
-
-	// dep should be resolved from server1 (where 1.0.0 was found first)
-	// and then should fail or fallback for 2.0.0
-	// This tests module stickiness behavior
-	_ = result
+	if module := result.Module("dep"); module == nil || module.Version != "2.0.0" || module.Registry != server2.URL {
+		t.Fatalf("version origin lost: %+v", module)
+	}
 }
 
-// =============================================================================
-// Tests for ResolveModule API
-// =============================================================================
-
-// TestResolveModule_Basic tests basic ResolveModule functionality
 func TestResolveModule_Basic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

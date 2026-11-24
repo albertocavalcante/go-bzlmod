@@ -23,7 +23,7 @@ transitive tree requested.
 By default Bazel uses the [Bazel Central Registry](https://registry.bazel.build) (BCR).
 You can specify additional or alternative registries with `--registry` flags — Bazel
 searches them in order and the first registry where a module is found becomes the source
-for **all versions** of that module (module stickiness). This matches
+for **that module version**. This matches
 [ModuleFileFunction.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileFunction.java).
 
 **2. Selection.** With the full graph in hand, Bazel applies
@@ -56,7 +56,7 @@ in the Bazel Central Registry across Bazel versions 6.6.0 through 9.1.0.
 ## Features
 
 - **Bazel Selection Algorithm** — Full compatibility-level and override support ([resolver.go](resolver.go))
-- **Multi-Registry** — Chain registries with priority ordering and module stickiness ([registry_chain.go](registry_chain.go))
+- **Multi-Registry** — Chain registries with priority ordering and version provenance ([registry_chain.go](registry_chain.go))
 - **Override Support** — `single_version_override`, `multiple_version_override`, `git_override`, `local_path_override`, `archive_override`
 - **Graph Queries** — Dependency paths, explanations, cycle detection ([graph/](graph/))
 - **Bazel Compatibility** — Validate `bazel_compatibility` constraints ([bazel_compat.go](bazel_compat.go))
@@ -134,7 +134,7 @@ result, err := gobzlmod.Resolve(ctx, src,
 
     // Use custom registries (mirrors Bazel's --registry flag)
     // Searched in order; once a module is found in a registry,
-    // all versions of that module come from that registry.
+    // that version comes from that registry.
     gobzlmod.WithRegistries(
         "https://my-registry.example.com",  // Check first
         "file:///local/mirror",             // Then local
@@ -316,17 +316,23 @@ This library mirrors Bazel's `--registry` flag semantics
 ([ModuleFileFunction.java](https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleFileFunction.java)):
 
 - Registries are searched **in order** (first match wins)
-- **Module stickiness** — once a module is found in a registry, all versions of that
-  module come from that registry
+- **Version ownership** — each module version retains the registry that supplied its
+  MODULE.bazel and source metadata
 - Supports `https://`, `http://`, and `file://` URL schemes
-- Each module name gets independent sticky-mapping (module A from Reg1, module B from Reg2)
+- Different versions may come from different registries; each coordinate keeps its origin
 
-The library also provides **enhanced resilience** beyond Bazel's current behavior: if a
-cached registry returns a server error (HTTP 5xx, TLS failure, timeout), the library falls
-back to the next registry instead of failing immediately. This addresses known Bazel issues
-including [#26442](https://github.com/bazelbuild/bazel/issues/26442) (missing `source.json`
-not falling back) and [#28101](https://github.com/bazelbuild/bazel/issues/28101) (BCR TLS
-outage causing hard failures).
+Only a not-found response permits initial fallback to another registry. Once a
+module version is assigned, its source and yanked metadata stay with that registry.
+Other versions are looked up independently in registry order. Authentication, server,
+TLS, parsing, and cancellation errors stop lookup. This replaces the previous
+fallback-on-any-error behavior, which could combine module definitions and source
+metadata from different registries. Source archive mirrors in `bazel_registry.json`
+are not used as registry metadata mirrors.
+
+External cache entries are namespaced by registry URL. Existing unqualified cache
+entries become misses. Registry clients add the namespace automatically; use
+`ScopeModuleCache(cache, registryURL)` only when explicitly seeding or inspecting
+entries for an origin. The cache still stores raw MODULE.bazel bytes.
 
 ## Known Limitations
 

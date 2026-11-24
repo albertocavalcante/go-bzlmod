@@ -916,3 +916,28 @@ func TestTimeout_OptionsOrder(t *testing.T) {
 		t.Errorf("Last option (WithTimeout) should win: got %v", c2.client.Timeout)
 	}
 }
+
+func TestConcurrentClearCache(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"versions":["1.0"],"url":"https://example.com/source.tar.gz"}`)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, WithValidation(false))
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 300 {
+				if _, err := client.GetMetadata(context.Background(), "alpha"); err != nil {
+					t.Error(err)
+				}
+				if _, err := client.GetSource(context.Background(), "alpha", "1.0"); err != nil {
+					t.Error(err)
+				}
+			}
+		})
+	}
+	for range 300 {
+		client.ClearCache()
+	}
+	wg.Wait()
+}

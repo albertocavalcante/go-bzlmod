@@ -19,7 +19,7 @@ result, err := gobzlmod.Resolve(ctx, src,
 gobzlmod.WithRegistries(urls ...string)
 ```
 
-Sets the registry chain. Modules are looked up in order; once found, all versions come from that registry.
+Sets the registry chain. Modules are looked up in order; once found, that module version keeps its registry.
 
 ```go
 gobzlmod.WithRegistries(
@@ -321,6 +321,13 @@ type ModuleCache interface {
 Cache errors are handled gracefully—failures fall back to registry fetch.
 
 Reference: [`types.go:585-659`](../types.go#L585-L659)
+
+Cache storage keys include a stable registry namespace, so sharing one cache across
+private and public registries cannot reuse the wrong module definition. Old
+unqualified entries are ignored. Clients apply the scope automatically. For
+manual prepopulation, write through `gobzlmod.ScopeModuleCache(cache, registryURL)`
+and pass the original cache to `WithCache`. Raw content and version values are
+preserved; custom caches should treat the name argument as an opaque key.
 
 ## Progress Reporting
 

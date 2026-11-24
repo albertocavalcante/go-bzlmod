@@ -100,6 +100,9 @@ func (c *Client) BaseURL() string {
 // GetMetadata fetches and parses a module's metadata.json.
 // Results are cached by module name.
 func (c *Client) GetMetadata(ctx context.Context, moduleName string) (*Metadata, error) {
+	if err := ValidateModuleName(moduleName); err != nil {
+		return nil, err
+	}
 	if cached, ok := c.metadataCache.Load(moduleName); ok {
 		return cached.(*Metadata), nil
 	}
@@ -128,6 +131,9 @@ func (c *Client) GetMetadata(ctx context.Context, moduleName string) (*Metadata,
 // GetSource fetches and parses a module version's source.json.
 // Results are cached by "name@version".
 func (c *Client) GetSource(ctx context.Context, moduleName, version string) (*Source, error) {
+	if err := ValidateModuleCoordinate(moduleName, version); err != nil {
+		return nil, err
+	}
 	cacheKey := moduleName + "@" + version
 	if cached, ok := c.sourceCache.Load(cacheKey); ok {
 		return cached.(*Source), nil
@@ -156,6 +162,9 @@ func (c *Client) GetSource(ctx context.Context, moduleName, version string) (*So
 
 // GetModuleFile fetches the raw MODULE.bazel content for a module version.
 func (c *Client) GetModuleFile(ctx context.Context, moduleName, version string) ([]byte, error) {
+	if err := ValidateModuleCoordinate(moduleName, version); err != nil {
+		return nil, err
+	}
 	url := fmt.Sprintf("%s/modules/%s/%s/MODULE.bazel", c.baseURL, moduleName, version)
 	return c.fetch(ctx, url)
 }
@@ -178,8 +187,8 @@ func (c *Client) GetRegistryConfig(ctx context.Context) (*RegistryConfig, error)
 
 // ClearCache removes all cached data.
 func (c *Client) ClearCache() {
-	c.metadataCache = sync.Map{}
-	c.sourceCache = sync.Map{}
+	c.metadataCache.Clear()
+	c.sourceCache.Clear()
 }
 
 // fetch performs an HTTP GET and returns the response body.
