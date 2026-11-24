@@ -6,11 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     strategy:
+      # One Go version failing must not cancel the other.
+      fail-fast: false
       matrix:
         go-version: ["1.26.0", "1.27.2"]
 
@@ -18,7 +26,7 @@ jobs:
       - name: Check out code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          fetch-depth: 0 # Full history for SonarCloud analysis
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -44,9 +52,72 @@ jobs:
       - name: Run tests
         run: bash scripts/check.sh test
 
+      - name: Upload coverage for SonarCloud
+        if: ${{ !cancelled() && matrix.go-version == '1.27.2' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sonar-inputs
+          path: |
+            coverage.out
+            test-output.json
+          if-no-files-found: error
+          retention-days: 7
+
+  sonarcloud:
+    name: SonarCloud
+    needs: test
+    # Run even when a test leg failed (coverage is still uploaded), but not
+    # when the workflow was cancelled.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      # Secrets cannot be used in job-level `if`; derive an output instead.
+      # A missing token is only acceptable where GitHub withholds secrets
+      # (fork PRs, Dependabot); anywhere else it is a configuration error.
+      - name: Check for SONAR_TOKEN
+        id: token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          BASE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            reason="fork pull request"
+          elif [ "$ACTOR" = "dependabot[bot]" ]; then
+            reason="Dependabot run"
+          else
+            echo "::error::SONAR_TOKEN is empty on a run that should have it (event: $EVENT_NAME, actor: $ACTOR). Restore the repository secret."
+            exit 1
+          fi
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::SONAR_TOKEN is unavailable ($reason); skipping SonarCloud analysis."
+
+      - name: Check out code
+        if: steps.token.outputs.available == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0 # Full history for SonarCloud analysis
+          persist-credentials: false
+
+      - name: Download coverage
+        if: steps.token.outputs.available == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sonar-inputs
+
       - name: SonarCloud Analysis
-        if: matrix.go-version == '1.27.2'
-        uses: SonarSource/sonarcloud-github-action@383f7e52eae3ab0510c3cb0e7d9d150bbaeab838 # v3.1.0
+        if: steps.token.outputs.available == 'true'
+        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -54,6 +125,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       security-events: write
       contents: read
@@ -61,6 +133,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -79,10 +153,15 @@ jobs:
   e2e:
     name: Live Bazel E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
 
     steps:
       - name: Check out code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -100,10 +179,15 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
 
     steps:
       - name: Check out code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
